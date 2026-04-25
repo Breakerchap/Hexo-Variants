@@ -70,6 +70,17 @@ const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
     y: Math.sin(angle)
   };
 });
+const TRIANGLE_UNIT_VERTICES_UP = [
+  { x: -0.5, y: -SQRT3 / 6 },
+  { x: 0.5, y: -SQRT3 / 6 },
+  { x: 0, y: SQRT3 / 3 }
+];
+const TRIANGLE_UNIT_VERTICES_DOWN = [
+  { x: -0.5, y: SQRT3 / 6 },
+  { x: 0.5, y: SQRT3 / 6 },
+  { x: 0, y: -SQRT3 / 3 }
+];
+const TRIANGLE_PICK_RADIUS = 2;
 
 const getVisibleBounds = perfHelpers.getVisibleAxialBounds || function legacyVisibleBounds(params) {
   const radius = Math.ceil(Math.max(params.width, params.height) / params.hexSize) + 6;
@@ -179,15 +190,20 @@ const switchClockTurn = timerHelpers.switchTurnWithIncrement || function localSw
 
 const BASE_MODE = {
   name: "Classic",
-  summary: "Standard rules with the origin start and the 11-hex placement limit.",
+  summary: "Standard rules with the origin start and the 11-space placement limit.",
   hint: "Classic mode: make a line of 6. No extra effects are active."
 };
 
 const MODES = {
+  triangleGrid: {
+    name: "Triangle Grid",
+    summary: "Replaces hex tiles with triangle tiles while keeping the same placement range and connect-6 win condition.",
+    hint: "Board switches to triangle cells. Place inside triangles and connect 6 in a straight line."
+  },
   duck: {
     name: "Duck",
-    summary: "After your placements, move the duck to any empty hex. Nobody can place on the duck.",
-    hint: "After placing, move the duck to an empty hex to block that hex."
+    summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
+    hint: "After placing, move the duck to an empty space to block it."
   },
   egyptian: {
     name: "Egyptian",
@@ -196,23 +212,23 @@ const MODES = {
   },
   orbit: {
     name: "Orbit",
-    summary: "At the end of every full turn, each stone moves 1 hex along its orbit ring. Ducks stay put.",
+    summary: "At the end of every full turn, each stone moves 1 step along its orbit ring. Ducks stay put.",
     hint: "After each full turn, stones shift one step around their ring (ducks stay put). Faint lines show the next shift."
   },
   echo: {
     name: "Echo",
-    summary: "Each stone placement schedules an echo two full turns later at the mirrored coordinate across the origin, if that hex is open. Ducks also project a mirrored copy immediately.",
-    hint: "Stone echoes appear two full turns later at the mirrored hex if it is open. Bird mirror copies appear immediately and clear on that bird's next move."
+    summary: "Each stone placement schedules an echo two full turns later at the mirrored coordinate across the origin, if that space is open. Ducks also project a mirrored copy immediately.",
+    hint: "Stone echoes appear two full turns later at the mirrored space if it is open. Bird mirror copies appear immediately and clear on that bird's next move."
   },
   kingDuck: {
     name: "King Duck",
-    summary: "Duck rules apply, but after the duck moves, adjacent empty hexes become panic zones until the next bird move.",
-    hint: "After the king duck moves, adjacent empty hexes become panic zones until the next bird move."
+    summary: "Duck rules apply, but after the duck moves, adjacent empty spaces become panic zones until the next bird move.",
+    hint: "After the king duck moves, adjacent empty spaces become panic zones until the next bird move."
   },
   meteorAccounting: {
     name: "Meteor",
-    summary: "Every 3 full turns, all occupied hexes tied for farthest distance from the origin are deleted.",
-    hint: "Every 3 full turns, all occupied hexes farthest from the center are deleted."
+    summary: "Every 3 full turns, all occupied spaces tied for farthest distance from the origin are deleted.",
+    hint: "Every 3 full turns, all occupied spaces farthest from the center are deleted."
   }
 };
 
@@ -229,6 +245,15 @@ const lineAxes = [
   { q: 1, r: 0 },
   { q: 0, r: 1 },
   { q: 1, r: -1 }
+];
+
+const triangleLineKinds = [
+  "tipA",
+  "tipB",
+  "tipC",
+  "sideA",
+  "sideB",
+  "sideC"
 ];
 
 const BIRD_KINDS = ["duck", "kingDuck"];
@@ -248,6 +273,21 @@ function hexDistance(a, b = { q: 0, r: 0 }) {
   const dr = a.r - b.r;
   const ds = -a.q - a.r - (-b.q - b.r);
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
+}
+
+function getTriangleEdgeLength(size) {
+  return Math.max(6, Number(size) || 0);
+}
+
+function isOddInt(value) {
+  return Math.abs(Math.trunc(Number(value) || 0)) % 2 === 1;
+}
+
+function triangleVertexToPixel(vertexI, vertexJ, edgeLength) {
+  return {
+    x: edgeLength * (vertexI + vertexJ / 2),
+    y: edgeLength * (SQRT3 / 2) * vertexJ
+  };
 }
 
 function axialToPixel(hex, size) {
@@ -281,8 +321,164 @@ function axialRound(frac) {
   return { q, r };
 }
 
+function getTriangleVerticesForCell(hex, size) {
+  const edgeLength = getTriangleEdgeLength(size);
+  const rhombusI = Math.floor((Number(hex?.q) || 0) / 2);
+  const rhombusJ = Math.trunc(Number(hex?.r) || 0);
+  const oddTriangle = isOddInt(hex?.q);
+
+  if (oddTriangle) {
+    return [
+      triangleVertexToPixel(rhombusI + 1, rhombusJ + 1, edgeLength),
+      triangleVertexToPixel(rhombusI + 1, rhombusJ, edgeLength),
+      triangleVertexToPixel(rhombusI, rhombusJ + 1, edgeLength)
+    ];
+  }
+
+  return [
+    triangleVertexToPixel(rhombusI, rhombusJ, edgeLength),
+    triangleVertexToPixel(rhombusI + 1, rhombusJ, edgeLength),
+    triangleVertexToPixel(rhombusI, rhombusJ + 1, edgeLength)
+  ];
+}
+
+function getTriangleCellCenter(hex, size) {
+  const vertices = getTriangleVerticesForCell(hex, size);
+  return {
+    x: (vertices[0].x + vertices[1].x + vertices[2].x) / 3,
+    y: (vertices[0].y + vertices[1].y + vertices[2].y) / 3
+  };
+}
+
+function cross2d(pointA, pointB, pointC) {
+  return (pointA.x - pointC.x) * (pointB.y - pointC.y) - (pointB.x - pointC.x) * (pointA.y - pointC.y);
+}
+
+function isPointInsideTriangle(point, triangleVertices) {
+  if (!Array.isArray(triangleVertices) || triangleVertices.length !== 3) {
+    return false;
+  }
+  const [a, b, c] = triangleVertices;
+  const epsilon = 0.0001;
+  const d1 = cross2d(point, a, b);
+  const d2 = cross2d(point, b, c);
+  const d3 = cross2d(point, c, a);
+  const hasNegative = d1 < -epsilon || d2 < -epsilon || d3 < -epsilon;
+  const hasPositive = d1 > epsilon || d2 > epsilon || d3 > epsilon;
+  return !(hasNegative && hasPositive);
+}
+
+function pixelToTriangleCell(x, y, size) {
+  const edgeLength = getTriangleEdgeLength(size);
+  const rowHeight = edgeLength * (SQRT3 / 2);
+  const jFloat = y / rowHeight;
+  const baseJ = Math.floor(jFloat);
+  const iFloat = (x / edgeLength) - (jFloat / 2);
+  const baseI = Math.floor(iFloat);
+  const point = { x, y };
+  let fallback = { q: baseI * 2, r: baseJ };
+  let fallbackDistSq = Infinity;
+
+  for (let jOffset = -TRIANGLE_PICK_RADIUS; jOffset <= TRIANGLE_PICK_RADIUS; jOffset += 1) {
+    for (let iOffset = -TRIANGLE_PICK_RADIUS; iOffset <= TRIANGLE_PICK_RADIUS; iOffset += 1) {
+      const rhombusI = baseI + iOffset;
+      const rhombusJ = baseJ + jOffset;
+      for (const qParity of [0, 1]) {
+        const candidate = {
+          q: (rhombusI * 2) + qParity,
+          r: rhombusJ
+        };
+        const vertices = getTriangleVerticesForCell(candidate, size);
+        if (isPointInsideTriangle(point, vertices)) {
+          return candidate;
+        }
+
+        const center = getTriangleCellCenter(candidate, size);
+        const distSq = ((point.x - center.x) ** 2) + ((point.y - center.y) ** 2);
+        if (distSq < fallbackDistSq) {
+          fallbackDistSq = distSq;
+          fallback = candidate;
+        }
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function pixelToBoardCell(x, y, size, state = null) {
+  if (usesTriangleGridMode(state)) {
+    return pixelToTriangleCell(x, y, size);
+  }
+  return pixelToAxial(x, y, size);
+}
+
+function boardCellToPixel(hex, size, state = null) {
+  if (usesTriangleGridMode(state)) {
+    return getTriangleCellCenter(hex, size);
+  }
+  return axialToPixel(hex, size);
+}
+
 function neighbours(hex) {
   return dirs.map((d) => ({ q: hex.q + d.q, r: hex.r + d.r }));
+}
+
+function triangleSideNeighbours(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  if (isOddInt(q)) {
+    return [
+      { q: q + 1, r },
+      { q: q - 1, r },
+      { q: q - 1, r: r + 1 }
+    ];
+  }
+  return [
+    { q: q + 1, r },
+    { q: q + 1, r: r - 1 },
+    { q: q - 1, r }
+  ];
+}
+
+function getAdjacentsForMode(state, hex) {
+  if (usesTriangleGridMode(state)) {
+    return triangleSideNeighbours(hex);
+  }
+  return neighbours(hex);
+}
+
+function stepTriangleLine(hex, lineKind, forward = true) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  const odd = isOddInt(q);
+  const sign = forward ? 1 : -1;
+
+  if (lineKind === "tipA") {
+    return { q: q + (2 * sign), r };
+  }
+  if (lineKind === "tipB") {
+    return { q, r: r + sign };
+  }
+  if (lineKind === "tipC") {
+    return { q: q + (2 * sign), r: r - sign };
+  }
+  if (lineKind === "sideA") {
+    return { q: q + sign, r };
+  }
+  if (lineKind === "sideB") {
+    if (forward) {
+      return odd ? { q: q - 1, r: r + 1 } : { q: q + 1, r };
+    }
+    return odd ? { q: q - 1, r } : { q: q + 1, r: r - 1 };
+  }
+  if (lineKind === "sideC") {
+    if (forward) {
+      return odd ? { q: q + 1, r } : { q: q + 1, r: r - 1 };
+    }
+    return odd ? { q: q - 1, r: r + 1 } : { q: q - 1, r };
+  }
+  return { q, r };
 }
 
 function addHex(a, b) {
@@ -456,6 +652,18 @@ function hasMode(state, modeKey) {
   return state.modeKeys.includes(modeKey);
 }
 
+function usesTriangleGridMode(state) {
+  return Boolean(state && Array.isArray(state.modeKeys) && state.modeKeys.includes("triangleGrid"));
+}
+
+function getBoardSpaceLabel(state) {
+  return usesTriangleGridMode(state) ? "triangle" : "hex";
+}
+
+function getBoardCoordinateLabel(state) {
+  return usesTriangleGridMode(state) ? "Triangle" : "Hex";
+}
+
 function usesBirdMode(state) {
   return hasMode(state, "duck")
     || hasMode(state, "kingDuck");
@@ -501,7 +709,7 @@ function getBirdActionPrompt(action) {
   if (!safeAction) {
     return "";
   }
-  return `Move the ${getBirdMoveLabel(safeAction.birdKind)} to any empty hex`;
+  return `Move the ${getBirdMoveLabel(safeAction.birdKind)} to any empty ${getBoardSpaceLabel(game.state)}`;
 }
 
 function getSelectedModeKeys() {
@@ -1441,7 +1649,7 @@ function rebuildPanicZones(state) {
   }
 
   for (const source of Object.values(panicSourcesByKey)) {
-    for (const n of neighbours(source)) {
+    for (const n of getAdjacentsForMode(state, source)) {
       if (!isOccupied(state, n)) {
         state.panicZones[keyOf(n.q, n.r)] = true;
       }
@@ -1660,6 +1868,55 @@ function countsForOwnerAt(state, pos, owner) {
   return cellCountsForOwner(cell, owner);
 }
 
+function triangleUvKey(u, v) {
+  return `${u},${v}`;
+}
+
+function triangleCellToUv(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  const parity = isOddInt(q) ? 1 : 0;
+  return {
+    u: q + r + 1,
+    v: (3 * r) + parity + 1
+  };
+}
+
+function getTriangleLineCount(state, start, owner, lineKind) {
+  let count = 1;
+  for (const forward of [true, false]) {
+    let pos = stepTriangleLine(start, lineKind, forward);
+    while (countsForOwnerAt(state, pos, owner)) {
+      count += 1;
+      pos = stepTriangleLine(pos, lineKind, forward);
+    }
+  }
+  return count;
+}
+
+function auditTriangleBoardForWinner(state) {
+  for (const [key, cell] of Object.entries(state.cells)) {
+    const pos = parseKey(key);
+    const owners = [];
+    if (cellCountsForOwner(cell, 1)) {
+      owners.push(1);
+    }
+    if (cellCountsForOwner(cell, 2)) {
+      owners.push(2);
+    }
+
+    for (const owner of owners) {
+      for (const lineKind of triangleLineKinds) {
+        if (getTriangleLineCount(state, pos, owner, lineKind) >= WIN_LENGTH) {
+          return owner;
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+
 function getLineCount(state, start, owner, dir) {
   let count = 1;
   for (const sign of [1, -1]) {
@@ -1680,6 +1937,29 @@ function getLineCount(state, start, owner, dir) {
 }
 
 function checkWinnerFrom(state, hex) {
+  if (usesTriangleGridMode(state)) {
+    const cell = getCellAt(state, hex);
+    if (!cell) {
+      return 0;
+    }
+    const owners = [];
+    if (cellCountsForOwner(cell, 1)) {
+      owners.push(1);
+    }
+    if (cellCountsForOwner(cell, 2)) {
+      owners.push(2);
+    }
+
+    for (const owner of owners) {
+      for (const lineKind of triangleLineKinds) {
+        if (getTriangleLineCount(state, hex, owner, lineKind) >= WIN_LENGTH) {
+          return owner;
+        }
+      }
+    }
+    return 0;
+  }
+
   const cell = getCellAt(state, hex);
   if (!cell) {
     return 0;
@@ -1704,6 +1984,10 @@ function checkWinnerFrom(state, hex) {
 }
 
 function auditWholeBoardForWinner(state) {
+  if (usesTriangleGridMode(state)) {
+    return auditTriangleBoardForWinner(state);
+  }
+
   for (const key of Object.keys(state.cells)) {
     const pos = parseKey(key);
     const winner = checkWinnerFrom(state, pos);
@@ -2161,6 +2445,65 @@ function drawHex(x, y, size, fill, stroke, lineWidth = 1) {
   }
 }
 
+function drawCircle(x, y, radius, fill, stroke, lineWidth = 1) {
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(0.5, radius), 0, Math.PI * 2);
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
+function drawTriangle(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
+  const edgeLength = getTriangleEdgeLength(size);
+  const unitVertices = (hex && isOddInt(hex.q))
+    ? TRIANGLE_UNIT_VERTICES_DOWN
+    : TRIANGLE_UNIT_VERTICES_UP;
+  ctx.beginPath();
+  for (let i = 0; i < unitVertices.length; i += 1) {
+    const unit = unitVertices[i];
+    const px = x + edgeLength * unit.x;
+    const py = y + edgeLength * unit.y;
+    if (i === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
+function drawBoardShape(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
+  if (usesTriangleGridMode(game.state)) {
+    drawTriangle(x, y, size, fill, stroke, lineWidth, hex);
+    return;
+  }
+  drawHex(x, y, size, fill, stroke, lineWidth);
+}
+
+function isOnScreenWithMargin(screen, margin, width, height) {
+  return !(
+    screen.x < -margin
+    || screen.y < -margin
+    || screen.x > width + margin
+    || screen.y > height + margin
+  );
+}
+
 function getGridDrawStep(bounds, size) {
   const spanQ = Math.max(1, bounds.maxQ - bounds.minQ + 1);
   const spanR = Math.max(1, bounds.maxR - bounds.minR + 1);
@@ -2181,19 +2524,134 @@ function getGridDrawStep(bounds, size) {
   return step;
 }
 
+function getTriangleVisibleCellBounds(params) {
+  const width = params.width;
+  const height = params.height;
+  const offsetX = params.offsetX;
+  const offsetY = params.offsetY;
+  const edgeLength = getTriangleEdgeLength(params.hexSize);
+  const rowHeight = edgeLength * (SQRT3 / 2);
+  const margin = Math.max(edgeLength * 3.5, 22);
+
+  const corners = [
+    { x: -margin, y: -margin },
+    { x: width + margin, y: -margin },
+    { x: -margin, y: height + margin },
+    { x: width + margin, y: height + margin }
+  ];
+
+  let minI = Infinity;
+  let maxI = -Infinity;
+  let minJ = Infinity;
+  let maxJ = -Infinity;
+
+  for (const corner of corners) {
+    const worldX = corner.x - offsetX;
+    const worldY = corner.y - offsetY;
+    const jFloat = worldY / rowHeight;
+    const iFloat = (worldX / edgeLength) - (jFloat / 2);
+    minI = Math.min(minI, iFloat);
+    maxI = Math.max(maxI, iFloat);
+    minJ = Math.min(minJ, jFloat);
+    maxJ = Math.max(maxJ, jFloat);
+  }
+
+  const minRhombusI = Math.floor(minI) - 2;
+  const maxRhombusI = Math.ceil(maxI) + 2;
+  const minR = Math.floor(minJ) - 2;
+  const maxR = Math.ceil(maxJ) + 2;
+
+  return {
+    minQ: (minRhombusI * 2) - 1,
+    maxQ: (maxRhombusI * 2) + 1,
+    minR,
+    maxR
+  };
+}
+
+function drawTriangleLatticeGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = params.drawStep;
+  const showPlacementHints = params.showPlacementHints;
+  const gridStroke = drawStep > 1 ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.11)";
+  const gridFill = drawStep > 1 ? "rgba(255, 255, 255, 0.02)" : "rgba(255, 255, 255, 0.03)";
+  const margin = size * 3.2;
+
+  let hoverDrawn = false;
+  for (let r = bounds.minR; r <= bounds.maxR; r += drawStep) {
+    for (let q = bounds.minQ; q <= bounds.maxQ; q += drawStep) {
+      const hex = { q, r };
+      const world = boardCellToPixel(hex, size, game.state);
+      const screen = worldToScreen(world.x, world.y);
+      if (!isOnScreenWithMargin(screen, margin, w, h)) {
+        continue;
+      }
+
+      let fill = gridFill;
+      let stroke = gridStroke;
+
+      if (usesPanicBirdMode(game.state) && game.state.panicZones[keyOf(hex.q, hex.r)]) {
+        fill = "rgba(255, 179, 92, 0.16)";
+        stroke = "rgba(255, 179, 92, 0.56)";
+      }
+
+      if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
+        fill = "rgba(255, 255, 255, 0.012)";
+        stroke = null;
+      }
+
+      if (equalHex(hex, game.hoverHex)) {
+        hoverDrawn = true;
+        fill = "rgba(255, 255, 255, 0.095)";
+        stroke = "rgba(255, 255, 255, 0.44)";
+      }
+
+      drawBoardShape(screen.x, screen.y, size - 1, fill, stroke, 1.2, hex);
+    }
+  }
+
+  if (!hoverDrawn) {
+    const hoverWorld = boardCellToPixel(game.hoverHex, size, game.state);
+    const hoverScreen = worldToScreen(hoverWorld.x, hoverWorld.y);
+    if (isOnScreenWithMargin(hoverScreen, margin, w, h)) {
+      drawBoardShape(
+        hoverScreen.x,
+        hoverScreen.y,
+        size - 1,
+        "rgba(255, 255, 255, 0.18)",
+        "rgba(255, 255, 255, 0.38)",
+        1.3,
+        game.hoverHex
+      );
+    }
+  }
+}
+
 function drawGrid() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const bounds = getVisibleBounds({
-    width: w,
-    height: h,
-    offsetX: game.viewport.offsetX,
-    offsetY: game.viewport.offsetY,
-    hexSize: size,
-    marginHexes: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
-  });
-  const drawStep = getGridDrawStep(bounds, size);
+  const triangleMode = usesTriangleGridMode(game.state);
+  const bounds = triangleMode
+    ? getTriangleVisibleCellBounds({
+      width: w,
+      height: h,
+      offsetX: game.viewport.offsetX,
+      offsetY: game.viewport.offsetY,
+      hexSize: size
+    })
+    : getVisibleBounds({
+      width: w,
+      height: h,
+      offsetX: game.viewport.offsetX,
+      offsetY: game.viewport.offsetY,
+      hexSize: size,
+      marginHexes: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
+    });
+  const drawStep = triangleMode ? 1 : getGridDrawStep(bounds, size);
   const showPlacementHints = (
     size >= GRID_HINT_MIN_HEX_SIZE
     && canActForCurrentTurn()
@@ -2201,6 +2659,19 @@ function drawGrid() {
     && !game.state.duckPhase
     && !hasEgyptianRemovalPhase(game.state)
   );
+
+  if (triangleMode) {
+    drawTriangleLatticeGrid({
+      size,
+      w,
+      h,
+      bounds,
+      drawStep,
+      showPlacementHints
+    });
+    return;
+  }
+
   const gridStroke = drawStep > 1 ? "rgba(255, 255, 255, 0.06)" : "rgba(255, 255, 255, 0.08)";
   const gridFill = drawStep > 1 ? "rgba(255, 255, 255, 0.018)" : "rgba(255, 255, 255, 0.025)";
   let hoverDrawn = false;
@@ -2208,7 +2679,7 @@ function drawGrid() {
   for (let r = bounds.minR; r <= bounds.maxR; r += drawStep) {
     for (let q = bounds.minQ; q <= bounds.maxQ; q += drawStep) {
       const hex = { q, r };
-      const world = axialToPixel(hex, size);
+      const world = boardCellToPixel(hex, size, game.state);
       const screen = worldToScreen(world.x, world.y);
       if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
         continue;
@@ -2216,18 +2687,14 @@ function drawGrid() {
 
       let fill = gridFill;
       let stroke = gridStroke;
-      let legalPlacement = true;
 
       if (usesPanicBirdMode(game.state) && game.state.panicZones[keyOf(hex.q, hex.r)]) {
         fill = "rgba(255, 179, 92, 0.16)";
         stroke = "rgba(255, 179, 92, 0.46)";
       }
 
-      if (showPlacementHints) {
-        legalPlacement = isLegalPlacement(game.state, hex);
-        if (!legalPlacement) {
-          stroke = null;
-        }
+      if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
+        stroke = null;
       }
 
       if (equalHex(hex, game.hoverHex)) {
@@ -2236,15 +2703,15 @@ function drawGrid() {
         stroke = "rgba(255, 255, 255, 0.25)";
       }
 
-      drawHex(screen.x, screen.y, size - 1, fill, stroke, 1);
+      drawBoardShape(screen.x, screen.y, size - 1, fill, stroke, 1, hex);
     }
   }
 
   if (!hoverDrawn) {
-    const world = axialToPixel(game.hoverHex, size);
+    const world = boardCellToPixel(game.hoverHex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x >= -size * 2 && screen.y >= -size * 2 && screen.x <= w + size * 2 && screen.y <= h + size * 2) {
-      drawHex(screen.x, screen.y, size - 1, "rgba(255, 255, 255, 0.08)", "rgba(255, 255, 255, 0.25)", 1);
+      drawBoardShape(screen.x, screen.y, size - 1, "rgba(255, 255, 255, 0.08)", "rgba(255, 255, 255, 0.25)", 1, game.hoverHex);
     }
   }
 }
@@ -2253,7 +2720,7 @@ function drawOriginIndicator() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const originWorld = axialToPixel({ q: 0, r: 0 }, size);
+  const originWorld = boardCellToPixel({ q: 0, r: 0 }, size, game.state);
   const originScreen = worldToScreen(originWorld.x, originWorld.y);
   const padding = 34;
   const markerX = Math.max(padding, Math.min(w - padding, originScreen.x));
@@ -2262,11 +2729,11 @@ function drawOriginIndicator() {
 
   ctx.save();
   if (originScreen.x >= -size * 2 && originScreen.y >= -size * 2 && originScreen.x <= w + size * 2 && originScreen.y <= h + size * 2) {
-    drawHex(originScreen.x, originScreen.y, size - 1, "rgba(118, 227, 168, 0.08)", "rgba(118, 227, 168, 0.28)", 1.2);
+    drawBoardShape(originScreen.x, originScreen.y, size - 1, "rgba(118, 227, 168, 0.08)", "rgba(118, 227, 168, 0.28)", 1.2, { q: 0, r: 0 });
   }
   ctx.strokeStyle = "rgba(118, 227, 168, 0.45)";
   ctx.lineWidth = 1.6;
-  drawHex(markerX, markerY, 13, null, "rgba(118, 227, 168, 0.45)", 1.6);
+  drawBoardShape(markerX, markerY, 13, null, "rgba(118, 227, 168, 0.45)", 1.6, { q: 0, r: 0 });
 
   if (offscreen) {
     const dx = originScreen.x - markerX;
@@ -2296,7 +2763,7 @@ function drawEchoTargets() {
 
   for (const echo of game.state.pendingEchoes) {
     const hex = { q: -echo.source.q, r: -echo.source.r };
-    const world = axialToPixel(hex, size);
+    const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2312,7 +2779,7 @@ function drawEchoTargets() {
       : (echo.owner === 1 ? "rgba(109, 198, 255, 0.28)" : "rgba(255, 140, 140, 0.28)");
     ctx.save();
     ctx.setLineDash([6, 5]);
-    drawHex(screen.x, screen.y, size * 0.68, fill, stroke, 1.5);
+    drawBoardShape(screen.x, screen.y, size * 0.68, fill, stroke, 1.5, hex);
     ctx.restore();
 
     ctx.fillStyle = isBirdEcho
@@ -2427,7 +2894,7 @@ function drawHoverEchoPreview() {
     stroke = owner === 1 ? "rgba(109, 198, 255, 0.88)" : "rgba(255, 140, 140, 0.88)";
   }
 
-  const world = axialToPixel(target, size);
+  const world = boardCellToPixel(target, size, state);
   const screen = worldToScreen(world.x, world.y);
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -2437,7 +2904,7 @@ function drawHoverEchoPreview() {
 
   ctx.save();
   ctx.setLineDash([6, 4]);
-  drawHex(screen.x, screen.y, size * 0.68, fill, stroke, 2);
+  drawBoardShape(screen.x, screen.y, size * 0.68, fill, stroke, 2, target);
   ctx.restore();
 
   if (previewText) {
@@ -2478,7 +2945,7 @@ function drawMeteorPreview() {
 
   if (farthest.length > 0) {
     for (const entry of farthest) {
-      const world = axialToPixel(entry.pos, size);
+      const world = boardCellToPixel(entry.pos, size, game.state);
       const screen = worldToScreen(world.x, world.y);
       if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
         continue;
@@ -2486,13 +2953,14 @@ function drawMeteorPreview() {
 
       ctx.save();
       ctx.setLineDash([8, 5]);
-      drawHex(
+      drawBoardShape(
         screen.x,
         screen.y,
         size * (entry.type === "bird" ? 1.03 : 0.95),
         "rgba(255, 179, 92, 0.07)",
         "rgba(255, 179, 92, 0.88)",
-        2
+        2,
+        entry.pos
       );
       ctx.restore();
     }
@@ -2518,8 +2986,8 @@ function drawOrbitPreview() {
       continue;
     }
 
-    const fromWorld = axialToPixel(fromHex, size);
-    const toWorld = axialToPixel(toHex, size);
+    const fromWorld = boardCellToPixel(fromHex, size, game.state);
+    const toWorld = boardCellToPixel(toHex, size, game.state);
     const from = worldToScreen(fromWorld.x, fromWorld.y);
     const to = worldToScreen(toWorld.x, toWorld.y);
     if (from.x < -size * 2 || from.y < -size * 2 || from.x > w + size * 2 || from.y > h + size * 2) {
@@ -2535,20 +3003,20 @@ function drawOrbitPreview() {
 
     ctx.save();
     ctx.setLineDash([4, 4]);
-    drawHex(to.x, to.y, size * 0.42, "rgba(210, 230, 255, 0.02)", "rgba(210, 230, 255, 0.22)", 1);
+    drawBoardShape(to.x, to.y, size * 0.42, "rgba(210, 230, 255, 0.02)", "rgba(210, 230, 255, 0.22)", 1, toHex);
     ctx.restore();
   }
 }
 
 function drawBirdEchoCopy(birdKind, copyHex, size) {
-  const world = axialToPixel(copyHex, size);
+  const world = boardCellToPixel(copyHex, size, game.state);
   const screen = worldToScreen(world.x, world.y);
   const isKingDuck = birdKind === "kingDuck";
   const fill = isKingDuck ? "#ffcf63" : "#ffd75e";
   const stroke = isKingDuck ? "rgba(255, 179, 92, 0.95)" : "rgba(255,255,255,0.55)";
   ctx.save();
   ctx.globalAlpha = 0.36;
-  drawHex(screen.x, screen.y, size * 0.78, fill, stroke, isKingDuck ? 2 : 1.6);
+  drawBoardShape(screen.x, screen.y, size * 0.78, fill, stroke, isKingDuck ? 2 : 1.6, copyHex);
   ctx.fillStyle = "rgba(40, 25, 0, 0.85)";
   ctx.font = `${Math.max(12, size * 0.78)}px system-ui`;
   ctx.textAlign = "center";
@@ -2562,17 +3030,17 @@ function drawBirdEchoCopy(birdKind, copyHex, size) {
 }
 
 function drawBirdPiece(birdKind, birdHex, size) {
-  const world = axialToPixel(birdHex, size);
+  const world = boardCellToPixel(birdHex, size, game.state);
   const screen = worldToScreen(world.x, world.y);
   const isKingDuck = birdKind === "kingDuck";
   const fill = isKingDuck ? "#ffcf63" : "#ffd75e";
   const stroke = isKingDuck ? "rgba(255, 179, 92, 0.95)" : "rgba(255,255,255,0.55)";
 
   if (isKingDuck) {
-    drawHex(screen.x, screen.y, size * 0.93, "rgba(255, 179, 92, 0.12)", "rgba(255, 179, 92, 0.7)", 2.2);
+    drawBoardShape(screen.x, screen.y, size * 0.93, "rgba(255, 179, 92, 0.12)", "rgba(255, 179, 92, 0.7)", 2.2, birdHex);
   }
 
-  drawHex(screen.x, screen.y, size * 0.78, fill, stroke, isKingDuck ? 2 : 1.6);
+  drawBoardShape(screen.x, screen.y, size * 0.78, fill, stroke, isKingDuck ? 2 : 1.6, birdHex);
   ctx.fillStyle = "rgba(40, 25, 0, 0.85)";
   ctx.font = `${Math.max(12, size * 0.78)}px system-ui`;
   ctx.textAlign = "center";
@@ -2597,7 +3065,7 @@ function drawPieces() {
 
   for (const [key, cell] of Object.entries(game.state.cells)) {
     const hex = parseKey(key);
-    const world = axialToPixel(hex, size);
+    const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2607,23 +3075,25 @@ function drawPieces() {
     if (!lowDetail && recentSerialSet.has(cell.serial)) {
       const isNewest = cell.serial === newestSerial;
       const recentStroke = cell.owner === 1 ? "rgba(109, 198, 255, 0.9)" : "rgba(255, 140, 140, 0.9)";
-      drawHex(
+      drawBoardShape(
         screen.x,
         screen.y,
         size * (isNewest ? 0.97 : 0.91),
         "rgba(255, 255, 255, 0.05)",
         recentStroke,
-        isNewest ? 3 : 2
+        isNewest ? 3 : 2,
+        hex
       );
     }
 
-    drawHex(
+    drawBoardShape(
       screen.x,
       screen.y,
       size * 0.78,
       colour,
       lowDetail ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.45)",
-      lowDetail ? 1 : 1.5
+      lowDetail ? 1 : 1.5,
+      hex
     );
     if (!veryLowDetail) {
       ctx.fillStyle = "rgba(6, 12, 23, 0.52)";
@@ -2642,7 +3112,7 @@ function drawPieces() {
       if (!canSelectEgyptianRemovalHex(game.state, entry.hex)) {
         continue;
       }
-      const world = axialToPixel(entry.hex, size);
+      const world = boardCellToPixel(entry.hex, size, game.state);
       const screen = worldToScreen(world.x, world.y);
       if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
         continue;
@@ -2650,14 +3120,14 @@ function drawPieces() {
 
       ctx.save();
       ctx.setLineDash([5, 4]);
-      drawHex(screen.x, screen.y, size * 1.02, "rgba(255,255,255,0.02)", stroke, 2.3);
+      drawBoardShape(screen.x, screen.y, size * 1.02, "rgba(255,255,255,0.02)", stroke, 2.3, entry.hex);
       ctx.restore();
     }
   }
 
   const recentCapRemovalEvents = getLastTurnCapRemovalEvents(game.state);
   for (const event of recentCapRemovalEvents) {
-    const world = axialToPixel(event.hex, size);
+    const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2666,13 +3136,14 @@ function drawPieces() {
     const stroke = event.owner === 2 ? "rgba(255, 140, 140, 0.9)" : "rgba(109, 198, 255, 0.9)";
     const accent = "rgba(230, 245, 255, 0.95)";
     ctx.save();
-    drawHex(
+    drawBoardShape(
       screen.x,
       screen.y,
       size * 0.98,
       "rgba(255, 255, 255, 0.025)",
       stroke,
-      2.5
+      2.5,
+      event.hex
     );
     ctx.restore();
 
@@ -2688,7 +3159,7 @@ function drawPieces() {
 
   const recentMeteorRemovalEvents = getLastTurnMeteorRemovalEvents(game.state);
   for (const event of recentMeteorRemovalEvents) {
-    const world = axialToPixel(event.hex, size);
+    const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2698,13 +3169,14 @@ function drawPieces() {
     const accent = "rgba(255, 231, 189, 0.98)";
     ctx.save();
     ctx.setLineDash([5, 4]);
-    drawHex(
+    drawBoardShape(
       screen.x,
       screen.y,
       size * (event.type === "bird" ? 1.03 : 0.98),
       "rgba(255, 179, 92, 0.06)",
       stroke,
-      2.5
+      2.5,
+      event.hex
     );
     ctx.restore();
 
@@ -2720,7 +3192,7 @@ function drawPieces() {
 
   const recentBirdEvents = getLastTurnBirdEvents(game.state);
   for (const event of recentBirdEvents) {
-    const world = axialToPixel(event.hex, size);
+    const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2733,13 +3205,14 @@ function drawPieces() {
     if (isRemoval) {
       ctx.setLineDash([6, 4]);
     }
-    drawHex(
+    drawBoardShape(
       screen.x,
       screen.y,
       size * (isRemoval ? 0.96 : 1.02),
       "rgba(255, 255, 255, 0.03)",
       stroke,
-      isRemoval ? 2.2 : 2.8
+      isRemoval ? 2.2 : 2.8,
+      event.hex
     );
     ctx.restore();
 
@@ -2756,7 +3229,7 @@ function drawPieces() {
   }
 
   for (const { birdKind, hex } of getBirdEntries(game.state)) {
-    const world = axialToPixel(hex, size);
+    const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2765,7 +3238,7 @@ function drawPieces() {
   }
 
   for (const { birdKind, hex } of getBirdEchoCopyEntries(game.state)) {
-    const world = axialToPixel(hex, size);
+    const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
@@ -2775,6 +3248,10 @@ function drawPieces() {
 }
 
 function drawWinnerLineHint() {
+  if (usesTriangleGridMode(game.state)) {
+    return;
+  }
+
   if (!game.state.lastPlacement) {
     return;
   }
@@ -2819,8 +3296,8 @@ function drawWinnerLineHint() {
         maxStep += 1;
       }
 
-      const a = axialToPixel({ q: last.q + dir.q * minStep, r: last.r + dir.r * minStep }, size);
-      const b = axialToPixel({ q: last.q + dir.q * maxStep, r: last.r + dir.r * maxStep }, size);
+      const a = boardCellToPixel({ q: last.q + dir.q * minStep, r: last.r + dir.r * minStep }, size, game.state);
+      const b = boardCellToPixel({ q: last.q + dir.q * maxStep, r: last.r + dir.r * maxStep }, size, game.state);
       const sa = worldToScreen(a.x, a.y);
       const sb = worldToScreen(b.x, b.y);
       ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
@@ -2854,7 +3331,7 @@ function renderNow() {
   drawPieces();
 
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
-  ui.coordText.textContent = `Hex: (${game.hoverHex.q}, ${game.hoverHex.r})`;
+  ui.coordText.textContent = `${getBoardCoordinateLabel(game.state)}: (${game.hoverHex.q}, ${game.hoverHex.r})`;
 }
 
 function render() {
@@ -2934,7 +3411,7 @@ canvas.addEventListener("mousemove", (event) => {
   }
 
   const world = screenToWorld(x, y);
-  const nextHoverHex = pixelToAxial(world.x, world.y, currentHexSize());
+  const nextHoverHex = pixelToBoardCell(world.x, world.y, currentHexSize(), game.state);
   if (equalHex(nextHoverHex, game.hoverHex)) {
     return;
   }
@@ -2984,7 +3461,7 @@ canvas.addEventListener("click", (event) => {
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
   const world = screenToWorld(x, y);
-  const hex = pixelToAxial(world.x, world.y, currentHexSize());
+  const hex = pixelToBoardCell(world.x, world.y, currentHexSize(), game.state);
   clickPlacement(hex);
 });
 
@@ -3059,7 +3536,7 @@ canvas.addEventListener("touchend", (event) => {
         const x = t.clientX - rect.left;
         const y = t.clientY - rect.top;
         const world = screenToWorld(x, y);
-        const hex = pixelToAxial(world.x, world.y, currentHexSize());
+        const hex = pixelToBoardCell(world.x, world.y, currentHexSize(), game.state);
         clickPlacement(hex);
         game.ignoreClickUntil = Date.now() + 500;
       }

@@ -1,7 +1,7 @@
 # Infinite Hex Tic-Tac-Toe
 
-A browser-based infinite hex-grid strategy game where players race to connect **6 in a row**.  
-It includes stackable rule modes like `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.
+A browser-based infinite strategy game where players race to connect **6 in a row**.  
+It includes stackable rule modes like `Triangle Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - Player 1 opens with **1 placement**.
 - Every turn after that uses **2 placements**.
 - The first move must be at **(0, 0)**.
-- Later placements must be within **11 hexes** of an existing occupied hex.
+- Later placements must be within **11 spaces** of an existing occupied space.
 - A line of **6 stones** wins.
 
 ## Controls
@@ -65,12 +65,13 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 
 ## Modes
 
+- **Triangle Grid**: swaps the board from hex tiles to triangle cells (place inside triangles; all other rules still apply).
 - **Duck**: move duck after your placements; no one can place on it.
 - **King Duck**: adds a panic ring around the king duck.
 - **Egyptian**: each player can keep at most `n` stones (set `n` in the UI); when you go over `n`, choose which of your own stones to remove (not the one just placed).
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
-- **Meteor**: every 3 full turns, farthest occupied hexes are removed.
+- **Meteor**: every 3 full turns, farthest occupied spaces are removed.
 
 ## Project Structure
 

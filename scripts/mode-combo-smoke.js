@@ -550,6 +550,93 @@ function allModeCombos(modeKeys) {
   return combos;
 }
 
+function runTriangleWinDirectionChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.stepTriangleLine, "function", "expected stepTriangleLine helper");
+  assert.equal(typeof context.auditWholeBoardForWinner, "function", "expected auditWholeBoardForWinner helper");
+
+  function buildTriangleStateFromLine(lineHexes) {
+    const state = makeState(["triangleGrid"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, 12);
+    let serial = 0;
+    for (const hex of lineHexes) {
+      serial += 1;
+      state.cells[keyOf(hex)] = {
+        owner: 1,
+        kind: "stone",
+        serial
+      };
+    }
+    state.moveSerial = serial;
+    state.lastPlacement = { ...lineHexes[lineHexes.length - 1] };
+    return state;
+  }
+
+  function buildLineHexes(lineKind, length = 6, start = { q: -14, r: -11 }) {
+    const line = [{ ...start }];
+    let current = { ...start };
+    for (let i = 1; i < length; i += 1) {
+      current = context.stepTriangleLine(current, lineKind, true);
+      line.push({ ...current });
+    }
+    return line;
+  }
+
+  const directions = [
+    { name: "tip-axis A", kind: "tipA" },
+    { name: "tip-axis B", kind: "tipB" },
+    { name: "tip-axis C", kind: "tipC" },
+    { name: "side-axis A", kind: "sideA" },
+    { name: "side-axis B", kind: "sideB" },
+    { name: "side-axis C", kind: "sideC" }
+  ];
+
+  for (const dir of directions) {
+    const line = buildLineHexes(dir.kind, 6);
+    assert.equal(new Set(line.map((hex) => keyOf(hex))).size, line.length, `line should not self-overlap for ${dir.name}`);
+    const state = buildTriangleStateFromLine(line);
+    const winner = context.auditWholeBoardForWinner(state);
+    assert.equal(winner, 1, `triangle winner should resolve for ${dir.name}`);
+
+    const almost = line.slice(0, 5);
+    const almostState = buildTriangleStateFromLine(almost);
+    const almostWinner = context.auditWholeBoardForWinner(almostState);
+    assert.equal(almostWinner, 0, `triangle winner should not trigger early for ${dir.name}`);
+  }
+}
+
+function runKingDuckPanicChecks(context) {
+  assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
+  assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+
+  function runCase(modeKeys, expectedPanicKeys, messagePrefix) {
+    context.window.newGame(modeKeys, { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+    context.clickPlacement({ q: 0, r: 0 }); // opening stone, then bird phase starts
+    context.clickPlacement({ q: 2, r: 0 }); // move king duck
+
+    const state = context.HexTicTacToeInternals.game.state;
+    assert.ok(state.birds.kingDuck, `${messagePrefix}: king duck should be placed`);
+    assert.equal(state.birds.kingDuck.q, 2, `${messagePrefix}: king duck should land at target q`);
+    assert.equal(state.birds.kingDuck.r, 0, `${messagePrefix}: king duck should land at target r`);
+
+    const actualKeys = Object.keys(state.panicZones).sort();
+    const expectedKeys = expectedPanicKeys.slice().sort();
+    assert.deepEqual(actualKeys, expectedKeys, `${messagePrefix}: panic zones should match expected adjacency`);
+  }
+
+  runCase(
+    ["kingDuck"],
+    ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
+    "hex king duck"
+  );
+
+  runCase(
+    ["triangleGrid", "kingDuck"],
+    ["3,0", "3,-1", "1,0"],
+    "triangle king duck"
+  );
+}
+
 function main() {
   const sandbox = makeSandbox();
   const context = vm.createContext(sandbox);
@@ -578,6 +665,8 @@ function main() {
     runScenario(context, combo, false);
     runScenario(context, combo, true);
   }
+  runTriangleWinDirectionChecks(context);
+  runKingDuckPanicChecks(context);
 
   console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios).`);
 }
