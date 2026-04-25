@@ -200,6 +200,11 @@ const MODES = {
     summary: "Replaces hex tiles with triangle tiles while keeping the same placement range and connect-6 win condition.",
     hint: "Board switches to triangle cells. Place inside triangles and connect 6 in a straight line."
   },
+  squareGrid: {
+    name: "Square Grid",
+    summary: "Replaces hex tiles with square tiles while keeping connect-6 wins and all other mode rules intact.",
+    hint: "Board switches to square cells. Place inside squares and connect 6 in a straight line."
+  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -247,6 +252,13 @@ const lineAxes = [
   { q: 1, r: -1 }
 ];
 
+const squareLineAxes = [
+  { q: 1, r: 0 },
+  { q: 0, r: 1 },
+  { q: 1, r: 1 },
+  { q: 1, r: -1 }
+];
+
 const triangleLineKinds = [
   "tipA",
   "tipB",
@@ -275,6 +287,17 @@ function hexDistance(a, b = { q: 0, r: 0 }) {
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(ds));
 }
 
+function squareDistance(a, b = { q: 0, r: 0 }) {
+  return Math.max(
+    Math.abs((a?.q ?? 0) - (b?.q ?? 0)),
+    Math.abs((a?.r ?? 0) - (b?.r ?? 0))
+  );
+}
+
+function getSquareCellPitch(size) {
+  return Math.max(8, Number(size) || 0) * 2;
+}
+
 function getTriangleEdgeLength(size) {
   return Math.max(6, Number(size) || 0);
 }
@@ -297,10 +320,26 @@ function axialToPixel(hex, size) {
   };
 }
 
+function squareToPixel(hex, size) {
+  const pitch = getSquareCellPitch(size);
+  return {
+    x: pitch * (Number(hex?.q) || 0),
+    y: pitch * (Number(hex?.r) || 0)
+  };
+}
+
 function pixelToAxial(x, y, size) {
   const q = ((SQRT3 / 3) * x - (1 / 3) * y) / size;
   const r = ((2 / 3) * y) / size;
   return axialRound({ q, r });
+}
+
+function pixelToSquare(x, y, size) {
+  const pitch = getSquareCellPitch(size);
+  return {
+    q: Math.round(x / pitch),
+    r: Math.round(y / pitch)
+  };
 }
 
 function axialRound(frac) {
@@ -410,6 +449,9 @@ function pixelToBoardCell(x, y, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return pixelToTriangleCell(x, y, size);
   }
+  if (usesSquareGridMode(state)) {
+    return pixelToSquare(x, y, size);
+  }
   return pixelToAxial(x, y, size);
 }
 
@@ -417,11 +459,23 @@ function boardCellToPixel(hex, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return getTriangleCellCenter(hex, size);
   }
+  if (usesSquareGridMode(state)) {
+    return squareToPixel(hex, size);
+  }
   return axialToPixel(hex, size);
 }
 
 function neighbours(hex) {
   return dirs.map((d) => ({ q: hex.q + d.q, r: hex.r + d.r }));
+}
+
+function squareNeighbours(hex) {
+  return [
+    { q: hex.q + 1, r: hex.r },
+    { q: hex.q - 1, r: hex.r },
+    { q: hex.q, r: hex.r + 1 },
+    { q: hex.q, r: hex.r - 1 }
+  ];
 }
 
 function triangleSideNeighbours(hex) {
@@ -445,7 +499,18 @@ function getAdjacentsForMode(state, hex) {
   if (usesTriangleGridMode(state)) {
     return triangleSideNeighbours(hex);
   }
+  if (usesSquareGridMode(state)) {
+    return squareNeighbours(hex);
+  }
   return neighbours(hex);
+}
+
+function getLineAxesForMode(state) {
+  return usesSquareGridMode(state) ? squareLineAxes : lineAxes;
+}
+
+function getDistanceForMode(state, a, b = { q: 0, r: 0 }) {
+  return usesSquareGridMode(state) ? squareDistance(a, b) : hexDistance(a, b);
 }
 
 function stepTriangleLine(hex, lineKind, forward = true) {
@@ -652,16 +717,45 @@ function hasMode(state, modeKey) {
   return state.modeKeys.includes(modeKey);
 }
 
+function getGridMode(state) {
+  if (!state || !Array.isArray(state.modeKeys)) {
+    return "hex";
+  }
+  if (state.modeKeys.includes("squareGrid")) {
+    return "square";
+  }
+  if (state.modeKeys.includes("triangleGrid")) {
+    return "triangle";
+  }
+  return "hex";
+}
+
 function usesTriangleGridMode(state) {
-  return Boolean(state && Array.isArray(state.modeKeys) && state.modeKeys.includes("triangleGrid"));
+  return getGridMode(state) === "triangle";
+}
+
+function usesSquareGridMode(state) {
+  return getGridMode(state) === "square";
 }
 
 function getBoardSpaceLabel(state) {
-  return usesTriangleGridMode(state) ? "triangle" : "hex";
+  if (usesTriangleGridMode(state)) {
+    return "triangle";
+  }
+  if (usesSquareGridMode(state)) {
+    return "square";
+  }
+  return "hex";
 }
 
 function getBoardCoordinateLabel(state) {
-  return usesTriangleGridMode(state) ? "Triangle" : "Hex";
+  if (usesTriangleGridMode(state)) {
+    return "Triangle";
+  }
+  if (usesSquareGridMode(state)) {
+    return "Square";
+  }
+  return "Hex";
 }
 
 function usesBirdMode(state) {
@@ -1680,7 +1774,7 @@ function isWithinPlacementRange(state, hex) {
     return equalHex(hex, { q: 0, r: 0 });
   }
 
-  return anchorHexes.some((anchorHex) => hexDistance(anchorHex, hex) <= MAX_PLACEMENT_DISTANCE);
+  return anchorHexes.some((anchorHex) => getDistanceForMode(state, anchorHex, hex) <= MAX_PLACEMENT_DISTANCE);
 }
 
 function isLegalByBaseRules(state, hex, options = {}) {
@@ -1974,7 +2068,7 @@ function checkWinnerFrom(state, hex) {
   }
 
   for (const owner of owners) {
-    for (const dir of lineAxes) {
+    for (const dir of getLineAxesForMode(state)) {
       if (getLineCount(state, hex, owner, dir) >= WIN_LENGTH) {
         return owner;
       }
@@ -2071,7 +2165,7 @@ function getMeteorTargets(state) {
 
   for (const [key, cell] of Object.entries(state.cells)) {
     const pos = parseKey(key);
-    const dist = hexDistance(pos);
+    const dist = getDistanceForMode(state, pos);
     if (dist > farthestDistance) {
       farthestDistance = dist;
       farthest.length = 0;
@@ -2082,7 +2176,7 @@ function getMeteorTargets(state) {
   }
 
   for (const { birdKind, hex } of getBirdEntries(state)) {
-    const dist = hexDistance(hex);
+    const dist = getDistanceForMode(state, hex);
     if (dist > farthestDistance) {
       farthestDistance = dist;
       farthest.length = 0;
@@ -2445,6 +2539,25 @@ function drawHex(x, y, size, fill, stroke, lineWidth = 1) {
   }
 }
 
+function drawSquare(x, y, size, fill, stroke, lineWidth = 1) {
+  const half = Math.max(0.75, Number(size) || 0);
+  ctx.beginPath();
+  ctx.moveTo(x - half, y - half);
+  ctx.lineTo(x + half, y - half);
+  ctx.lineTo(x + half, y + half);
+  ctx.lineTo(x - half, y + half);
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
 function drawCircle(x, y, radius, fill, stroke, lineWidth = 1) {
   ctx.beginPath();
   ctx.arc(x, y, Math.max(0.5, radius), 0, Math.PI * 2);
@@ -2492,6 +2605,10 @@ function drawBoardShape(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
     drawTriangle(x, y, size, fill, stroke, lineWidth, hex);
     return;
   }
+  if (usesSquareGridMode(game.state)) {
+    drawSquare(x, y, size, fill, stroke, lineWidth);
+    return;
+  }
   drawHex(x, y, size, fill, stroke, lineWidth);
 }
 
@@ -2522,6 +2639,44 @@ function getGridDrawStep(bounds, size) {
   }
 
   return step;
+}
+
+function getSquareVisibleCellBounds(params) {
+  const width = params.width;
+  const height = params.height;
+  const offsetX = params.offsetX;
+  const offsetY = params.offsetY;
+  const pitch = getSquareCellPitch(params.hexSize);
+  const marginCells = params.marginCells == null ? 2 : params.marginCells;
+  const margin = Math.max(pitch * marginCells, pitch * 0.9);
+
+  const corners = [
+    { x: -margin, y: -margin },
+    { x: width + margin, y: -margin },
+    { x: -margin, y: height + margin },
+    { x: width + margin, y: height + margin }
+  ];
+
+  let minQ = Infinity;
+  let maxQ = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
+
+  for (const corner of corners) {
+    const worldX = corner.x - offsetX;
+    const worldY = corner.y - offsetY;
+    minQ = Math.min(minQ, worldX / pitch);
+    maxQ = Math.max(maxQ, worldX / pitch);
+    minR = Math.min(minR, worldY / pitch);
+    maxR = Math.max(maxR, worldY / pitch);
+  }
+
+  return {
+    minQ: Math.floor(minQ) - 1,
+    maxQ: Math.ceil(maxQ) + 1,
+    minR: Math.floor(minR) - 1,
+    maxR: Math.ceil(maxR) + 1
+  };
 }
 
 function getTriangleVisibleCellBounds(params) {
@@ -2635,6 +2790,7 @@ function drawGrid() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   const triangleMode = usesTriangleGridMode(game.state);
+  const squareMode = usesSquareGridMode(game.state);
   const bounds = triangleMode
     ? getTriangleVisibleCellBounds({
       width: w,
@@ -2643,6 +2799,15 @@ function drawGrid() {
       offsetY: game.viewport.offsetY,
       hexSize: size
     })
+    : squareMode
+      ? getSquareVisibleCellBounds({
+        width: w,
+        height: h,
+        offsetX: game.viewport.offsetX,
+        offsetY: game.viewport.offsetY,
+        hexSize: size,
+        marginCells: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
+      })
     : getVisibleBounds({
       width: w,
       height: h,
@@ -3274,7 +3439,7 @@ function drawWinnerLineHint() {
   }
 
   for (const owner of owners) {
-    for (const dir of lineAxes) {
+    for (const dir of getLineAxesForMode(game.state)) {
       if (getLineCount(game.state, last, owner, dir) < WIN_LENGTH) {
         continue;
       }

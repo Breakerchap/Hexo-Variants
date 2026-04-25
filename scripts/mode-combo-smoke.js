@@ -605,6 +605,55 @@ function runTriangleWinDirectionChecks(context) {
   }
 }
 
+function runSquareWinDirectionChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.auditWholeBoardForWinner, "function", "expected auditWholeBoardForWinner helper");
+
+  function buildSquareStateFromLine(lineHexes) {
+    const state = makeState(["squareGrid"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, 12);
+    let serial = 0;
+    for (const hex of lineHexes) {
+      serial += 1;
+      state.cells[keyOf(hex)] = {
+        owner: 1,
+        kind: "stone",
+        serial
+      };
+    }
+    state.moveSerial = serial;
+    state.lastPlacement = { ...lineHexes[lineHexes.length - 1] };
+    return state;
+  }
+
+  function buildLineHexes(axis, length = 6, start = { q: -12, r: -12 }) {
+    return Array.from({ length }, (_, idx) => ({
+      q: start.q + (axis.q * idx),
+      r: start.r + (axis.r * idx)
+    }));
+  }
+
+  const directions = [
+    { name: "horizontal", axis: { q: 1, r: 0 } },
+    { name: "vertical", axis: { q: 0, r: 1 } },
+    { name: "diagonal down-right", axis: { q: 1, r: 1 } },
+    { name: "diagonal up-right", axis: { q: 1, r: -1 } }
+  ];
+
+  for (const dir of directions) {
+    const line = buildLineHexes(dir.axis, 6);
+    assert.equal(new Set(line.map((hex) => keyOf(hex))).size, line.length, `line should not self-overlap for ${dir.name}`);
+    const state = buildSquareStateFromLine(line);
+    const winner = context.auditWholeBoardForWinner(state);
+    assert.equal(winner, 1, `square winner should resolve for ${dir.name}`);
+
+    const almost = line.slice(0, 5);
+    const almostState = buildSquareStateFromLine(almost);
+    const almostWinner = context.auditWholeBoardForWinner(almostState);
+    assert.equal(almostWinner, 0, `square winner should not trigger early for ${dir.name}`);
+  }
+}
+
 function runKingDuckPanicChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -634,6 +683,12 @@ function runKingDuckPanicChecks(context) {
     ["triangleGrid", "kingDuck"],
     ["3,0", "3,-1", "1,0"],
     "triangle king duck"
+  );
+
+  runCase(
+    ["squareGrid", "kingDuck"],
+    ["3,0", "1,0", "2,1", "2,-1"],
+    "square king duck"
   );
 }
 
@@ -666,6 +721,7 @@ function main() {
     runScenario(context, combo, true);
   }
   runTriangleWinDirectionChecks(context);
+  runSquareWinDirectionChecks(context);
   runKingDuckPanicChecks(context);
 
   console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios).`);
