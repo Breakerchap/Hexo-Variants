@@ -46,6 +46,8 @@ const ui = {
 };
 
 const SQRT3 = Math.sqrt(3);
+const COS_22_5 = Math.cos(Math.PI / 8);
+const SIN_22_5 = Math.sin(Math.PI / 8);
 const WIN_LENGTH = 6;
 const MAX_PLACEMENT_DISTANCE = 11;
 const CLOCK_TICK_MS = 100;
@@ -53,6 +55,8 @@ const GRID_TARGET_HEXES_PER_FRAME = 3600;
 const GRID_HINT_MIN_HEX_SIZE = 9;
 const GRID_LOW_DETAIL_HEX_SIZE = 9;
 const GRID_VERY_LOW_DETAIL_HEX_SIZE = 6;
+const OCTAGON_PITCH_FACTOR = 2 * COS_22_5;
+const OCTAGON_DIAMOND_RADIUS_FACTOR = COS_22_5 - SIN_22_5;
 const MIN_TIMER_INITIAL_SECONDS = 1;
 const MAX_TIMER_INITIAL_SECONDS = 180 * 60;
 const DEFAULT_TIMER_CONFIG = {
@@ -65,6 +69,13 @@ const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
   const angle = Math.PI / 180 * (60 * i - 30);
+  return {
+    x: Math.cos(angle),
+    y: Math.sin(angle)
+  };
+});
+const OCTAGON_VERTEX_UNIT = Array.from({ length: 8 }, (_, i) => {
+  const angle = Math.PI / 180 * (45 * i + 22.5);
   return {
     x: Math.cos(angle),
     y: Math.sin(angle)
@@ -205,6 +216,11 @@ const MODES = {
     summary: "Replaces hex tiles with square tiles while keeping connect-6 wins and all other mode rules intact.",
     hint: "Board switches to square cells. Place inside squares and connect 6 in a straight line."
   },
+  octagonGrid: {
+    name: "Octagon Grid",
+    summary: "Replaces hex tiles with an octagon tiling that includes the small diamond tiles while keeping connect-6 wins and all other mode rules intact.",
+    hint: "Board switches to octagons and diamonds. Place in either tile type and connect 6 in a straight line."
+  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -259,6 +275,13 @@ const squareLineAxes = [
   { q: 1, r: -1 }
 ];
 
+const octagonLineAxes = [
+  { q: 2, r: 0 },
+  { q: 0, r: 2 },
+  { q: 1, r: 1 },
+  { q: 1, r: -1 }
+];
+
 const triangleLineKinds = [
   "tipA",
   "tipB",
@@ -298,6 +321,28 @@ function getSquareCellPitch(size) {
   return Math.max(8, Number(size) || 0) * 2;
 }
 
+function getOctagonCellPitch(size) {
+  return Math.max(8, Number(size) || 0) * OCTAGON_PITCH_FACTOR;
+}
+
+function getOctagonCellHalfPitch(size) {
+  return getOctagonCellPitch(size) / 2;
+}
+
+function isOctagonTileCoordinate(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  return (Math.abs(q) % 2) === (Math.abs(r) % 2);
+}
+
+function isOctagonDiamondCoordinate(hex) {
+  if (!isOctagonTileCoordinate(hex)) {
+    return false;
+  }
+  const q = Math.trunc(Number(hex?.q) || 0);
+  return Math.abs(q) % 2 === 1;
+}
+
 function getTriangleEdgeLength(size) {
   return Math.max(6, Number(size) || 0);
 }
@@ -328,6 +373,14 @@ function squareToPixel(hex, size) {
   };
 }
 
+function octagonToPixel(hex, size) {
+  const halfPitch = getOctagonCellHalfPitch(size);
+  return {
+    x: halfPitch * (Number(hex?.q) || 0),
+    y: halfPitch * (Number(hex?.r) || 0)
+  };
+}
+
 function pixelToAxial(x, y, size) {
   const q = ((SQRT3 / 3) * x - (1 / 3) * y) / size;
   const r = ((2 / 3) * y) / size;
@@ -340,6 +393,40 @@ function pixelToSquare(x, y, size) {
     q: Math.round(x / pitch),
     r: Math.round(y / pitch)
   };
+}
+
+function pixelToOctagon(x, y, size) {
+  const halfPitch = getOctagonCellHalfPitch(size);
+  const qFloat = x / halfPitch;
+  const rFloat = y / halfPitch;
+  const rounded = {
+    q: Math.round(qFloat),
+    r: Math.round(rFloat)
+  };
+
+  if (isOctagonTileCoordinate(rounded)) {
+    return rounded;
+  }
+
+  const candidates = [
+    { q: rounded.q + 1, r: rounded.r },
+    { q: rounded.q - 1, r: rounded.r },
+    { q: rounded.q, r: rounded.r + 1 },
+    { q: rounded.q, r: rounded.r - 1 }
+  ];
+
+  let best = candidates[0];
+  let bestDistSq = Infinity;
+  for (const candidate of candidates) {
+    const dq = qFloat - candidate.q;
+    const dr = rFloat - candidate.r;
+    const distSq = (dq * dq) + (dr * dr);
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      best = candidate;
+    }
+  }
+  return best;
 }
 
 function axialRound(frac) {
@@ -449,6 +536,9 @@ function pixelToBoardCell(x, y, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return pixelToTriangleCell(x, y, size);
   }
+  if (usesOctagonGridMode(state)) {
+    return pixelToOctagon(x, y, size);
+  }
   if (usesSquareGridMode(state)) {
     return pixelToSquare(x, y, size);
   }
@@ -458,6 +548,9 @@ function pixelToBoardCell(x, y, size, state = null) {
 function boardCellToPixel(hex, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return getTriangleCellCenter(hex, size);
+  }
+  if (usesOctagonGridMode(state)) {
+    return octagonToPixel(hex, size);
   }
   if (usesSquareGridMode(state)) {
     return squareToPixel(hex, size);
@@ -475,6 +568,30 @@ function squareNeighbours(hex) {
     { q: hex.q - 1, r: hex.r },
     { q: hex.q, r: hex.r + 1 },
     { q: hex.q, r: hex.r - 1 }
+  ];
+}
+
+function octagonTileNeighbours(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  if (isOctagonDiamondCoordinate({ q, r })) {
+    return [
+      { q: q + 1, r: r + 1 },
+      { q: q + 1, r: r - 1 },
+      { q: q - 1, r: r + 1 },
+      { q: q - 1, r: r - 1 }
+    ];
+  }
+
+  return [
+    { q: q + 2, r },
+    { q: q - 2, r },
+    { q, r: r + 2 },
+    { q, r: r - 2 },
+    { q: q + 1, r: r + 1 },
+    { q: q + 1, r: r - 1 },
+    { q: q - 1, r: r + 1 },
+    { q: q - 1, r: r - 1 }
   ];
 }
 
@@ -499,6 +616,9 @@ function getAdjacentsForMode(state, hex) {
   if (usesTriangleGridMode(state)) {
     return triangleSideNeighbours(hex);
   }
+  if (usesOctagonGridMode(state)) {
+    return octagonTileNeighbours(hex);
+  }
   if (usesSquareGridMode(state)) {
     return squareNeighbours(hex);
   }
@@ -506,10 +626,28 @@ function getAdjacentsForMode(state, hex) {
 }
 
 function getLineAxesForMode(state) {
+  if (usesOctagonGridMode(state)) {
+    return octagonLineAxes;
+  }
   return usesSquareGridMode(state) ? squareLineAxes : lineAxes;
 }
 
+function octagonDistance(a, b = { q: 0, r: 0 }) {
+  const dq = Math.abs((a?.q ?? 0) - (b?.q ?? 0));
+  const dr = Math.abs((a?.r ?? 0) - (b?.r ?? 0));
+
+  const aIsDiamond = isOctagonDiamondCoordinate(a);
+  const bIsDiamond = isOctagonDiamondCoordinate(b);
+  if (!aIsDiamond && !bIsDiamond) {
+    return Math.trunc((dq + dr) / 2);
+  }
+  return Math.max(dq, dr);
+}
+
 function getDistanceForMode(state, a, b = { q: 0, r: 0 }) {
+  if (usesOctagonGridMode(state)) {
+    return octagonDistance(a, b);
+  }
   return usesSquareGridMode(state) ? squareDistance(a, b) : hexDistance(a, b);
 }
 
@@ -721,6 +859,9 @@ function getGridMode(state) {
   if (!state || !Array.isArray(state.modeKeys)) {
     return "hex";
   }
+  if (state.modeKeys.includes("octagonGrid")) {
+    return "octagon";
+  }
   if (state.modeKeys.includes("squareGrid")) {
     return "square";
   }
@@ -734,6 +875,10 @@ function usesTriangleGridMode(state) {
   return getGridMode(state) === "triangle";
 }
 
+function usesOctagonGridMode(state) {
+  return getGridMode(state) === "octagon";
+}
+
 function usesSquareGridMode(state) {
   return getGridMode(state) === "square";
 }
@@ -741,6 +886,9 @@ function usesSquareGridMode(state) {
 function getBoardSpaceLabel(state) {
   if (usesTriangleGridMode(state)) {
     return "triangle";
+  }
+  if (usesOctagonGridMode(state)) {
+    return "tile";
   }
   if (usesSquareGridMode(state)) {
     return "square";
@@ -752,10 +900,20 @@ function getBoardCoordinateLabel(state) {
   if (usesTriangleGridMode(state)) {
     return "Triangle";
   }
+  if (usesOctagonGridMode(state)) {
+    return "Octagon";
+  }
   if (usesSquareGridMode(state)) {
     return "Square";
   }
   return "Hex";
+}
+
+function isCellSupportedForMode(state, hex) {
+  if (usesOctagonGridMode(state)) {
+    return isOctagonTileCoordinate(hex);
+  }
+  return true;
 }
 
 function usesBirdMode(state) {
@@ -1697,10 +1855,16 @@ function isStoneOccupied(state, hex) {
 }
 
 function isHexOpen(state, hex) {
+  if (!isCellSupportedForMode(state, hex)) {
+    return false;
+  }
   return !isStoneOccupied(state, hex) && !getBirdAt(state, hex) && !getBirdEchoCopyAt(state, hex);
 }
 
 function isHexOpenForBird(state, hex, birdKind) {
+  if (!isCellSupportedForMode(state, hex)) {
+    return false;
+  }
   if (isStoneOccupied(state, hex)) {
     return false;
   }
@@ -1780,6 +1944,9 @@ function isWithinPlacementRange(state, hex) {
 function isLegalByBaseRules(state, hex, options = {}) {
   const allowOccupied = Boolean(options.allowOccupied);
   if (state.winner) {
+    return false;
+  }
+  if (!isCellSupportedForMode(state, hex)) {
     return false;
   }
   if (!allowOccupied && isOccupied(state, hex)) {
@@ -2539,6 +2706,48 @@ function drawHex(x, y, size, fill, stroke, lineWidth = 1) {
   }
 }
 
+function drawOctagon(x, y, size, fill, stroke, lineWidth = 1) {
+  ctx.beginPath();
+  for (let i = 0; i < OCTAGON_VERTEX_UNIT.length; i += 1) {
+    const px = x + size * OCTAGON_VERTEX_UNIT[i].x;
+    const py = y + size * OCTAGON_VERTEX_UNIT[i].y;
+    if (i === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
+function drawOctagonDiamond(x, y, size, fill, stroke, lineWidth = 1) {
+  const radius = Math.max(0.75, Number(size) || 0) * OCTAGON_DIAMOND_RADIUS_FACTOR;
+  ctx.beginPath();
+  ctx.moveTo(x, y - radius);
+  ctx.lineTo(x + radius, y);
+  ctx.lineTo(x, y + radius);
+  ctx.lineTo(x - radius, y);
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
 function drawSquare(x, y, size, fill, stroke, lineWidth = 1) {
   const half = Math.max(0.75, Number(size) || 0);
   ctx.beginPath();
@@ -2605,6 +2814,14 @@ function drawBoardShape(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
     drawTriangle(x, y, size, fill, stroke, lineWidth, hex);
     return;
   }
+  if (usesOctagonGridMode(game.state)) {
+    if (isOctagonDiamondCoordinate(hex)) {
+      drawOctagonDiamond(x, y, size, fill, stroke, lineWidth);
+      return;
+    }
+    drawOctagon(x, y, size, fill, stroke, lineWidth);
+    return;
+  }
   if (usesSquareGridMode(game.state)) {
     drawSquare(x, y, size, fill, stroke, lineWidth);
     return;
@@ -2669,6 +2886,44 @@ function getSquareVisibleCellBounds(params) {
     maxQ = Math.max(maxQ, worldX / pitch);
     minR = Math.min(minR, worldY / pitch);
     maxR = Math.max(maxR, worldY / pitch);
+  }
+
+  return {
+    minQ: Math.floor(minQ) - 1,
+    maxQ: Math.ceil(maxQ) + 1,
+    minR: Math.floor(minR) - 1,
+    maxR: Math.ceil(maxR) + 1
+  };
+}
+
+function getOctagonVisibleCellBounds(params) {
+  const width = params.width;
+  const height = params.height;
+  const offsetX = params.offsetX;
+  const offsetY = params.offsetY;
+  const halfPitch = getOctagonCellHalfPitch(params.hexSize);
+  const marginCells = params.marginCells == null ? 2 : params.marginCells;
+  const margin = Math.max(halfPitch * marginCells, halfPitch * 1.6);
+
+  const corners = [
+    { x: -margin, y: -margin },
+    { x: width + margin, y: -margin },
+    { x: -margin, y: height + margin },
+    { x: width + margin, y: height + margin }
+  ];
+
+  let minQ = Infinity;
+  let maxQ = -Infinity;
+  let minR = Infinity;
+  let maxR = -Infinity;
+
+  for (const corner of corners) {
+    const worldX = corner.x - offsetX;
+    const worldY = corner.y - offsetY;
+    minQ = Math.min(minQ, worldX / halfPitch);
+    maxQ = Math.max(maxQ, worldX / halfPitch);
+    minR = Math.min(minR, worldY / halfPitch);
+    maxR = Math.max(maxR, worldY / halfPitch);
   }
 
   return {
@@ -2790,6 +3045,7 @@ function drawGrid() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   const triangleMode = usesTriangleGridMode(game.state);
+  const octagonMode = usesOctagonGridMode(game.state);
   const squareMode = usesSquareGridMode(game.state);
   const bounds = triangleMode
     ? getTriangleVisibleCellBounds({
@@ -2799,6 +3055,15 @@ function drawGrid() {
       offsetY: game.viewport.offsetY,
       hexSize: size
     })
+    : octagonMode
+      ? getOctagonVisibleCellBounds({
+        width: w,
+        height: h,
+        offsetX: game.viewport.offsetX,
+        offsetY: game.viewport.offsetY,
+        hexSize: size,
+        marginCells: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
+      })
     : squareMode
       ? getSquareVisibleCellBounds({
         width: w,
@@ -2844,6 +3109,9 @@ function drawGrid() {
   for (let r = bounds.minR; r <= bounds.maxR; r += drawStep) {
     for (let q = bounds.minQ; q <= bounds.maxQ; q += drawStep) {
       const hex = { q, r };
+      if (octagonMode && !isOctagonTileCoordinate(hex)) {
+        continue;
+      }
       const world = boardCellToPixel(hex, size, game.state);
       const screen = worldToScreen(world.x, world.y);
       if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {

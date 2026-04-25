@@ -1,7 +1,7 @@
 # Infinite Hex Tic-Tac-Toe
 
 A browser-based infinite strategy game where players race to connect **6 in a row**.  
-It includes stackable rule modes like `Triangle Grid`, `Square Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.
+It includes stackable rule modes like `Triangle Grid`, `Square Grid`, `Octagon Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.
 
 ## Quick Start
 
@@ -67,6 +67,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 
 - **Triangle Grid**: swaps the board from hex tiles to triangle cells (place inside triangles; all other rules still apply).
 - **Square Grid**: swaps the board from hex tiles to square cells (place inside squares; all other rules still apply).
+- **Octagon Grid**: swaps the board from hex tiles to an octagon-and-diamond tiling (place inside octagons and the small diamonds; all other rules still apply).
 - **Duck**: move duck after your placements; no one can place on it.
 - **King Duck**: adds a panic ring around the king duck.
 - **Egyptian**: each player can keep at most `n` stones (set `n` in the UI); when you go over `n`, choose which of your own stones to remove (not the one just placed).
