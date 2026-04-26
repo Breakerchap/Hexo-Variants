@@ -33,6 +33,8 @@ const ui = {
   timerEnabledInput: document.getElementById("timerEnabledInput"),
   applyTimerBtn: document.getElementById("applyTimerBtn"),
   timerSummaryText: document.getElementById("timerSummaryText"),
+  turnOrderInput: document.getElementById("turnOrderInput"),
+  turnOrderSummaryText: document.getElementById("turnOrderSummaryText"),
   p1ClockText: document.getElementById("p1ClockText"),
   p2ClockText: document.getElementById("p2ClockText"),
   onlineCreateBtn: document.getElementById("onlineCreateBtn"),
@@ -772,6 +774,7 @@ const game = {
   renderScheduled: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
+  turnOrder: "random",
   clockRuntime: {
     intervalId: null,
     lastTickAt: 0
@@ -1081,6 +1084,51 @@ function setTimerInputs(timerConfig) {
   ui.timerSummaryText.textContent = formatTimerSummary(timer);
 }
 
+function normaliseTurnOrder(value) {
+  if (value === "p1First" || value === "p2First" || value === "random") {
+    return value;
+  }
+  return "random";
+}
+
+function resolveStartingPlayer(turnOrder) {
+  const safeTurnOrder = normaliseTurnOrder(turnOrder);
+  if (safeTurnOrder === "p2First") {
+    return 2;
+  }
+  if (safeTurnOrder === "random") {
+    return Math.random() < 0.5 ? 1 : 2;
+  }
+  return 1;
+}
+
+function getTurnOrderFromInput() {
+  return normaliseTurnOrder(ui.turnOrderInput?.value || game.turnOrder);
+}
+
+function setTurnOrderInput(turnOrder) {
+  const safeTurnOrder = normaliseTurnOrder(turnOrder);
+  game.turnOrder = safeTurnOrder;
+  if (ui.turnOrderInput) {
+    ui.turnOrderInput.value = safeTurnOrder;
+  }
+  updateTurnOrderSummary();
+}
+
+function updateTurnOrderSummary() {
+  if (!ui.turnOrderSummaryText) {
+    return;
+  }
+  const turnOrder = getTurnOrderFromInput();
+  if (turnOrder === "p2First") {
+    ui.turnOrderSummaryText.textContent = "First player: P2";
+  } else if (turnOrder === "random") {
+    ui.turnOrderSummaryText.textContent = "First player: Random";
+  } else {
+    ui.turnOrderSummaryText.textContent = "First player: P1";
+  }
+}
+
 function normaliseEgyptianStoneCap(value) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1248,6 +1296,9 @@ function updateOnlineControls() {
   }
   ui.timerIncrementInput.disabled = inRoom && !admin;
   ui.timerEnabledInput.disabled = inRoom && !admin;
+  if (ui.turnOrderInput) {
+    ui.turnOrderInput.disabled = inRoom && !admin;
+  }
   if (ui.egyptianCapInput) {
     ui.egyptianCapInput.disabled = inRoom && !admin;
   }
@@ -2652,6 +2703,7 @@ function updateStatus() {
   }
 
   updateClockUI();
+  updateTurnOrderSummary();
   renderLog();
   updateOnlineStatusUI();
 }
@@ -3785,12 +3837,18 @@ function centreBoard() {
   render();
 }
 
-function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfig) {
+function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfig, turnOrder = getTurnOrderFromInput()) {
   game.timerConfig = normaliseTimerConfig(timerConfig);
+  game.turnOrder = normaliseTurnOrder(turnOrder);
   game.egyptianStoneCap = getEgyptianStoneCapFromInputs();
   setTimerInputs(game.timerConfig);
+  setTurnOrderInput(game.turnOrder);
   setEgyptianCapInput(game.egyptianStoneCap);
   game.state = makeInitialState(modeKeys, game.timerConfig, game.egyptianStoneCap);
+  const startingPlayer = resolveStartingPlayer(game.turnOrder);
+  game.state.startingPlayer = startingPlayer;
+  game.state.turnPlayer = startingPlayer;
+  game.state.clock.activePlayer = startingPlayer;
   ensureClockState(game.state);
   game.history = [];
   game.futureHistory = [];
@@ -4040,11 +4098,101 @@ function refreshEgyptianCapSummaryFromInputs() {
   ui.egyptianCapSummaryText.textContent = `Cap: ${cap} stones/player`;
 }
 
+function isTypingTarget(target) {
+  if (!target) {
+    return false;
+  }
+  const tagName = target.tagName;
+  return target.isContentEditable
+    || tagName === "INPUT"
+    || tagName === "SELECT"
+    || tagName === "TEXTAREA";
+}
+
+function zoomBoardAtScreenPoint(screenX, screenY, factor) {
+  const before = screenToWorld(screenX, screenY);
+  game.viewport.zoom = Math.min(3.8, Math.max(0.33, game.viewport.zoom * factor));
+  const after = screenToWorld(screenX, screenY);
+  game.viewport.offsetX += (after.x - before.x);
+  game.viewport.offsetY += (after.y - before.y);
+  render();
+}
+
+function handleKeyboardShortcut(event) {
+  if (isTypingTarget(event.target)) {
+    return;
+  }
+
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === "z" && !event.shiftKey) {
+    if (canUseAdminControls()) {
+      event.preventDefault();
+      navigateHistoryBack();
+    }
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && (key === "y" || (key === "z" && event.shiftKey))) {
+    if (canUseAdminControls()) {
+      event.preventDefault();
+      navigateHistoryForward();
+    }
+    return;
+  }
+
+  if (event.altKey && event.key === "ArrowLeft") {
+    if (canUseAdminControls()) {
+      event.preventDefault();
+      navigateHistoryBack();
+    }
+    return;
+  }
+
+  if (event.altKey && event.key === "ArrowRight") {
+    if (canUseAdminControls()) {
+      event.preventDefault();
+      navigateHistoryForward();
+    }
+    return;
+  }
+
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+
+  if (key === "c") {
+    event.preventDefault();
+    centreBoard();
+  } else if (key === "m") {
+    event.preventDefault();
+    setOptionsMenuCollapsed(!ui.appRoot.classList.contains("menuCollapsed"));
+  } else if (key === "n") {
+    if (canUseAdminControls()) {
+      event.preventDefault();
+      newGame(getSelectedModeKeys(), getTimerConfigFromInputs());
+    }
+  } else if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    zoomBoardAtScreenPoint(canvas.clientWidth / 2, canvas.clientHeight / 2, 1.12);
+  } else if (event.key === "-" || event.key === "_") {
+    event.preventDefault();
+    zoomBoardAtScreenPoint(canvas.clientWidth / 2, canvas.clientHeight / 2, 0.89);
+  } else if (event.key === "0") {
+    event.preventDefault();
+    game.viewport.zoom = 1;
+    render();
+  }
+}
+
 ui.timerMinutesInput.addEventListener("input", refreshTimerSummaryFromInputs);
 ui.timerSecondsInput?.addEventListener("input", refreshTimerSummaryFromInputs);
 ui.timerIncrementInput.addEventListener("input", refreshTimerSummaryFromInputs);
 ui.timerEnabledInput.addEventListener("change", refreshTimerSummaryFromInputs);
 ui.egyptianCapInput?.addEventListener("input", refreshEgyptianCapSummaryFromInputs);
+ui.turnOrderInput?.addEventListener("change", () => {
+  game.turnOrder = getTurnOrderFromInput();
+  updateTurnOrderSummary();
+});
 
 ui.onlineCreateBtn.addEventListener("click", () => {
   createOnlineRoom();
@@ -4059,6 +4207,7 @@ ui.onlineLeaveBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("keydown", handleKeyboardShortcut);
 ui.appRoot.addEventListener("transitionend", (event) => {
   if (event.target === ui.appRoot || event.target === canvas || event.target.classList?.contains("sidebar")) {
     resizeCanvas();

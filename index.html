@@ -31,10 +31,10 @@
         <div class="footerNote">Toggle any combination, then start a new game.</div>
         <div style="height: 10px"></div>
         <div class="controls">
-          <button id="newGameBtn" class="primary">New Game</button>
-          <button id="centreBtn">Centre Board</button>
-          <button id="historyBackBtn">Back</button>
-          <button id="historyForwardBtn">Forward</button>
+          <button id="newGameBtn" class="primary" aria-keyshortcuts="N">New Game</button>
+          <button id="centreBtn" aria-keyshortcuts="C">Centre Board</button>
+          <button id="historyBackBtn" aria-keyshortcuts="Control+Z Alt+ArrowLeft">Back</button>
+          <button id="historyForwardBtn" aria-keyshortcuts="Control+Y Control+Shift+Z Alt+ArrowRight">Forward</button>
         </div>
       </section>
 
@@ -141,8 +141,8 @@
     </aside>
 
     <main class="boardWrap">
-      <canvas id="board"></canvas>
-      <button id="toggleMenuBtn" class="menuToggleButton" type="button" aria-pressed="false" aria-label="Hide options menu">Hide menu</button>
+      <canvas id="board" tabindex="0" role="application" aria-label="Infinite Hex Tic-Tac-Toe board"></canvas>
+      <button id="toggleMenuBtn" class="menuToggleButton" type="button" aria-pressed="false" aria-label="Hide options menu" aria-keyshortcuts="M">Hide menu</button>
       <div class="overlay">
         <div class="badge">
           <div id="overlayTitle">Classic</div>
@@ -175,6 +175,5 @@
   <script src="./perf-helpers.js"></script>
   <script src="./timer-helpers.js"></script>
   <script src="./game.js"></script>
-  <script src="./turn-order-patch.js"></script>
 </body>
 </html>
