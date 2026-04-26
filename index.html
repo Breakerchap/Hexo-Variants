@@ -83,6 +83,40 @@
         </div>
       </section>
 
+      <section id="armoryControls" class="section" hidden>
+        <div class="small sectionHeading">Armory Console</div>
+        <div class="grid2">
+          <label class="small" for="armoryClassP1Select" style="display: grid; gap: 6px;">
+            Player 1 Class
+            <select id="armoryClassP1Select" aria-label="Player 1 armory class">
+              <option value="vanguard">Vanguard</option>
+              <option value="arcanist">Arcanist</option>
+              <option value="saboteur">Saboteur</option>
+            </select>
+          </label>
+          <label class="small" for="armoryClassP2Select" style="display: grid; gap: 6px;">
+            Player 2 Class
+            <select id="armoryClassP2Select" aria-label="Player 2 armory class">
+              <option value="vanguard">Vanguard</option>
+              <option value="arcanist">Arcanist</option>
+              <option value="saboteur">Saboteur</option>
+            </select>
+          </label>
+        </div>
+        <div style="height: 8px"></div>
+        <div id="armorySummaryText" class="small">P1 Vanguard | P2 Arcanist</div>
+        <div id="armoryCurrencyText" class="small">P1 0g/0a | P2 0g/0a</div>
+        <div id="armoryActiveClassText" class="small">Active: Player 1 | Piece: Militia</div>
+        <div style="height: 8px"></div>
+        <div class="small" style="margin-bottom: 6px; color: var(--text);">Piece Inventory</div>
+        <div id="armoryPieceSelect" class="modePickerGrid"></div>
+        <div style="height: 8px"></div>
+        <div class="small" style="margin-bottom: 6px; color: var(--text);">Shop Offers</div>
+        <div id="armoryShopOffers" class="modePickerGrid"></div>
+        <div style="height: 8px"></div>
+        <button id="armoryRerollBtn" type="button">Reroll Shop (-2g)</button>
+      </section>
+
       <section class="section">
         <div class="small sectionHeading">Online</div>
         <div class="controls">

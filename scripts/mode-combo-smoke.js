@@ -5,6 +5,8 @@ const assert = require("assert/strict");
 const PROJECT_ROOT = fs.existsSync(path.resolve(process.cwd(), "game.js"))
   ? process.cwd()
   : path.resolve(__dirname, "..");
+const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid"];
+const NEW_MODE_KEYS = ["entropyCascade", "armory"];
 
 class FakeClassList {
   constructor(initial = "") {
@@ -315,6 +317,7 @@ function makeSandbox() {
       const id = nextTimerId += 1;
       timers.set(id, { callback, interval: false });
       callback();
+      timers.delete(id);
       return id;
     },
     clearTimeout: (id) => {
@@ -378,6 +381,46 @@ function buildCandidateHexes(radius, reverse = false) {
   return hexes;
 }
 
+function buildAnchorCandidateHexes(state, reverse = false) {
+  const recentStoneAnchors = Object.entries(state.cells)
+    .map(([key, cell]) => ({ hex: parseKey(key), serial: Number(cell?.serial) || 0 }))
+    .sort((a, b) => b.serial - a.serial)
+    .slice(0, 12)
+    .map((entry) => entry.hex);
+  const birdAnchors = ["duck", "kingDuck"]
+    .map((birdKind) => state.birds?.[birdKind] || null)
+    .filter(Boolean);
+  const echoAnchors = ["duck", "kingDuck"]
+    .map((birdKind) => state.birdEchoCopies?.[birdKind] || null)
+    .filter(Boolean);
+  const anchors = [...recentStoneAnchors, ...birdAnchors, ...echoAnchors];
+  if (anchors.length === 0) {
+    return [{ q: 0, r: 0 }];
+  }
+
+  const radius = 12;
+  const byKey = new Map();
+  for (const anchor of anchors) {
+    for (let dq = -radius; dq <= radius; dq += 1) {
+      for (let dr = -radius; dr <= radius; dr += 1) {
+        const hex = { q: anchor.q + dq, r: anchor.r + dr };
+        byKey.set(keyOf(hex), hex);
+      }
+    }
+  }
+
+  const candidates = Array.from(byKey.values());
+  candidates.sort((a, b) => (
+    hexDistance(a) - hexDistance(b)
+      || a.q - b.q
+      || a.r - b.r
+  ));
+  if (reverse) {
+    candidates.reverse();
+  }
+  return candidates;
+}
+
 function stateFingerprint(state) {
   return JSON.stringify(state);
 }
@@ -426,6 +469,16 @@ function assertStateInvariants(sandbox, state) {
     const copyHex = state.birdEchoCopies?.[birdKind];
     if (copyHex) {
       assert.equal(Boolean(state.cells[keyOf(copyHex)]), false, `${birdKind} echo copy should not overlap a stone`);
+    }
+  }
+
+  if (state.modeKeys.includes("armory")) {
+    assert.ok(state.armory && typeof state.armory === "object", "armory mode should create armory state");
+    for (const owner of [1, 2]) {
+      const wallet = state.armory.currencies?.[owner];
+      assert.ok(wallet && wallet.gold >= 0 && wallet.arcana >= 0, `armory wallet for player ${owner} should be valid`);
+      const selected = String(state.armory.selectedPiece?.[owner] || "militia");
+      assert.ok(["militia", "lancer", "sage", "bastion", "assassin", "oracle", "alchemist"].includes(selected), `armory selected piece for player ${owner} should be known`);
     }
   }
 }
@@ -480,8 +533,11 @@ function runScenario(sandbox, modeKeys, reverse = false) {
     "egyptian n controls should only be visible when egyptian mode is selected"
   );
 
-  const candidateHexes = buildCandidateHexes(14, reverse);
-  const maxActions = 100;
+  const candidateRadius = modeKeys.includes("entropyCascade") ? 34 : 14;
+  const candidateHexes = buildCandidateHexes(candidateRadius, reverse);
+  const maxActions = modeKeys.includes("armory")
+    ? (modeKeys.includes("entropyCascade") ? 22 : 30)
+    : (modeKeys.includes("entropyCascade") ? 72 : 100);
 
   for (let step = 0; step < maxActions; step += 1) {
     const state = sandbox.HexTicTacToeInternals.game.state;
@@ -528,25 +584,97 @@ function runScenario(sandbox, modeKeys, reverse = false) {
     sandbox.clickPlacement({ q: 99, r: -99 });
     assert.equal(stateFingerprint(state), beforeIllegal, "illegal far placement should not mutate state");
 
-    const legalHex = pickLegalPlacement(sandbox, state, candidateHexes);
-    assert.ok(legalHex, "expected at least one legal placement");
+    let legalHex = pickLegalPlacement(sandbox, state, candidateHexes);
+    if (!legalHex) {
+      const anchorCandidates = buildAnchorCandidateHexes(state, reverse);
+      legalHex = pickLegalPlacement(sandbox, state, anchorCandidates);
+    }
+    assert.ok(legalHex, `expected at least one legal placement (modes: ${modeKeys.join(",") || "classic"}, step: ${step})`);
     sandbox.clickPlacement(legalHex);
   }
   assertStateInvariants(sandbox, sandbox.HexTicTacToeInternals.game.state);
 }
 
-function allModeCombos(modeKeys) {
-  const combos = [];
-  const total = 1 << modeKeys.length;
-  for (let mask = 0; mask < total; mask += 1) {
-    const combo = [];
-    for (let i = 0; i < modeKeys.length; i += 1) {
-      if (mask & (1 << i)) {
-        combo.push(modeKeys[i]);
+function allModeCombos(modeKeys, options = {}) {
+  const newOnly = options.newOnly !== false;
+  const gridModes = new Set(GRID_MODE_KEYS);
+  const requestedNewModes = new Set(NEW_MODE_KEYS);
+  const gridKeys = modeKeys.filter((modeKey) => gridModes.has(modeKey));
+  const otherKeys = modeKeys.filter((modeKey) => !gridModes.has(modeKey));
+  const availableNewModes = modeKeys.filter((modeKey) => requestedNewModes.has(modeKey));
+
+  if (newOnly) {
+    const combos = [];
+    const seen = new Set();
+    const addCombo = (combo) => {
+      const dedupeKey = combo.slice().sort().join("|");
+      if (seen.has(dedupeKey)) {
+        return;
+      }
+      seen.add(dedupeKey);
+      combos.push(combo);
+    };
+
+    for (const newMode of availableNewModes) {
+      const newModeIsGrid = gridModes.has(newMode);
+      const nonGridOthers = otherKeys.filter((modeKey) => modeKey !== newMode);
+      const gridOthers = gridKeys.filter((modeKey) => modeKey !== newMode);
+      const allNonGrid = [newMode, ...nonGridOthers].filter((modeKey, idx, arr) => arr.indexOf(modeKey) === idx);
+
+      addCombo([newMode]);
+      for (const other of [...nonGridOthers, ...gridOthers]) {
+        addCombo(gridModes.has(other) ? [other, newMode] : [newMode, other]);
+      }
+
+      if (newModeIsGrid) {
+        for (const other of nonGridOthers) {
+          addCombo([newMode, other]);
+        }
+        if (nonGridOthers.length > 0) {
+          addCombo([newMode, ...nonGridOthers]);
+        }
+      } else {
+        for (const gridMode of gridKeys) {
+          addCombo([gridMode, newMode]);
+          for (const other of nonGridOthers) {
+            addCombo([gridMode, newMode, other]);
+          }
+          if (nonGridOthers.length > 0) {
+            addCombo([gridMode, newMode, ...nonGridOthers]);
+          }
+        }
+        if (nonGridOthers.length > 0) {
+          addCombo(allNonGrid);
+        }
       }
     }
-    combos.push(combo);
+
+    return combos;
   }
+
+  const combos = [];
+  const totalOther = 1 << otherKeys.length;
+  for (let mask = 0; mask < totalOther; mask += 1) {
+    const base = [];
+    for (let i = 0; i < otherKeys.length; i += 1) {
+      if (mask & (1 << i)) {
+        base.push(otherKeys[i]);
+      }
+    }
+
+    const gridVariants = [null, ...gridKeys];
+    for (const gridKey of gridVariants) {
+      const combo = gridKey ? [gridKey, ...base] : base.slice();
+      if (newOnly) {
+        const includesNewMode = combo.some((modeKey) => requestedNewModes.has(modeKey));
+        if (!includesNewMode) {
+          continue;
+        }
+      }
+      combos.push(combo);
+    }
+  }
+
   return combos;
 }
 
@@ -654,6 +782,55 @@ function runSquareWinDirectionChecks(context) {
   }
 }
 
+function runDiamondWinDirectionChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.auditWholeBoardForWinner, "function", "expected auditWholeBoardForWinner helper");
+
+  function buildDiamondStateFromLine(lineHexes) {
+    const state = makeState(["diamondGrid"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, 12);
+    let serial = 0;
+    for (const hex of lineHexes) {
+      serial += 1;
+      state.cells[keyOf(hex)] = {
+        owner: 1,
+        kind: "stone",
+        serial
+      };
+    }
+    state.moveSerial = serial;
+    state.lastPlacement = { ...lineHexes[lineHexes.length - 1] };
+    return state;
+  }
+
+  function buildLineHexes(axis, length = 6, start = { q: -12, r: -12 }) {
+    return Array.from({ length }, (_, idx) => ({
+      q: start.q + (axis.q * idx),
+      r: start.r + (axis.r * idx)
+    }));
+  }
+
+  const directions = [
+    { name: "horizontal hex rows", axis: { q: 2, r: 0 } },
+    { name: "vertical hex rows", axis: { q: 0, r: 2 } },
+    { name: "diagonal alternating", axis: { q: 1, r: 1 } },
+    { name: "anti-diagonal alternating", axis: { q: 1, r: -1 } }
+  ];
+
+  for (const dir of directions) {
+    const line = buildLineHexes(dir.axis, 6);
+    assert.equal(new Set(line.map((hex) => keyOf(hex))).size, line.length, `line should not self-overlap for diamond ${dir.name}`);
+    const state = buildDiamondStateFromLine(line);
+    const winner = context.auditWholeBoardForWinner(state);
+    assert.equal(winner, 1, `diamond winner should resolve for ${dir.name}`);
+
+    const almost = line.slice(0, 5);
+    const almostState = buildDiamondStateFromLine(almost);
+    const almostWinner = context.auditWholeBoardForWinner(almostState);
+    assert.equal(almostWinner, 0, `diamond winner should not trigger early for ${dir.name}`);
+  }
+}
+
 function runOctagonWinDirectionChecks(context) {
   const makeState = context.HexTicTacToeInternals.makeInitialState;
   assert.equal(typeof makeState, "function", "expected makeInitialState helper");
@@ -703,9 +880,148 @@ function runOctagonWinDirectionChecks(context) {
   }
 }
 
-function runKingDuckPanicChecks(context) {
+function runEntropyCascadeChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.resolveEntropyCascade, "function", "expected resolveEntropyCascade helper");
+  assert.equal(typeof context.hasEgyptianRemovalPhase, "function", "expected hasEgyptianRemovalPhase helper");
+
+  function seedState(modeKeys, cap = 12) {
+    const state = makeState(modeKeys, { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, cap);
+    const seeds = [
+      { q: 0, r: 0, owner: 1 },
+      { q: 1, r: 0, owner: 1 },
+      { q: 0, r: 1, owner: 1 },
+      { q: -1, r: 1, owner: 1 },
+      { q: 1, r: -1, owner: 1 },
+      { q: 2, r: -1, owner: 1 },
+      { q: -2, r: 1, owner: 1 },
+      { q: -1, r: 0, owner: 2 },
+      { q: 0, r: -1, owner: 2 },
+      { q: -2, r: 0, owner: 2 },
+      { q: 2, r: 0, owner: 2 },
+      { q: -1, r: 2, owner: 2 },
+      { q: 1, r: -2, owner: 2 },
+      { q: 2, r: -2, owner: 2 }
+    ];
+    let serial = 0;
+    for (const seed of seeds) {
+      serial += 1;
+      state.cells[keyOf(seed)] = {
+        owner: seed.owner,
+        kind: "stone",
+        serial
+      };
+    }
+    state.moveSerial = serial;
+    state.turnCount = 9;
+    state.round = 10;
+    state.lastPlacement = { q: 2, r: -2 };
+    state.lastPlacedByPlayer = {
+      1: { q: 2, r: -1 },
+      2: { q: -1, r: 2 }
+    };
+    return state;
+  }
+
+  const baseState = seedState(["entropyCascade"]);
+  const copyA = JSON.parse(JSON.stringify(baseState));
+  const copyB = JSON.parse(JSON.stringify(baseState));
+  context.resolveEntropyCascade(copyA);
+  context.resolveEntropyCascade(copyB);
+
+  assert.equal(
+    stateFingerprint(copyA),
+    stateFingerprint(copyB),
+    "entropy cascade should resolve deterministically from the same state"
+  );
+  assert.notEqual(
+    stateFingerprint(copyA),
+    stateFingerprint(baseState),
+    "entropy cascade should mutate a mixed board state"
+  );
+  assertStateInvariants(context, copyA);
+  assert.ok(
+    Array.isArray(copyA.accountingEvents) && copyA.accountingEvents.some((line) => String(line).includes("Entropy Cascade")),
+    "entropy cascade should emit an accounting event line"
+  );
+
+  const egyptianState = seedState(["entropyCascade", "egyptian"], 6);
+  context.resolveEntropyCascade(egyptianState);
+  assert.ok(getOwnerStoneCount(egyptianState, 1) <= 6, "entropy + egyptian should respect cap for player 1");
+  assert.ok(getOwnerStoneCount(egyptianState, 2) <= 6, "entropy + egyptian should respect cap for player 2");
+  assert.equal(
+    context.hasEgyptianRemovalPhase(egyptianState),
+    false,
+    "entropy + egyptian should auto-trim overflow without entering interactive removal"
+  );
+  assertStateInvariants(context, egyptianState);
+}
+
+function runArmoryEconomyChecks(context) {
+  assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
+  assert.equal(typeof context.buyArmoryOfferForCurrentPlayer, "function", "expected buyArmoryOfferForCurrentPlayer helper");
+  assert.equal(typeof context.selectArmoryPieceForCurrentPlayer, "function", "expected selectArmoryPieceForCurrentPlayer helper");
+  assert.equal(typeof context.rerollArmoryShopForCurrentPlayer, "function", "expected rerollArmoryShopForCurrentPlayer helper");
+
+  context.window.newGame(["armory"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  let state = context.HexTicTacToeInternals.game.state;
+  assert.ok(state.armory, "armory state should exist when armory mode is active");
+  assert.ok(Array.isArray(state.armory.shopOffers[1]) && state.armory.shopOffers[1].length > 0, "armory should generate shop offers");
+
+  let purchaseSlot = -1;
+  let offeredPiece = null;
+  let cost = null;
+  for (let i = 0; i < state.armory.shopOffers[1].length; i += 1) {
+    const candidate = state.armory.shopOffers[1][i];
+    const candidateCost = context.getArmoryPieceCost(state, 1, candidate);
+    if (
+      state.armory.currencies[1].gold >= candidateCost.gold
+      && state.armory.currencies[1].arcana >= candidateCost.arcana
+    ) {
+      purchaseSlot = i;
+      offeredPiece = candidate;
+      cost = candidateCost;
+      break;
+    }
+  }
+  assert.ok(purchaseSlot >= 0, "player 1 should afford at least one opening armory offer");
+
+  const inventoryBeforeBuy = state.armory.inventory[1][offeredPiece] || 0;
+  context.buyArmoryOfferForCurrentPlayer(purchaseSlot);
+  state = context.HexTicTacToeInternals.game.state;
+  const inventoryAfterBuy = state.armory.inventory[1][offeredPiece] || 0;
+  assert.equal(inventoryAfterBuy, inventoryBeforeBuy + 1, "buying from armory should increase piece inventory");
+  assert.equal(state.armory.selectedPiece[1], offeredPiece, "buying from armory should auto-select purchased piece");
+
+  const selectedBeforePlacement = state.armory.selectedPiece[1];
+  const selectedCountBeforePlacement = state.armory.inventory[1][selectedBeforePlacement] || 0;
+  context.clickPlacement({ q: 0, r: 0 }); // opening placement
+  state = context.HexTicTacToeInternals.game.state;
+  const openingCell = state.cells["0,0"];
+  assert.ok(openingCell, "opening armory placement should occupy origin");
+  assert.equal(openingCell.pieceType, selectedBeforePlacement, "opening placement should deploy selected armory piece");
+  const selectedCountAfterPlacement = state.armory.inventory[1][selectedBeforePlacement] || 0;
+  assert.equal(selectedCountAfterPlacement, Math.max(0, selectedCountBeforePlacement - 1), "deploying a premium piece should consume inventory");
+
+  // Turn should now belong to player 2; reroll should spend gold and refresh offers.
+  const p2GoldBeforeReroll = state.armory.currencies[2].gold;
+  const p2RerollsBefore = state.armory.rerolls[2] || 0;
+  context.rerollArmoryShopForCurrentPlayer();
+  state = context.HexTicTacToeInternals.game.state;
+  assert.ok(state.armory.currencies[2].gold <= p2GoldBeforeReroll, "reroll should not increase gold");
+  if (p2GoldBeforeReroll >= 2) {
+    assert.equal(state.armory.currencies[2].gold, p2GoldBeforeReroll - 2, "reroll should cost 2 gold when affordable");
+    assert.equal(state.armory.rerolls[2], p2RerollsBefore + 1, "reroll should increment reroll counter");
+  }
+}
+
+function runKingDuckPanicChecks(context, modeFilter = null, availableModes = null) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+
+  const hasModeAvailable = (modeKey) => modeKey === "hex" || !availableModes || availableModes.has(modeKey);
+  const include = (modeKey) => (modeFilter == null || modeFilter.has(modeKey)) && hasModeAvailable(modeKey);
 
   function runCase(modeKeys, expectedPanicKeys, messagePrefix) {
     context.window.newGame(modeKeys, { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
@@ -722,32 +1038,61 @@ function runKingDuckPanicChecks(context) {
     assert.deepEqual(actualKeys, expectedKeys, `${messagePrefix}: panic zones should match expected adjacency`);
   }
 
-  runCase(
-    ["kingDuck"],
-    ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
-    "hex king duck"
-  );
+  if (include("hex")) {
+    runCase(
+      ["kingDuck"],
+      ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
+      "hex king duck"
+    );
+  }
 
-  runCase(
-    ["triangleGrid", "kingDuck"],
-    ["3,0", "3,-1", "1,0"],
-    "triangle king duck"
-  );
+  if (include("triangleGrid")) {
+    runCase(
+      ["triangleGrid", "kingDuck"],
+      ["3,0", "3,-1", "1,0"],
+      "triangle king duck"
+    );
+  }
 
-  runCase(
-    ["squareGrid", "kingDuck"],
-    ["3,0", "1,0", "2,1", "2,-1"],
-    "square king duck"
-  );
+  if (include("squareGrid")) {
+    runCase(
+      ["squareGrid", "kingDuck"],
+      ["3,0", "1,0", "2,1", "2,-1"],
+      "square king duck"
+    );
+  }
 
-  runCase(
-    ["octagonGrid", "kingDuck"],
-    ["4,0", "2,2", "2,-2", "3,1", "3,-1", "1,1", "1,-1"],
-    "octagon king duck"
-  );
+  if (include("diamondGrid")) {
+    runCase(
+      ["diamondGrid", "kingDuck"],
+      ["4,0", "3,1", "3,-1", "1,1", "1,-1"],
+      "diamond king duck"
+    );
+  }
+
+  if (include("octagonGrid")) {
+    runCase(
+      ["octagonGrid", "kingDuck"],
+      ["4,0", "2,2", "2,-2", "3,1", "3,-1", "1,1", "1,-1"],
+      "octagon king duck"
+    );
+  }
+
+  if (include("entropyCascade")) {
+    runCase(
+      ["entropyCascade", "kingDuck"],
+      ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
+      "entropy cascade king duck"
+    );
+  }
 }
 
 function main() {
+  const args = new Set(process.argv.slice(2));
+  const runAll = args.has("--all");
+  const runNewOnly = !runAll;
+  const newModeKeySet = new Set(NEW_MODE_KEYS);
+
   const sandbox = makeSandbox();
   const context = vm.createContext(sandbox);
 
@@ -758,6 +1103,7 @@ function main() {
 
   const modeButtons = context.document.getElementById("modePicker").children;
   const modeKeys = modeButtons.map((button) => button.dataset.mode);
+  const availableModeKeys = new Set(modeKeys);
   assert.ok(modeKeys.includes("egyptian"), "egyptian mode should exist");
   assert.equal(modeKeys.includes("greek"), false, "greek mode should not exist");
 
@@ -770,17 +1116,57 @@ function main() {
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
 
-  const combos = allModeCombos(modeKeys);
+  const combos = allModeCombos(modeKeys, { newOnly: runNewOnly });
+  assert.ok(combos.length > 0, "expected at least one mode combo to run");
   for (const combo of combos) {
     runScenario(context, combo, false);
     runScenario(context, combo, true);
   }
-  runTriangleWinDirectionChecks(context);
-  runSquareWinDirectionChecks(context);
-  runOctagonWinDirectionChecks(context);
-  runKingDuckPanicChecks(context);
 
-  console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios).`);
+  if (runAll) {
+    if (availableModeKeys.has("triangleGrid")) {
+      runTriangleWinDirectionChecks(context);
+    }
+    if (availableModeKeys.has("squareGrid")) {
+      runSquareWinDirectionChecks(context);
+    }
+    if (availableModeKeys.has("diamondGrid")) {
+      runDiamondWinDirectionChecks(context);
+    }
+    if (availableModeKeys.has("octagonGrid")) {
+      runOctagonWinDirectionChecks(context);
+    }
+    if (availableModeKeys.has("entropyCascade")) {
+      runEntropyCascadeChecks(context);
+    }
+    if (availableModeKeys.has("armory")) {
+      runArmoryEconomyChecks(context);
+    }
+    runKingDuckPanicChecks(context, null, availableModeKeys);
+  } else {
+    if (newModeKeySet.has("triangleGrid")) {
+      runTriangleWinDirectionChecks(context);
+    }
+    if (newModeKeySet.has("squareGrid")) {
+      runSquareWinDirectionChecks(context);
+    }
+    if (newModeKeySet.has("diamondGrid")) {
+      runDiamondWinDirectionChecks(context);
+    }
+    if (newModeKeySet.has("octagonGrid")) {
+      runOctagonWinDirectionChecks(context);
+    }
+    if (newModeKeySet.has("entropyCascade")) {
+      runEntropyCascadeChecks(context);
+    }
+    if (newModeKeySet.has("armory")) {
+      runArmoryEconomyChecks(context);
+    }
+    runKingDuckPanicChecks(context, newModeKeySet, availableModeKeys);
+  }
+
+  const scopeLabel = runAll ? "all combos" : `new combos only (${NEW_MODE_KEYS.join(", ")})`;
+  console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios, ${scopeLabel}).`);
 }
 
 main();
