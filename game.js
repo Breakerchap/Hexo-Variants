@@ -709,6 +709,7 @@ function towardsOrigin(hex) {
 }
 
 const orbitRingCache = new Map();
+const octagonOrbitRingCache = new Map();
 
 function getOrbitRing(radius) {
   if (orbitRingCache.has(radius)) {
@@ -750,6 +751,76 @@ function orbitStep(hex) {
   }
 
   return { ...ring[(index + 1) % ring.length] };
+}
+
+function getOctagonOrbitLayer(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  const r = Math.trunc(Number(hex?.r) || 0);
+  return Math.trunc((Math.abs(q) + Math.abs(r)) / 2);
+}
+
+function getOctagonOrbitRing(layer) {
+  if (octagonOrbitRingCache.has(layer)) {
+    return octagonOrbitRingCache.get(layer);
+  }
+
+  const ring = [];
+  if (layer <= 0) {
+    octagonOrbitRingCache.set(layer, ring);
+    return ring;
+  }
+
+  const extent = layer * 2;
+  for (let q = -extent; q <= extent; q += 1) {
+    for (let r = -extent; r <= extent; r += 1) {
+      const hex = { q, r };
+      if (!isOctagonTileCoordinate(hex)) {
+        continue;
+      }
+      if ((Math.abs(q) + Math.abs(r)) !== extent) {
+        continue;
+      }
+      ring.push(hex);
+    }
+  }
+
+  ring.sort((a, b) => {
+    const angleA = Math.atan2(a.r, a.q);
+    const angleB = Math.atan2(b.r, b.q);
+    if (angleA !== angleB) {
+      return angleA - angleB;
+    }
+    return (a.q - b.q) || (a.r - b.r);
+  });
+
+  octagonOrbitRingCache.set(layer, ring);
+  return ring;
+}
+
+function octagonOrbitStep(hex) {
+  if (!isOctagonTileCoordinate(hex)) {
+    return { ...hex };
+  }
+
+  const layer = getOctagonOrbitLayer(hex);
+  if (layer === 0) {
+    return { ...hex };
+  }
+
+  const ring = getOctagonOrbitRing(layer);
+  const index = ring.findIndex((candidate) => equalHex(candidate, hex));
+  if (index === -1) {
+    return { ...hex };
+  }
+
+  return { ...ring[(index + 1) % ring.length] };
+}
+
+function orbitStepForMode(state, hex) {
+  if (usesOctagonGridMode(state)) {
+    return octagonOrbitStep(hex);
+  }
+  return orbitStep(hex);
 }
 
 function cloneState(state) {
@@ -2356,7 +2427,7 @@ function resolveEchoes(state) {
 }
 
 function getOrbitDestination(state, fromHex) {
-  const rotated = orbitStep(fromHex);
+  const rotated = orbitStepForMode(state, fromHex);
   return (getBirdAt(state, rotated) || getBirdEchoCopyAt(state, rotated)) ? { ...fromHex } : rotated;
 }
 
