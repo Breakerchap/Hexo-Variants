@@ -37,6 +37,10 @@ const ui = {
   turnOrderSummaryText: document.getElementById("turnOrderSummaryText"),
   p1ClockText: document.getElementById("p1ClockText"),
   p2ClockText: document.getElementById("p2ClockText"),
+  boardClockP1: document.getElementById("boardClockP1"),
+  boardClockP2: document.getElementById("boardClockP2"),
+  boardClockP1Time: document.getElementById("boardClockP1Time"),
+  boardClockP2Time: document.getElementById("boardClockP2Time"),
   onlineCreateBtn: document.getElementById("onlineCreateBtn"),
   onlineJoinBtn: document.getElementById("onlineJoinBtn"),
   onlineLeaveBtn: document.getElementById("onlineLeaveBtn"),
@@ -1296,16 +1300,47 @@ function ensureClockState(state) {
   }
 }
 
+function hasClockStarted(state) {
+  return Boolean(state && state.openingMoveDone);
+}
+
+function shouldRunClockTicker(state) {
+  if (!state) {
+    return false;
+  }
+  ensureClockState(state);
+  return Boolean(
+    state.clock.enabled
+    && hasClockStarted(state)
+    && !state.winner
+    && !state.clock.flaggedPlayer
+  );
+}
+
 function updateClockUI() {
   if (!game.state) {
     ui.p1ClockText.textContent = "--:--";
     ui.p2ClockText.textContent = "--:--";
+    ui.boardClockP1Time.textContent = "--:--";
+    ui.boardClockP2Time.textContent = "--:--";
+    ui.boardClockP1.classList.remove("active", "flagged");
+    ui.boardClockP2.classList.remove("active", "flagged");
     return;
   }
   ensureClockState(game.state);
   const clock = game.state.clock;
   ui.p1ClockText.textContent = formatClock(clock.remaining[1]);
   ui.p2ClockText.textContent = formatClock(clock.remaining[2]);
+  ui.boardClockP1Time.textContent = formatClock(clock.remaining[1]);
+  ui.boardClockP2Time.textContent = formatClock(clock.remaining[2]);
+
+  const activePlayer = clock.activePlayer === 2 ? 2 : 1;
+  const flaggedPlayer = clock.flaggedPlayer || 0;
+  const clockIsRunning = shouldRunClockTicker(game.state);
+  ui.boardClockP1.classList.toggle("active", clockIsRunning && activePlayer === 1);
+  ui.boardClockP2.classList.toggle("active", clockIsRunning && activePlayer === 2);
+  ui.boardClockP1.classList.toggle("flagged", flaggedPlayer === 1);
+  ui.boardClockP2.classList.toggle("flagged", flaggedPlayer === 2);
 }
 
 function stopClockTicker() {
@@ -1334,7 +1369,7 @@ function applyClockElapsedIfNeeded() {
     return;
   }
   const clock = game.state.clock;
-  if (!clock.enabled || clock.flaggedPlayer || game.state.winner) {
+  if (!shouldRunClockTicker(game.state)) {
     return;
   }
   const now = Date.now();
@@ -1358,14 +1393,14 @@ function syncClockTickerFromState() {
   }
 
   ensureClockState(game.state);
-  game.clockRuntime.lastTickAt = Date.now();
-  const shouldRun = game.state.clock.enabled && !game.state.winner && !game.state.clock.flaggedPlayer;
+  const shouldRun = shouldRunClockTicker(game.state);
   if (!shouldRun) {
     stopClockTicker();
     updateClockUI();
     return;
   }
 
+  game.clockRuntime.lastTickAt = Date.now();
   if (!game.clockRuntime.intervalId) {
     game.clockRuntime.intervalId = window.setInterval(() => {
       applyClockElapsedIfNeeded();
