@@ -51,7 +51,7 @@ const SQRT3 = Math.sqrt(3);
 const COS_22_5 = Math.cos(Math.PI / 8);
 const SIN_22_5 = Math.sin(Math.PI / 8);
 const WIN_LENGTH = 6;
-const MAX_PLACEMENT_DISTANCE = 11;
+const MAX_PLACEMENT_DISTANCE = 8;
 const CLOCK_TICK_MS = 100;
 const GRID_TARGET_HEXES_PER_FRAME = 3600;
 const GRID_HINT_MIN_HEX_SIZE = 9;
@@ -320,6 +320,12 @@ function squareDistance(a, b = { q: 0, r: 0 }) {
   );
 }
 
+function axialCoordinateDistance(a, b) {
+  const dq = (a?.q ?? 0) - (b?.q ?? 0);
+  const dr = (a?.r ?? 0) - (b?.r ?? 0);
+  return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
+}
+
 function getSquareCellPitch(size) {
   return Math.max(8, Number(size) || 0) * 2;
 }
@@ -352,6 +358,38 @@ function getTriangleEdgeLength(size) {
 
 function isOddInt(value) {
   return Math.abs(Math.trunc(Number(value) || 0)) % 2 === 1;
+}
+
+function triangleCellToRhombusCoord(hex) {
+  const q = Math.trunc(Number(hex?.q) || 0);
+  return {
+    q: Math.floor(q / 2),
+    r: Math.trunc(Number(hex?.r) || 0),
+    down: isOddInt(q)
+  };
+}
+
+function getTriangleAdjacentUpRhombusesFromDown(rhombus) {
+  return [
+    { q: rhombus.q, r: rhombus.r },
+    { q: rhombus.q, r: rhombus.r + 1 },
+    { q: rhombus.q + 1, r: rhombus.r }
+  ];
+}
+
+function triangleDistance(a, b) {
+  const from = triangleCellToRhombusCoord(a);
+  const to = triangleCellToRhombusCoord(b);
+
+  if (from.down === to.down) {
+    return axialCoordinateDistance(from, to) * 2;
+  }
+
+  const upRhombus = from.down ? to : from;
+  const downRhombus = from.down ? from : to;
+  const closestUpDistance = getTriangleAdjacentUpRhombusesFromDown(downRhombus)
+    .reduce((best, candidate) => Math.min(best, axialCoordinateDistance(upRhombus, candidate)), Infinity);
+  return (closestUpDistance * 2) + 1;
 }
 
 function triangleVertexToPixel(vertexI, vertexJ, edgeLength) {
@@ -651,7 +689,13 @@ function getDistanceForMode(state, a, b = { q: 0, r: 0 }) {
   if (usesOctagonGridMode(state)) {
     return octagonDistance(a, b);
   }
-  return usesSquareGridMode(state) ? squareDistance(a, b) : hexDistance(a, b);
+  if (usesSquareGridMode(state)) {
+    return squareDistance(a, b);
+  }
+  if (usesTriangleGridMode(state)) {
+    return triangleDistance(a, b);
+  }
+  return hexDistance(a, b);
 }
 
 function stepTriangleLine(hex, lineKind, forward = true) {
@@ -2823,6 +2867,10 @@ function currentHexSize() {
   return game.viewport.baseHexSize * game.viewport.zoom;
 }
 
+function clampViewportZoom(value) {
+  return Math.min(3.8, Math.max(0.33, Number(value) || 1));
+}
+
 function drawHex(x, y, size, fill, stroke, lineWidth = 1) {
   ctx.beginPath();
   for (let i = 0; i < HEX_VERTEX_UNIT.length; i += 1) {
@@ -2998,6 +3046,45 @@ function getGridDrawStep(bounds, size) {
   return step;
 }
 
+function firstGridLineAtOrAfter(value, step) {
+  const safeStep = Math.max(1, Math.trunc(Number(step) || 1));
+  return Math.ceil(value / safeStep) * safeStep;
+}
+
+function firstGridLineWithParityAtOrAfter(value, step, parity) {
+  const safeStep = Math.max(1, Math.trunc(Number(step) || 1));
+  const safeParity = Math.abs(Math.trunc(Number(parity) || 0)) % 2;
+  let current = firstGridLineAtOrAfter(value, safeStep);
+  while (((current % 2) + 2) % 2 !== safeParity) {
+    current += 1;
+  }
+  return current;
+}
+
+function drawWorldLine(fromWorld, toWorld) {
+  const from = worldToScreen(fromWorld.x, fromWorld.y);
+  const to = worldToScreen(toWorld.x, toWorld.y);
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+}
+
+function drawLowDetailHoverCell(size, w, h, margin) {
+  const hoverWorld = boardCellToPixel(game.hoverHex, size, game.state);
+  const hoverScreen = worldToScreen(hoverWorld.x, hoverWorld.y);
+  if (!isOnScreenWithMargin(hoverScreen, margin, w, h)) {
+    return;
+  }
+  drawBoardShape(
+    hoverScreen.x,
+    hoverScreen.y,
+    size - 1,
+    "rgba(255, 255, 255, 0.15)",
+    "rgba(255, 255, 255, 0.34)",
+    1.15,
+    game.hoverHex
+  );
+}
+
 function getSquareVisibleCellBounds(params) {
   const width = params.width;
   const height = params.height;
@@ -3119,6 +3206,61 @@ function getTriangleVisibleCellBounds(params) {
   };
 }
 
+function drawTriangleLowDetailGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = Math.max(1, params.drawStep || 1);
+  const edgeLength = getTriangleEdgeLength(size);
+  const minI = Math.floor(bounds.minQ / 2) - 1;
+  const maxI = Math.ceil(bounds.maxQ / 2) + 1;
+  const minJ = bounds.minR - 1;
+  const maxJ = bounds.maxR + 1;
+  const lineStep = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? Math.max(2, drawStep) : drawStep;
+  const stroke = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.075)"
+    : "rgba(255, 255, 255, 0.105)";
+
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? 0.8 : 1;
+  ctx.beginPath();
+
+  for (let j = firstGridLineAtOrAfter(minJ, lineStep); j <= maxJ + 1; j += lineStep) {
+    drawWorldLine(
+      triangleVertexToPixel(minI, j, edgeLength),
+      triangleVertexToPixel(maxI + 1, j, edgeLength)
+    );
+  }
+
+  for (let i = firstGridLineAtOrAfter(minI, lineStep); i <= maxI + 1; i += lineStep) {
+    drawWorldLine(
+      triangleVertexToPixel(i, minJ, edgeLength),
+      triangleVertexToPixel(i, maxJ + 1, edgeLength)
+    );
+  }
+
+  const minDiagonal = minI + minJ;
+  const maxDiagonal = maxI + maxJ + 2;
+  for (let diagonal = firstGridLineAtOrAfter(minDiagonal, lineStep); diagonal <= maxDiagonal; diagonal += lineStep) {
+    const jStart = Math.max(minJ, diagonal - (maxI + 1));
+    const jEnd = Math.min(maxJ + 1, diagonal - minI);
+    if (jStart > jEnd) {
+      continue;
+    }
+    drawWorldLine(
+      triangleVertexToPixel(diagonal - jStart, jStart, edgeLength),
+      triangleVertexToPixel(diagonal - jEnd, jEnd, edgeLength)
+    );
+  }
+
+  ctx.stroke();
+  ctx.restore();
+
+  drawLowDetailHoverCell(size, w, h, size * 3.2);
+}
+
 function drawTriangleLatticeGrid(params) {
   const size = params.size;
   const w = params.w;
@@ -3126,6 +3268,10 @@ function drawTriangleLatticeGrid(params) {
   const bounds = params.bounds;
   const drawStep = params.drawStep;
   const showPlacementHints = params.showPlacementHints;
+  if (drawStep > 1 || size < GRID_LOW_DETAIL_HEX_SIZE) {
+    drawTriangleLowDetailGrid(params);
+    return;
+  }
   const gridStroke = drawStep > 1 ? "rgba(255, 255, 255, 0.08)" : "rgba(255, 255, 255, 0.11)";
   const gridFill = drawStep > 1 ? "rgba(255, 255, 255, 0.02)" : "rgba(255, 255, 255, 0.03)";
   const margin = size * 3.2;
@@ -3180,6 +3326,91 @@ function drawTriangleLatticeGrid(params) {
   }
 }
 
+function drawSquareLowDetailGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = Math.max(1, params.drawStep || 1);
+  const pitch = getSquareCellPitch(size);
+  const lineStep = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? Math.max(2, drawStep) : drawStep;
+  const minQ = bounds.minQ - 1;
+  const maxQ = bounds.maxQ + 1;
+  const minR = bounds.minR - 1;
+  const maxR = bounds.maxR + 1;
+
+  ctx.save();
+  ctx.strokeStyle = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.06)"
+    : "rgba(255, 255, 255, 0.085)";
+  ctx.lineWidth = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? 0.8 : 1;
+  ctx.beginPath();
+
+  for (let q = firstGridLineAtOrAfter(minQ, lineStep); q <= maxQ; q += lineStep) {
+    const x = (q - 0.5) * pitch;
+    drawWorldLine(
+      { x, y: (minR - 0.5) * pitch },
+      { x, y: (maxR + 0.5) * pitch }
+    );
+  }
+
+  for (let r = firstGridLineAtOrAfter(minR, lineStep); r <= maxR; r += lineStep) {
+    const y = (r - 0.5) * pitch;
+    drawWorldLine(
+      { x: (minQ - 0.5) * pitch, y },
+      { x: (maxQ + 0.5) * pitch, y }
+    );
+  }
+
+  ctx.stroke();
+  ctx.restore();
+
+  drawLowDetailHoverCell(size, w, h, size * 2.5);
+}
+
+function drawOctagonLowDetailGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = Math.max(2, params.drawStep || 2);
+  const parityStep = drawStep % 2 === 0 ? drawStep : drawStep + 1;
+  const margin = size * 3;
+  const octagonStroke = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.06)"
+    : "rgba(255, 255, 255, 0.082)";
+  const diamondStroke = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.075)"
+    : "rgba(255, 255, 255, 0.11)";
+  const octagonFill = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.010)"
+    : "rgba(255, 255, 255, 0.016)";
+  const diamondFill = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.012)"
+    : "rgba(255, 255, 255, 0.021)";
+
+  for (const layer of [
+    { parity: 0, fill: octagonFill, stroke: octagonStroke, sizeScale: 0.98 },
+    { parity: 1, fill: diamondFill, stroke: diamondStroke, sizeScale: 1.2 }
+  ]) {
+    const startR = firstGridLineWithParityAtOrAfter(bounds.minR, parityStep, layer.parity);
+    const startQ = firstGridLineWithParityAtOrAfter(bounds.minQ, parityStep, layer.parity);
+    for (let r = startR; r <= bounds.maxR; r += parityStep) {
+      for (let q = startQ; q <= bounds.maxQ; q += parityStep) {
+        const hex = { q, r };
+        const world = boardCellToPixel(hex, size, game.state);
+        const screen = worldToScreen(world.x, world.y);
+        if (!isOnScreenWithMargin(screen, margin, w, h)) {
+          continue;
+        }
+        drawBoardShape(screen.x, screen.y, (size - 1) * layer.sizeScale, layer.fill, layer.stroke, 0.9, hex);
+      }
+    }
+  }
+
+  drawLowDetailHoverCell(size, w, h, margin);
+}
+
 function drawGrid() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
@@ -3221,7 +3452,7 @@ function drawGrid() {
       hexSize: size,
       marginHexes: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
     });
-  const drawStep = triangleMode ? 1 : getGridDrawStep(bounds, size);
+  const drawStep = getGridDrawStep(bounds, size);
   const showPlacementHints = (
     size >= GRID_HINT_MIN_HEX_SIZE
     && canActForCurrentTurn()
@@ -3238,6 +3469,28 @@ function drawGrid() {
       bounds,
       drawStep,
       showPlacementHints
+    });
+    return;
+  }
+
+  if (squareMode && drawStep > 1) {
+    drawSquareLowDetailGrid({
+      size,
+      w,
+      h,
+      bounds,
+      drawStep
+    });
+    return;
+  }
+
+  if (octagonMode && drawStep > 1) {
+    drawOctagonLowDetailGrid({
+      size,
+      w,
+      h,
+      bounds,
+      drawStep
     });
     return;
   }
@@ -4018,15 +4271,8 @@ canvas.addEventListener("wheel", (event) => {
   const rect = canvas.getBoundingClientRect();
   const mouseX = event.clientX - rect.left;
   const mouseY = event.clientY - rect.top;
-  const before = screenToWorld(mouseX, mouseY);
-
   const factor = event.deltaY < 0 ? 1.12 : 0.89;
-  game.viewport.zoom = Math.min(3.8, Math.max(0.33, game.viewport.zoom * factor));
-
-  const after = screenToWorld(mouseX, mouseY);
-  game.viewport.offsetX += (after.x - before.x);
-  game.viewport.offsetY += (after.y - before.y);
-  render();
+  zoomBoardAtScreenPoint(mouseX, mouseY, factor);
 }, { passive: false });
 
 canvas.addEventListener("click", (event) => {
@@ -4061,9 +4307,9 @@ canvas.addEventListener("touchstart", (event) => {
     const centerX = ((t0.clientX + t1.clientX) / 2) - rect.left;
     const centerY = ((t0.clientY + t1.clientY) / 2) - rect.top;
     game.touchPinchState = {
-      distance: Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY),
-      worldBefore: screenToWorld(centerX, centerY)
+      distance: Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY)
     };
+    game.touchPanMoved = true;
     game.isPanning = false;
   }
 }, { passive: true });
@@ -4094,15 +4340,8 @@ canvas.addEventListener("touchmove", (event) => {
     const centerY = ((t0.clientY + t1.clientY) / 2) - rect.top;
     const distance = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
     const ratio = game.touchPinchState.distance > 0 ? distance / game.touchPinchState.distance : 1;
-    game.viewport.zoom = Math.min(3.8, Math.max(0.33, game.viewport.zoom * ratio));
+    zoomBoardAtScreenPoint(centerX, centerY, ratio);
     game.touchPinchState.distance = distance;
-
-    const after = screenToWorld(centerX, centerY);
-    const before = game.touchPinchState.worldBefore;
-    game.viewport.offsetX += (after.x - before.x);
-    game.viewport.offsetY += (after.y - before.y);
-    game.touchPinchState.worldBefore = screenToWorld(centerX, centerY);
-    render();
   }
 }, { passive: false });
 
@@ -4198,11 +4437,18 @@ function isTypingTarget(target) {
 }
 
 function zoomBoardAtScreenPoint(screenX, screenY, factor) {
-  const before = screenToWorld(screenX, screenY);
-  game.viewport.zoom = Math.min(3.8, Math.max(0.33, game.viewport.zoom * factor));
-  const after = screenToWorld(screenX, screenY);
-  game.viewport.offsetX += (after.x - before.x);
-  game.viewport.offsetY += (after.y - before.y);
+  const oldSize = currentHexSize();
+  const anchorWorld = screenToWorld(screenX, screenY);
+  const nextZoom = clampViewportZoom(game.viewport.zoom * factor);
+  if (nextZoom === game.viewport.zoom) {
+    return;
+  }
+
+  game.viewport.zoom = nextZoom;
+  const newSize = currentHexSize();
+  const scale = oldSize > 0 ? newSize / oldSize : 1;
+  game.viewport.offsetX += anchorWorld.x - (anchorWorld.x * scale);
+  game.viewport.offsetY += anchorWorld.y - (anchorWorld.y * scale);
   render();
 }
 
