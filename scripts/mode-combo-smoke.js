@@ -5,6 +5,7 @@ const assert = require("assert/strict");
 const PROJECT_ROOT = fs.existsSync(path.resolve(process.cwd(), "game.js"))
   ? process.cwd()
   : path.resolve(__dirname, "..");
+const MAX_EGYPTIAN_REMOVALS_PER_TURN = 2;
 
 class FakeClassList {
   constructor(initial = "") {
@@ -396,6 +397,13 @@ function assertStateInvariants(sandbox, state) {
   const cap = sandbox.getEgyptianStoneCap(state);
   const owner1 = getOwnerStoneCount(state, 1);
   const owner2 = getOwnerStoneCount(state, 2);
+  const removalsThisTurn = state.egyptianRemovalsThisTurn || {};
+
+  for (const owner of [1, 2]) {
+    const removalCount = Math.trunc(Number(removalsThisTurn[owner]) || 0);
+    assert.ok(removalCount >= 0, "egyptian removal count should not be negative");
+    assert.ok(removalCount <= MAX_EGYPTIAN_REMOVALS_PER_TURN, "egyptian removals should be capped per turn");
+  }
 
   if (hasEgyptian) {
     if (hasEgyptianRemoval) {
@@ -403,7 +411,11 @@ function assertStateInvariants(sandbox, state) {
       assert.ok(removal && (removal.owner === 1 || removal.owner === 2), "egyptian removal state owner should be valid");
       assert.ok(removal.remaining > 0, "egyptian removal remaining should be positive");
       const currentOwnerCount = removal.owner === 1 ? owner1 : owner2;
-      assert.equal(currentOwnerCount - cap, removal.remaining, "overflow count should match pending egyptian removals");
+      const overflow = Math.max(0, currentOwnerCount - cap);
+      const alreadyRemoved = Math.trunc(Number(removalsThisTurn[removal.owner]) || 0);
+      const removalSlotsRemaining = Math.max(0, MAX_EGYPTIAN_REMOVALS_PER_TURN - alreadyRemoved);
+      assert.ok(removal.remaining <= overflow, "pending egyptian removals should not exceed overflow");
+      assert.ok(removal.remaining <= removalSlotsRemaining, "pending egyptian removals should respect the per-turn cap");
       if (state.lastPlacement) {
         assert.equal(
           sandbox.canSelectEgyptianRemovalHex(state, state.lastPlacement),
@@ -411,7 +423,7 @@ function assertStateInvariants(sandbox, state) {
           "just-placed stone must not be selectable during egyptian removal"
         );
       }
-    } else {
+    } else if (!state.modeKeys.includes("echo")) {
       assert.ok(owner1 <= cap && owner2 <= cap, "stone counts should respect egyptian cap when no removal is pending");
     }
   } else {
@@ -703,6 +715,59 @@ function runOctagonWinDirectionChecks(context) {
   }
 }
 
+function runEgyptianEchoRemovalChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.placeStone, "function", "expected placeStone helper");
+  assert.equal(typeof context.resolveEchoes, "function", "expected resolveEchoes helper");
+  assert.equal(typeof context.enforceStoneCapAfterPlacement, "function", "expected egyptian cap helper");
+
+  const timerConfig = { enabled: false, initialSeconds: 300, incrementSeconds: 0 };
+  const cappedState = makeState(["egyptian", "echo"], timerConfig, 6);
+  const initialStones = [
+    { q: 0, r: 0 },
+    { q: 1, r: 0 },
+    { q: 2, r: 0 },
+    { q: 3, r: 0 },
+    { q: 4, r: 0 },
+    { q: 5, r: 0 }
+  ];
+  for (const hex of initialStones) {
+    context.placeStone(cappedState, hex, 1, "stone");
+  }
+  const originalKeys = new Set(Object.keys(cappedState.cells));
+  cappedState.pendingEchoes.push({
+    targetTurn: cappedState.turnCount,
+    kind: "stone",
+    owner: 1,
+    source: { q: 0, r: -2 }
+  });
+
+  context.resolveEchoes(cappedState);
+
+  assert.equal(getOwnerStoneCount(cappedState, 1), 7, "echo should be allowed to put Egyptian over the cap");
+  for (const key of originalKeys) {
+    assert.ok(cappedState.cells[key], "echo should not auto-remove an existing stone");
+  }
+  assert.equal(context.hasEgyptianRemovalPhase(cappedState), false, "echo should not open an Egyptian removal prompt");
+
+  const overflowState = makeState(["egyptian"], timerConfig, 6);
+  for (let i = 0; i < 10; i += 1) {
+    context.placeStone(overflowState, { q: i, r: 1 }, 1, "stone");
+  }
+
+  let resolution = context.enforceStoneCapAfterPlacement(overflowState, 1, { interactiveEgyptian: true });
+  assert.equal(resolution.needsChoice, true, "large overflow should still offer a manual Egyptian removal");
+  assert.equal(overflowState.egyptianRemoval.remaining, 2, "Egyptian should ask for at most two removals in a turn");
+
+  overflowState.egyptianRemoval = null;
+  overflowState.egyptianRemovalsThisTurn = { 1: 2, 2: 0 };
+  resolution = context.enforceStoneCapAfterPlacement(overflowState, 1, { interactiveEgyptian: true });
+  assert.equal(resolution.needsChoice, false, "Egyptian should not ask for more removals after two this turn");
+  assert.equal(context.hasEgyptianRemovalPhase(overflowState), false, "Egyptian removal phase should stay closed after the turn cap");
+  assert.equal(getOwnerStoneCount(overflowState, 1), 10, "turn removal cap may leave a player above n stones");
+}
+
 function runKingDuckPanicChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -778,6 +843,7 @@ function main() {
   runTriangleWinDirectionChecks(context);
   runSquareWinDirectionChecks(context);
   runOctagonWinDirectionChecks(context);
+  runEgyptianEchoRemovalChecks(context);
   runKingDuckPanicChecks(context);
 
   console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios).`);

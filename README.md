@@ -70,7 +70,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Octagon Grid**: swaps the board from hex tiles to an octagon-and-diamond tiling (place inside octagons and the small diamonds; all other rules still apply).
 - **Duck**: move duck after your placements; no one can place on it.
 - **King Duck**: adds a panic ring around the king duck.
-- **Egyptian**: each player can keep at most `n` stones (set `n` in the UI); when you go over `n`, choose which of your own stones to remove (not the one just placed).
+- **Egyptian**: each player has a soft `n` stone cap (set `n` in the UI); when your own placements go over `n`, choose up to 2 of your stones per turn to remove (not the one just placed). Echoes never remove stones automatically, so a player may stay above `n`.
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.

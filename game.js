@@ -69,6 +69,7 @@ const DEFAULT_TIMER_CONFIG = {
 const DEFAULT_EGYPTIAN_STONE_CAP = 12;
 const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
+const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
   const angle = Math.PI / 180 * (60 * i - 30);
   return {
@@ -230,8 +231,8 @@ const MODES = {
   },
   egyptian: {
     name: "Egyptian",
-    summary: "Each player may keep at most n stones. When you exceed n, choose which of your own stones to remove.",
-    hint: "Set n in the sidebar. When you exceed n, click one of your own stones to remove. You cannot remove the stone you just placed."
+    summary: "Each player has a soft n-stone cap. When your own placements exceed n, choose up to 2 of your own stones per turn to remove.",
+    hint: "Set n in the sidebar. When your placement exceeds n, click your own stones to remove, max 2 per turn. Echoes never remove stones automatically, and you cannot remove the stone you just placed."
   },
   orbit: {
     name: "Orbit",
@@ -1079,6 +1080,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     panicZones: {},
     pendingEchoes: [],
     egyptianRemoval: null,
+    egyptianRemovalsThisTurn: { 1: 0, 2: 0 },
     lastPlacedThisTurn: [],
     lastPlacement: null,
     recentBirdEvents: [],
@@ -2102,7 +2104,40 @@ function getEgyptianStoneCap(state) {
   return normaliseEgyptianStoneCap(state?.egyptianStoneCap);
 }
 
+function ensureEgyptianTurnRemovalState(state) {
+  if (!state) {
+    return;
+  }
+  const current = state.egyptianRemovalsThisTurn && typeof state.egyptianRemovalsThisTurn === "object"
+    ? state.egyptianRemovalsThisTurn
+    : {};
+  state.egyptianRemovalsThisTurn = {
+    1: Math.max(0, Math.min(MAX_EGYPTIAN_REMOVALS_PER_TURN, Math.trunc(Number(current[1]) || 0))),
+    2: Math.max(0, Math.min(MAX_EGYPTIAN_REMOVALS_PER_TURN, Math.trunc(Number(current[2]) || 0)))
+  };
+}
+
+function getEgyptianRemovalsThisTurn(state, owner) {
+  ensureEgyptianTurnRemovalState(state);
+  const safeOwner = owner === 2 ? 2 : 1;
+  return state.egyptianRemovalsThisTurn[safeOwner];
+}
+
+function getEgyptianRemovalSlotsRemaining(state, owner) {
+  return Math.max(0, MAX_EGYPTIAN_REMOVALS_PER_TURN - getEgyptianRemovalsThisTurn(state, owner));
+}
+
+function recordEgyptianChosenRemoval(state, owner) {
+  ensureEgyptianTurnRemovalState(state);
+  const safeOwner = owner === 2 ? 2 : 1;
+  state.egyptianRemovalsThisTurn[safeOwner] = Math.min(
+    MAX_EGYPTIAN_REMOVALS_PER_TURN,
+    getEgyptianRemovalsThisTurn(state, safeOwner) + 1
+  );
+}
+
 function ensureEgyptianRemovalState(state) {
+  ensureEgyptianTurnRemovalState(state);
   const pending = state?.egyptianRemoval ?? state?.greekRemoval;
   if (!pending || typeof pending !== "object") {
     state.egyptianRemoval = null;
@@ -2110,7 +2145,8 @@ function ensureEgyptianRemovalState(state) {
   }
   const owner = pending.owner === 2 ? 2 : 1;
   const remaining = Math.max(0, Math.round(Number(pending.remaining) || 0));
-  state.egyptianRemoval = remaining > 0 ? { owner, remaining } : null;
+  const cappedRemaining = Math.min(remaining, getEgyptianRemovalSlotsRemaining(state, owner));
+  state.egyptianRemoval = cappedRemaining > 0 ? { owner, remaining: cappedRemaining } : null;
   if (Object.prototype.hasOwnProperty.call(state, "greekRemoval")) {
     delete state.greekRemoval;
   }
@@ -2127,22 +2163,6 @@ function getStoneOverflowCount(state, owner) {
   return Math.max(0, owned - cap);
 }
 
-function removeOldestOwnerStones(state, owner, count, sourceMode = "egyptian") {
-  const owned = getOwnerStoneEntriesSortedByAge(state, owner);
-  const toRemove = owned.slice(0, Math.max(0, count));
-  const removed = [];
-  for (const entry of toRemove) {
-    removeStone(state, entry.hex);
-    removed.push(entry.hex);
-    recordRecentCapRemovalEvent(state, {
-      mode: sourceMode,
-      owner,
-      hex: entry.hex
-    });
-  }
-  return removed;
-}
-
 function getOwnerStoneEntriesSortedByAge(state, owner) {
   return Object.entries(state.cells)
     .map(([key, cell]) => ({ key, cell }))
@@ -2154,20 +2174,24 @@ function getOwnerStoneEntriesSortedByAge(state, owner) {
 function enforceStoneCapAfterPlacement(state, owner, options = {}) {
   const interactiveEgyptian = Boolean(options.interactiveEgyptian);
   if (!hasMode(state, "egyptian")) {
-    return { removed: [], needsChoice: false };
+    return { removed: [], needsChoice: false, overflow: 0 };
   }
 
   const overflow = getStoneOverflowCount(state, owner);
   if (overflow <= 0) {
-    return { removed: [], needsChoice: false };
+    return { removed: [], needsChoice: false, overflow: 0 };
   }
 
   if (interactiveEgyptian) {
-    state.egyptianRemoval = { owner, remaining: overflow };
-    return { removed: [], needsChoice: true };
+    const remaining = Math.min(overflow, getEgyptianRemovalSlotsRemaining(state, owner));
+    if (remaining <= 0) {
+      return { removed: [], needsChoice: false, overflow };
+    }
+    state.egyptianRemoval = { owner, remaining };
+    return { removed: [], needsChoice: true, overflow };
   }
 
-  return { removed: removeOldestOwnerStones(state, owner, overflow, "egyptian"), needsChoice: false };
+  return { removed: [], needsChoice: false, overflow };
 }
 
 function isLastPlacedStoneForOwner(state, owner, hex) {
@@ -2418,9 +2442,8 @@ function resolveEchoes(state) {
     placeStone(state, target, echo.owner, "stone");
     const capResolution = enforceStoneCapAfterPlacement(state, echo.owner, { interactiveEgyptian: false });
     pushLog(`Echo placed Player ${echo.owner} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`);
-    if (capResolution.removed.length > 0) {
-      const removedList = capResolution.removed.map((pos) => `(${pos.q}, ${pos.r})`).join(", ");
-      pushLog(`Egyptian removed oldest stone${capResolution.removed.length === 1 ? "" : "s"} for Player ${echo.owner}: ${removedList}.`);
+    if (capResolution.overflow > 0) {
+      pushLog(`Egyptian cap exceeded for Player ${echo.owner}; no stone was removed automatically.`);
     }
   }
   state.pendingEchoes = remain;
@@ -2562,6 +2585,7 @@ function endTurn(state) {
   state.birdMovesPending = [];
   state.currentBirdMoveKind = null;
   state.egyptianRemoval = null;
+  state.egyptianRemovalsThisTurn = { 1: 0, 2: 0 };
   state.lastPlacedThisTurn = [];
   syncClockTickerFromState();
 }
@@ -2612,16 +2636,8 @@ function placeTurnTile(state, hex, owner) {
     };
   }
 
-  if (capResolution.removed.length === 0) {
-    return {
-      log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
-      needsEgyptianChoice: false
-    };
-  }
-
-  const removedList = capResolution.removed.map((pos) => `(${pos.q}, ${pos.r})`).join(", ");
   return {
-    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}); Egyptian removed oldest stone${capResolution.removed.length === 1 ? "" : "s"} ${removedList}.`,
+    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
     needsEgyptianChoice: false
   };
 }
@@ -2647,15 +2663,16 @@ function clickPlacement(hex) {
     }
 
     saveHistory();
+    const owner = state.egyptianRemoval.owner;
     recordRecentCapRemovalEvent(state, {
       mode: "egyptian",
-      owner: state.egyptianRemoval.owner,
+      owner,
       hex
     });
     removeStone(state, hex);
+    recordEgyptianChosenRemoval(state, owner);
     state.egyptianRemoval.remaining -= 1;
-    if (state.egyptianRemoval.remaining <= 0) {
-      const owner = state.egyptianRemoval.owner;
+    if (state.egyptianRemoval.remaining <= 0 || getEgyptianRemovalSlotsRemaining(state, owner) <= 0) {
       state.egyptianRemoval = null;
       pushLog(`Egyptian removal complete for Player ${owner}.`);
 
