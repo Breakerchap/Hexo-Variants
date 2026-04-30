@@ -423,7 +423,7 @@ function assertStateInvariants(sandbox, state) {
           "just-placed stone must not be selectable during egyptian removal"
         );
       }
-    } else if (!state.modeKeys.includes("echo")) {
+    } else if (!state.modeKeys.includes("echo") && !state.modeKeys.includes("everythingBagel")) {
       assert.ok(owner1 <= cap && owner2 <= cap, "stone counts should respect egyptian cap when no removal is pending");
     }
   } else {

@@ -257,6 +257,11 @@ const MODES = {
     name: "Meteor",
     summary: "Every 3 full turns, all occupied spaces tied for farthest distance from the origin are deleted.",
     hint: "Every 3 full turns, all occupied spaces farthest from the center are deleted."
+  },
+  everythingBagel: {
+    name: "Everything Bagel",
+    summary: "A rules casserole: roaming red tape blocks spaces, portals teleport stones, coupons print bonus receipts, toll booths bribe the clock, and end-turn goblins file nonsense paperwork.",
+    hint: "Still connect 6, technically. Red tape blocks placement. Portals teleport. Coupons spawn receipt stones. Toll booths add time. Every full turn, auditors copy stones, gravity complains, and tax goblins may swap owners."
   }
 };
 
@@ -268,6 +273,8 @@ const dirs = [
   { q: -1, r: 1 },
   { q: 0, r: 1 }
 ];
+
+const BAGEL_RECEIPT_STONE_LIMIT = 96;
 
 const lineAxes = [
   { q: 1, r: 0 },
@@ -362,6 +369,11 @@ function getTriangleEdgeLength(size) {
 
 function isOddInt(value) {
   return Math.abs(Math.trunc(Number(value) || 0)) % 2 === 1;
+}
+
+function positiveMod(value, divisor) {
+  const safeDivisor = Math.max(1, Math.trunc(Number(divisor) || 1));
+  return ((Math.trunc(Number(value) || 0) % safeDivisor) + safeDivisor) % safeDivisor;
 }
 
 function triangleCellToRhombusCoord(hex) {
@@ -668,6 +680,91 @@ function getAdjacentsForMode(state, hex) {
     return squareNeighbours(hex);
   }
   return neighbours(hex);
+}
+
+function rotateAxial(hex, steps) {
+  const normalisedSteps = positiveMod(steps, 6);
+  let q = Math.trunc(Number(hex?.q) || 0);
+  let r = Math.trunc(Number(hex?.r) || 0);
+  for (let i = 0; i < normalisedSteps; i += 1) {
+    const s = -q - r;
+    q = -r;
+    r = -s;
+  }
+  return { q, r };
+}
+
+function hasEverythingBagelMode(state) {
+  return Boolean(state && hasMode(state, "everythingBagel"));
+}
+
+function uniqueSupportedHexes(state, hexes) {
+  const byKey = new Map();
+  for (const hex of hexes) {
+    if (!hex || !Number.isFinite(hex.q) || !Number.isFinite(hex.r)) {
+      continue;
+    }
+    const normalised = { q: Math.trunc(hex.q), r: Math.trunc(hex.r) };
+    if (!isCellSupportedForMode(state, normalised)) {
+      continue;
+    }
+    byKey.set(keyOf(normalised.q, normalised.r), normalised);
+  }
+  return Array.from(byKey.values());
+}
+
+function getEverythingBagelZones(state) {
+  const phase = Math.max(0, Math.trunc(Number(state?.turnCount) || 0));
+  const portalSeeds = [
+    [
+      rotateAxial({ q: 4, r: -1 }, phase),
+      rotateAxial({ q: -2, r: 5 }, phase + 2)
+    ],
+    [
+      rotateAxial({ q: -5, r: 2 }, phase + 1),
+      rotateAxial({ q: 3, r: -6 }, phase + 4)
+    ]
+  ];
+  const portalPairs = portalSeeds
+    .map(([a, b], index) => ({
+      index,
+      a,
+      b
+    }))
+    .filter((pair) => isCellSupportedForMode(state, pair.a) && isCellSupportedForMode(state, pair.b));
+
+  const redCenter = rotateAxial({ q: 2 + (phase % 4), r: -4 }, phase + 1);
+  const redTape = uniqueSupportedHexes(state, [
+    redCenter,
+    ...getAdjacentsForMode(state, redCenter).slice(0, 4)
+  ]);
+  const tollBooths = uniqueSupportedHexes(state, [
+    rotateAxial({ q: 1, r: -3 }, phase + 2),
+    rotateAxial({ q: -4, r: 3 }, phase + 5),
+    rotateAxial({ q: 5, r: -5 }, phase + 3)
+  ]);
+  const coupons = uniqueSupportedHexes(state, [
+    rotateAxial({ q: 0, r: 4 }, phase),
+    rotateAxial({ q: -3, r: -1 }, phase + 3)
+  ]);
+
+  return {
+    phase,
+    portalPairs,
+    redTape,
+    redTapeKeys: new Set(redTape.map((hex) => keyOf(hex.q, hex.r))),
+    tollBooths,
+    tollBoothKeys: new Set(tollBooths.map((hex) => keyOf(hex.q, hex.r))),
+    coupons,
+    couponKeys: new Set(coupons.map((hex) => keyOf(hex.q, hex.r)))
+  };
+}
+
+function isEverythingBagelRedTapeHex(state, hex) {
+  if (!hasEverythingBagelMode(state)) {
+    return false;
+  }
+  return getEverythingBagelZones(state).redTapeKeys.has(keyOf(hex.q, hex.r));
 }
 
 function getLineAxesForMode(state) {
@@ -2125,6 +2222,9 @@ function isHexBlockedBySpecials(state, hex) {
   if (state.panicZones[keyOf(hex.q, hex.r)]) {
     return true;
   }
+  if (isEverythingBagelRedTapeHex(state, hex)) {
+    return true;
+  }
   if (getBirdEchoCopyAt(state, hex)) {
     return true;
   }
@@ -2310,6 +2410,100 @@ function placeStone(state, hex, owner, kind = "stone") {
 
 function removeStone(state, hex) {
   delete state.cells[keyOf(hex.q, hex.r)];
+}
+
+function addEffectStone(state, hex, owner, kind = "stone") {
+  if (!isCellSupportedForMode(state, hex) || getCellAt(state, hex)) {
+    return false;
+  }
+  state.moveSerial += 1;
+  state.cells[keyOf(hex.q, hex.r)] = {
+    owner,
+    kind,
+    serial: state.moveSerial
+  };
+  return true;
+}
+
+function replaceTrackedHex(state, fromHex, toHex) {
+  if (state.lastPlacement && equalHex(state.lastPlacement, fromHex)) {
+    state.lastPlacement = { ...toHex };
+  }
+  for (const owner of [1, 2]) {
+    if (state.lastPlacedByPlayer?.[owner] && equalHex(state.lastPlacedByPlayer[owner], fromHex)) {
+      state.lastPlacedByPlayer[owner] = { ...toHex };
+    }
+  }
+  state.lastPlacedThisTurn = state.lastPlacedThisTurn.map((hex) => (
+    equalHex(hex, fromHex) ? { ...toHex } : hex
+  ));
+}
+
+function moveStonePreservingSerial(state, fromHex, toHex) {
+  if (!isCellSupportedForMode(state, toHex) || isOccupied(state, toHex) || isEverythingBagelRedTapeHex(state, toHex)) {
+    return false;
+  }
+  const cell = getCellAt(state, fromHex);
+  if (!cell) {
+    return false;
+  }
+  removeStone(state, fromHex);
+  state.cells[keyOf(toHex.q, toHex.r)] = { ...cell };
+  replaceTrackedHex(state, fromHex, toHex);
+  return true;
+}
+
+function isOpenForEverythingBagelEffect(state, hex) {
+  return isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex);
+}
+
+function getPortalExitForHex(zones, hex) {
+  const key = keyOf(hex.q, hex.r);
+  for (const pair of zones.portalPairs) {
+    if (keyOf(pair.a.q, pair.a.r) === key) {
+      return pair.b;
+    }
+    if (keyOf(pair.b.q, pair.b.r) === key) {
+      return pair.a;
+    }
+  }
+  return null;
+}
+
+function applyEverythingBagelPlacementEffects(state, placedHex, owner) {
+  if (!hasEverythingBagelMode(state)) {
+    return [];
+  }
+  const messages = [];
+  const zones = getEverythingBagelZones(state);
+  let currentHex = { ...placedHex };
+  const portalExit = getPortalExitForHex(zones, currentHex);
+
+  if (portalExit && moveStonePreservingSerial(state, currentHex, portalExit)) {
+    messages.push(`Everything Bagel portal fired: (${currentHex.q}, ${currentHex.r}) became (${portalExit.q}, ${portalExit.r}).`);
+    currentHex = { ...portalExit };
+  }
+
+  if (zones.tollBoothKeys.has(keyOf(currentHex.q, currentHex.r))) {
+    ensureClockState(state);
+    if (state.clock.enabled) {
+      state.clock.remaining[owner] += 7;
+      messages.push(`Toll booth validated Player ${owner}'s parking: +7 seconds.`);
+    } else {
+      messages.push(`Toll booth inspected Player ${owner}'s stone and found the timer was on strike.`);
+    }
+  }
+
+  if (zones.couponKeys.has(keyOf(currentHex.q, currentHex.r)) && Object.keys(state.cells).length < BAGEL_RECEIPT_STONE_LIMIT) {
+    const receiptTarget = rotateAxial({ q: currentHex.q + owner, r: currentHex.r - 1 }, zones.phase + owner + 1);
+    if (isOpenForEverythingBagelEffect(state, receiptTarget) && addEffectStone(state, receiptTarget, owner, "stone")) {
+      messages.push(`Coupon printer spat out a Player ${owner} receipt stone at (${receiptTarget.q}, ${receiptTarget.r}).`);
+    } else {
+      messages.push("Coupon printer jammed. This is legally considered gameplay.");
+    }
+  }
+
+  return messages;
 }
 
 function moveBird(state, hex, birdMoveKind = "duck") {
@@ -2628,6 +2822,107 @@ function resolveMeteorAccounting(state) {
   pushLog(line);
 }
 
+function getOpenStepTowardOriginForMode(state, hex) {
+  const options = getAdjacentsForMode(state, hex)
+    .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+    .sort((a, b) => getDistanceForMode(state, a) - getDistanceForMode(state, b));
+  const currentDistance = getDistanceForMode(state, hex);
+  return options.find((candidate) => getDistanceForMode(state, candidate) < currentDistance) || null;
+}
+
+function resolveBagelAuditorCopy(state, owner, messages) {
+  if (Object.keys(state.cells).length >= BAGEL_RECEIPT_STONE_LIMIT) {
+    messages.push("Auditor wanted to photocopy a stone but the universe hit its filing-cabinet quota.");
+    return;
+  }
+  const entries = getOwnerStoneEntriesSortedByAge(state, owner);
+  const newest = entries[entries.length - 1];
+  if (!newest) {
+    return;
+  }
+  const target = rotateAxial(newest.hex, state.turnCount + owner);
+  if (isOpenForEverythingBagelEffect(state, target) && addEffectStone(state, target, owner, "stone")) {
+    messages.push(`Auditor photocopied Player ${owner}'s newest stone to (${target.q}, ${target.r}).`);
+  } else {
+    messages.push(`Auditor tried to photocopy Player ${owner}'s newest stone, but the form was already occupied.`);
+  }
+}
+
+function resolveBagelGravityComplaint(state, messages) {
+  if (state.turnCount % 3 !== 0) {
+    return;
+  }
+  for (const owner of [1, 2]) {
+    const oldest = getOwnerStoneEntriesSortedByAge(state, owner)[0];
+    if (!oldest) {
+      continue;
+    }
+    const target = getOpenStepTowardOriginForMode(state, oldest.hex);
+    if (target && moveStonePreservingSerial(state, oldest.hex, target)) {
+      messages.push(`Gravity filed a complaint: Player ${owner}'s oldest stone shuffled to (${target.q}, ${target.r}).`);
+    }
+  }
+}
+
+function resolveBagelTaxGoblinSwap(state, messages) {
+  if (state.turnCount % 4 !== 0) {
+    return;
+  }
+  const entries = Object.entries(state.cells)
+    .map(([key, cell]) => ({ hex: parseKey(key), cell }))
+    .sort((a, b) => (
+      getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
+      || a.cell.serial - b.cell.serial
+    ));
+
+  for (const entry of entries) {
+    const mirror = { q: -entry.hex.q, r: -entry.hex.r };
+    const mirrorCell = getCellAt(state, mirror);
+    if (!mirrorCell || mirrorCell.kind !== "stone" || entry.cell.owner === mirrorCell.owner) {
+      continue;
+    }
+    const originalOwner = entry.cell.owner;
+    entry.cell.owner = mirrorCell.owner;
+    mirrorCell.owner = originalOwner;
+    messages.push(`Tax goblins swapped ownership between (${entry.hex.q}, ${entry.hex.r}) and (${mirror.q}, ${mirror.r}).`);
+    return;
+  }
+}
+
+function resolveBagelRedTapeEvictions(state, messages) {
+  const zones = getEverythingBagelZones(state);
+  for (const hex of zones.redTape) {
+    const cell = getCellAt(state, hex);
+    if (!cell || cell.kind !== "stone") {
+      continue;
+    }
+    const escape = getAdjacentsForMode(state, hex)
+      .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+      .sort((a, b) => getDistanceForMode(state, a) - getDistanceForMode(state, b))[0];
+    if (escape && moveStonePreservingSerial(state, hex, escape)) {
+      messages.push(`Red tape evicted a stone from (${hex.q}, ${hex.r}) to (${escape.q}, ${escape.r}).`);
+    }
+  }
+}
+
+function resolveEverythingBagel(state, previousPlayer) {
+  if (!hasEverythingBagelMode(state)) {
+    return;
+  }
+  const messages = [];
+  resolveBagelAuditorCopy(state, previousPlayer, messages);
+  resolveBagelGravityComplaint(state, messages);
+  resolveBagelTaxGoblinSwap(state, messages);
+  resolveBagelRedTapeEvictions(state, messages);
+  rebuildPanicZones(state);
+
+  if (messages.length === 0) {
+    pushLog("Everything Bagel committee met, yelled about fonts, and changed nothing.");
+    return;
+  }
+  pushLog(`Everything Bagel: ${messages.join(" ")}`);
+}
+
 function checkForWinner(state) {
   const winner = auditWholeBoardForWinner(state);
   if (winner && !state.winner) {
@@ -2650,6 +2945,7 @@ function endTurn(state) {
   resolveEchoes(state);
   resolveOrbit(state);
   resolveMeteorAccounting(state);
+  resolveEverythingBagel(state, previousPlayer);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
@@ -2698,6 +2994,7 @@ function placeTurnTile(state, hex, owner) {
   }
 
   placeStone(state, hex, owner, "stone");
+  const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
   const capResolution = enforceStoneCapAfterPlacement(state, owner, {
     interactiveEgyptian: hasMode(state, "egyptian") && owner === state.turnPlayer
   });
@@ -2710,13 +3007,20 @@ function placeTurnTile(state, hex, owner) {
 
   if (capResolution.needsChoice) {
     return {
-      log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}). Egyptian: choose ${state.egyptianRemoval?.remaining || 1} stone${(state.egyptianRemoval?.remaining || 1) === 1 ? "" : "s"} to remove (not the stone you just placed).`,
+      log: [
+        `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
+        ...bagelMessages,
+        `Egyptian: choose ${state.egyptianRemoval?.remaining || 1} stone${(state.egyptianRemoval?.remaining || 1) === 1 ? "" : "s"} to remove (not the stone you just placed).`
+      ].join(" "),
       needsEgyptianChoice: true
     };
   }
 
   return {
-    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
+    log: [
+      `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
+      ...bagelMessages
+    ].join(" "),
     needsEgyptianChoice: false
   };
 }
@@ -3577,6 +3881,65 @@ function drawGrid() {
   }
 }
 
+function drawEverythingBagelOverlay() {
+  if (!hasEverythingBagelMode(game.state)) {
+    return;
+  }
+  const size = currentHexSize();
+  if (size < 5) {
+    return;
+  }
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const margin = size * 4;
+  const zones = getEverythingBagelZones(game.state);
+
+  function drawZone(hex, fill, stroke, label) {
+    const world = boardCellToPixel(hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (!isOnScreenWithMargin(screen, margin, w, h)) {
+      return;
+    }
+    drawBoardShape(screen.x, screen.y, size * 0.92, fill, stroke, 1.5, hex);
+    if (size >= 10 && label) {
+      ctx.fillStyle = stroke;
+      ctx.font = `${Math.max(9, size * 0.38)}px system-ui`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, screen.x, screen.y + 0.5);
+    }
+  }
+
+  ctx.save();
+  for (const pair of zones.portalPairs) {
+    const aWorld = boardCellToPixel(pair.a, size, game.state);
+    const bWorld = boardCellToPixel(pair.b, size, game.state);
+    const a = worldToScreen(aWorld.x, aWorld.y);
+    const b = worldToScreen(bWorld.x, bWorld.y);
+    ctx.strokeStyle = "rgba(95, 255, 229, 0.18)";
+    ctx.lineWidth = Math.max(1, size * 0.08);
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    drawZone(pair.a, "rgba(95, 255, 229, 0.075)", "rgba(95, 255, 229, 0.62)", "P");
+    drawZone(pair.b, "rgba(95, 255, 229, 0.075)", "rgba(95, 255, 229, 0.62)", "P");
+  }
+
+  for (const hex of zones.redTape) {
+    drawZone(hex, "rgba(255, 83, 83, 0.12)", "rgba(255, 112, 112, 0.72)", "NO");
+  }
+  for (const hex of zones.tollBooths) {
+    drawZone(hex, "rgba(255, 197, 92, 0.10)", "rgba(255, 214, 119, 0.70)", "$");
+  }
+  for (const hex of zones.coupons) {
+    drawZone(hex, "rgba(176, 255, 128, 0.10)", "rgba(176, 255, 128, 0.66)", "R");
+  }
+  ctx.restore();
+}
+
 function drawOriginIndicator() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
@@ -4183,6 +4546,7 @@ function renderNow() {
   ctx.clearRect(0, 0, w, h);
 
   drawGrid();
+  drawEverythingBagelOverlay();
   drawOriginIndicator();
   drawEchoTargets();
   drawHoverEchoPreview();

@@ -74,6 +74,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.
+- **Everything Bagel**: an intentionally ridiculous mode with roaming red-tape blockers, paired portals, receipt-printing coupon spaces, clock-bribing toll booths, auditor photocopies, tax goblin owner swaps, and gravity complaints. It is still, somehow, connect 6.
 
 ## Project Structure
 
