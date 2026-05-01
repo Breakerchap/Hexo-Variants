@@ -379,6 +379,20 @@ function buildCandidateHexes(radius, reverse = false) {
   return hexes;
 }
 
+function buildRadialCandidateHexes(maxRing, reverse = false) {
+  const sectors = 12;
+  const hexes = [{ q: 0, r: 0 }];
+  for (let ring = 1; ring <= maxRing; ring += 1) {
+    for (let sector = 0; sector < sectors; sector += 1) {
+      hexes.push({ q: ring, r: sector });
+    }
+  }
+  if (reverse) {
+    hexes.reverse();
+  }
+  return hexes;
+}
+
 function stateFingerprint(state) {
   return JSON.stringify(state);
 }
@@ -492,7 +506,9 @@ function runScenario(sandbox, modeKeys, reverse = false) {
     "egyptian n controls should only be visible when egyptian mode is selected"
   );
 
-  const candidateHexes = buildCandidateHexes(14, reverse);
+  const candidateHexes = modeKeys.includes("radialGrid")
+    ? buildRadialCandidateHexes(44, reverse)
+    : buildCandidateHexes(14, reverse);
   const maxActions = 100;
 
   for (let step = 0; step < maxActions; step += 1) {
@@ -715,6 +731,82 @@ function runOctagonWinDirectionChecks(context) {
   }
 }
 
+function runRadialWinDirectionChecks(context) {
+  const makeState = context.HexTicTacToeInternals.makeInitialState;
+  assert.equal(typeof makeState, "function", "expected makeInitialState helper");
+  assert.equal(typeof context.auditWholeBoardForWinner, "function", "expected auditWholeBoardForWinner helper");
+  assert.equal(typeof context.getMirrorCellForMode, "function", "expected getMirrorCellForMode helper");
+
+  function buildRadialStateFromLine(lineHexes) {
+    const state = makeState(["radialGrid"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, 12);
+    let serial = 0;
+    for (const hex of lineHexes) {
+      serial += 1;
+      state.cells[keyOf(hex)] = {
+        owner: 1,
+        kind: "stone",
+        serial
+      };
+    }
+    state.moveSerial = serial;
+    state.lastPlacement = { ...lineHexes[lineHexes.length - 1] };
+    return state;
+  }
+
+  const directions = [
+    {
+      name: "spoke without centre",
+      line: Array.from({ length: 6 }, (_, idx) => ({ q: idx + 2, r: 3 }))
+    },
+    {
+      name: "spoke from centre",
+      line: [{ q: 0, r: 0 }, ...Array.from({ length: 5 }, (_, idx) => ({ q: idx + 1, r: 7 }))]
+    },
+    {
+      name: "ring",
+      line: Array.from({ length: 6 }, (_, idx) => ({ q: 4, r: idx + 2 }))
+    },
+    {
+      name: "ring wrapping across sector zero",
+      line: [9, 10, 11, 0, 1, 2].map((sector) => ({ q: 5, r: sector }))
+    }
+  ];
+
+  for (const dir of directions) {
+    assert.equal(new Set(dir.line.map((hex) => keyOf(hex))).size, dir.line.length, `line should not self-overlap for radial ${dir.name}`);
+    const state = buildRadialStateFromLine(dir.line);
+    const winner = context.auditWholeBoardForWinner(state);
+    assert.equal(winner, 1, `radial winner should resolve for ${dir.name}`);
+
+    const almost = dir.line.slice(0, 5);
+    const almostState = buildRadialStateFromLine(almost);
+    const almostWinner = context.auditWholeBoardForWinner(almostState);
+    assert.equal(almostWinner, 0, `radial winner should not trigger early for ${dir.name}`);
+  }
+
+  const gappedSpokeState = buildRadialStateFromLine([
+    { q: 0, r: 0 },
+    { q: 3, r: 4 },
+    { q: 4, r: 4 },
+    { q: 5, r: 4 },
+    { q: 6, r: 4 },
+    { q: 7, r: 4 }
+  ]);
+  assert.equal(
+    context.auditWholeBoardForWinner(gappedSpokeState),
+    0,
+    "radial spoke should not bridge a gap back to the centre"
+  );
+
+  const mirrorState = makeState(["radialGrid"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, 12);
+  const mirrored = context.getMirrorCellForMode(mirrorState, { q: 3, r: 2 });
+  assert.equal(mirrored.q, 3, "radial mirror should stay on the same ring");
+  assert.equal(mirrored.r, 8, "radial mirror should flip to the opposite sector");
+  const mirroredCentre = context.getMirrorCellForMode(mirrorState, { q: 0, r: 0 });
+  assert.equal(mirroredCentre.q, 0, "radial centre should mirror to itself");
+  assert.equal(mirroredCentre.r, 0, "radial centre should mirror to itself");
+}
+
 function runEgyptianEchoRemovalChecks(context) {
   const makeState = context.HexTicTacToeInternals.makeInitialState;
   assert.equal(typeof makeState, "function", "expected makeInitialState helper");
@@ -768,7 +860,7 @@ function runEgyptianEchoRemovalChecks(context) {
   assert.equal(getOwnerStoneCount(overflowState, 1), 10, "turn removal cap may leave a player above n stones");
 }
 
-function runKingDuckPanicChecks(context) {
+function runKingDuckPanicChecks(context, radialOnly = false) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
 
@@ -787,28 +879,36 @@ function runKingDuckPanicChecks(context) {
     assert.deepEqual(actualKeys, expectedKeys, `${messagePrefix}: panic zones should match expected adjacency`);
   }
 
-  runCase(
-    ["kingDuck"],
-    ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
-    "hex king duck"
-  );
+  if (!radialOnly) {
+    runCase(
+      ["kingDuck"],
+      ["3,0", "3,-1", "2,-1", "1,0", "1,1", "2,1"],
+      "hex king duck"
+    );
+
+    runCase(
+      ["triangleGrid", "kingDuck"],
+      ["3,0", "3,-1", "1,0"],
+      "triangle king duck"
+    );
+
+    runCase(
+      ["squareGrid", "kingDuck"],
+      ["3,0", "1,0", "2,1", "2,-1"],
+      "square king duck"
+    );
+
+    runCase(
+      ["octagonGrid", "kingDuck"],
+      ["4,0", "2,2", "2,-2", "3,1", "3,-1", "1,1", "1,-1"],
+      "octagon king duck"
+    );
+  }
 
   runCase(
-    ["triangleGrid", "kingDuck"],
-    ["3,0", "3,-1", "1,0"],
-    "triangle king duck"
-  );
-
-  runCase(
-    ["squareGrid", "kingDuck"],
-    ["3,0", "1,0", "2,1", "2,-1"],
-    "square king duck"
-  );
-
-  runCase(
-    ["octagonGrid", "kingDuck"],
-    ["4,0", "2,2", "2,-2", "3,1", "3,-1", "1,1", "1,-1"],
-    "octagon king duck"
+    ["radialGrid", "kingDuck"],
+    ["3,0", "2,1", "2,11", "1,0"],
+    "radial king duck"
   );
 }
 
@@ -835,18 +935,29 @@ function main() {
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
 
-  const combos = allModeCombos(modeKeys);
+  const radialOnly = process.argv.includes("--radial-only");
+  const combos = radialOnly
+    ? allModeCombos(modeKeys.filter((key) => (
+      key !== "radialGrid"
+      && key !== "triangleGrid"
+      && key !== "squareGrid"
+      && key !== "octagonGrid"
+    ))).map((combo) => ["radialGrid", ...combo])
+    : allModeCombos(modeKeys);
   for (const combo of combos) {
     runScenario(context, combo, false);
     runScenario(context, combo, true);
   }
-  runTriangleWinDirectionChecks(context);
-  runSquareWinDirectionChecks(context);
-  runOctagonWinDirectionChecks(context);
-  runEgyptianEchoRemovalChecks(context);
-  runKingDuckPanicChecks(context);
+  if (!radialOnly) {
+    runTriangleWinDirectionChecks(context);
+    runSquareWinDirectionChecks(context);
+    runOctagonWinDirectionChecks(context);
+    runEgyptianEchoRemovalChecks(context);
+  }
+  runRadialWinDirectionChecks(context);
+  runKingDuckPanicChecks(context, radialOnly);
 
-  console.log(`Mode combo smoke tests passed (${combos.length} combos x 2 scenarios).`);
+  console.log(`${radialOnly ? "Radial mode" : "Mode combo"} smoke tests passed (${combos.length} combos x 2 scenarios).`);
 }
 
 main();

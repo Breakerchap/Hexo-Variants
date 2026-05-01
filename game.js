@@ -65,6 +65,8 @@ const OCTAGON_PITCH_FACTOR = 2 * COS_22_5;
 const OCTAGON_DIAMOND_RADIUS_FACTOR = COS_22_5 - SIN_22_5;
 const MIN_TIMER_INITIAL_SECONDS = 1;
 const MAX_TIMER_INITIAL_SECONDS = 180 * 60;
+const RADIAL_SECTOR_COUNT = 12;
+const RADIAL_SECTOR_ANGLE = (Math.PI * 2) / RADIAL_SECTOR_COUNT;
 const DEFAULT_TIMER_CONFIG = {
   enabled: true,
   initialSeconds: 5 * 60,
@@ -228,6 +230,11 @@ const MODES = {
     summary: "Replaces hex tiles with an octagon tiling that includes the small diamond tiles while keeping connect-6 wins and all other mode rules intact.",
     hint: "Board switches to octagons and diamonds. Place in either tile type and connect 6 in a straight line."
   },
+  radialGrid: {
+    name: "Radial Grid",
+    summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
+    hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
+  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -342,6 +349,45 @@ function getOctagonCellHalfPitch(size) {
   return getOctagonCellPitch(size) / 2;
 }
 
+function getRadialRingPitch(size) {
+  return Math.max(8, Number(size) || 0) * 1.62;
+}
+
+function normaliseRadialSector(sector) {
+  const raw = Math.trunc(Number(sector) || 0);
+  return ((raw % RADIAL_SECTOR_COUNT) + RADIAL_SECTOR_COUNT) % RADIAL_SECTOR_COUNT;
+}
+
+function normaliseRadialCell(hex) {
+  const ring = Math.trunc(Number(hex?.q) || 0);
+  if (ring <= 0) {
+    return { q: 0, r: 0 };
+  }
+  return {
+    q: ring,
+    r: normaliseRadialSector(hex?.r)
+  };
+}
+
+function isRadialCellCoordinate(hex) {
+  const ring = Number(hex?.q);
+  const sector = Number(hex?.r);
+  if (!Number.isInteger(ring) || !Number.isInteger(sector) || ring < 0) {
+    return false;
+  }
+  if (ring === 0) {
+    return sector === 0;
+  }
+  return sector >= 0 && sector < RADIAL_SECTOR_COUNT;
+}
+
+function radialSectorDistance(a, b) {
+  const da = normaliseRadialSector(a);
+  const db = normaliseRadialSector(b);
+  const diff = Math.abs(da - db);
+  return Math.min(diff, RADIAL_SECTOR_COUNT - diff);
+}
+
 function isOctagonTileCoordinate(hex) {
   const q = Math.trunc(Number(hex?.q) || 0);
   const r = Math.trunc(Number(hex?.r) || 0);
@@ -426,6 +472,19 @@ function octagonToPixel(hex, size) {
   };
 }
 
+function radialToPixel(hex, size) {
+  const cell = normaliseRadialCell(hex);
+  if (cell.q === 0) {
+    return { x: 0, y: 0 };
+  }
+  const radius = cell.q * getRadialRingPitch(size);
+  const angle = cell.r * RADIAL_SECTOR_ANGLE;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius
+  };
+}
+
 function pixelToAxial(x, y, size) {
   const q = ((SQRT3 / 3) * x - (1 / 3) * y) / size;
   const r = ((2 / 3) * y) / size;
@@ -472,6 +531,19 @@ function pixelToOctagon(x, y, size) {
     }
   }
   return best;
+}
+
+function pixelToRadialCell(x, y, size) {
+  const pitch = getRadialRingPitch(size);
+  const distance = Math.hypot(x, y);
+  if (distance < pitch * 0.5) {
+    return { q: 0, r: 0 };
+  }
+
+  const ring = Math.max(1, Math.round(distance / pitch));
+  const angle = Math.atan2(y, x);
+  const sector = normaliseRadialSector(Math.round(angle / RADIAL_SECTOR_ANGLE));
+  return { q: ring, r: sector };
 }
 
 function axialRound(frac) {
@@ -581,6 +653,9 @@ function pixelToBoardCell(x, y, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return pixelToTriangleCell(x, y, size);
   }
+  if (usesRadialGridMode(state)) {
+    return pixelToRadialCell(x, y, size);
+  }
   if (usesOctagonGridMode(state)) {
     return pixelToOctagon(x, y, size);
   }
@@ -593,6 +668,9 @@ function pixelToBoardCell(x, y, size, state = null) {
 function boardCellToPixel(hex, size, state = null) {
   if (usesTriangleGridMode(state)) {
     return getTriangleCellCenter(hex, size);
+  }
+  if (usesRadialGridMode(state)) {
+    return radialToPixel(hex, size);
   }
   if (usesOctagonGridMode(state)) {
     return octagonToPixel(hex, size);
@@ -614,6 +692,25 @@ function squareNeighbours(hex) {
     { q: hex.q, r: hex.r + 1 },
     { q: hex.q, r: hex.r - 1 }
   ];
+}
+
+function radialNeighbours(hex) {
+  const cell = normaliseRadialCell(hex);
+  if (cell.q === 0) {
+    return Array.from({ length: RADIAL_SECTOR_COUNT }, (_, sector) => ({ q: 1, r: sector }));
+  }
+
+  const neighboursForCell = [
+    { q: cell.q + 1, r: cell.r },
+    { q: cell.q, r: normaliseRadialSector(cell.r + 1) },
+    { q: cell.q, r: normaliseRadialSector(cell.r - 1) }
+  ];
+  if (cell.q === 1) {
+    neighboursForCell.push({ q: 0, r: 0 });
+  } else {
+    neighboursForCell.push({ q: cell.q - 1, r: cell.r });
+  }
+  return neighboursForCell;
 }
 
 function octagonTileNeighbours(hex) {
@@ -661,6 +758,9 @@ function getAdjacentsForMode(state, hex) {
   if (usesTriangleGridMode(state)) {
     return triangleSideNeighbours(hex);
   }
+  if (usesRadialGridMode(state)) {
+    return radialNeighbours(hex);
+  }
   if (usesOctagonGridMode(state)) {
     return octagonTileNeighbours(hex);
   }
@@ -689,7 +789,25 @@ function octagonDistance(a, b = { q: 0, r: 0 }) {
   return Math.max(dq, dr);
 }
 
+function radialDistance(a, b = { q: 0, r: 0 }) {
+  const from = normaliseRadialCell(a);
+  const to = normaliseRadialCell(b);
+  if (from.q === 0) {
+    return to.q;
+  }
+  if (to.q === 0) {
+    return from.q;
+  }
+
+  const sameRingRoute = Math.abs(from.q - to.q) + radialSectorDistance(from.r, to.r);
+  const throughCentreRoute = from.q + to.q;
+  return Math.min(sameRingRoute, throughCentreRoute);
+}
+
 function getDistanceForMode(state, a, b = { q: 0, r: 0 }) {
+  if (usesRadialGridMode(state)) {
+    return radialDistance(a, b);
+  }
   if (usesOctagonGridMode(state)) {
     return octagonDistance(a, b);
   }
@@ -865,7 +983,21 @@ function octagonOrbitStep(hex) {
   return { ...ring[(index + 1) % ring.length] };
 }
 
+function radialOrbitStep(hex) {
+  const cell = normaliseRadialCell(hex);
+  if (cell.q === 0) {
+    return { q: 0, r: 0 };
+  }
+  return {
+    q: cell.q,
+    r: normaliseRadialSector(cell.r + 1)
+  };
+}
+
 function orbitStepForMode(state, hex) {
+  if (usesRadialGridMode(state)) {
+    return radialOrbitStep(hex);
+  }
   if (usesOctagonGridMode(state)) {
     return octagonOrbitStep(hex);
   }
@@ -982,6 +1114,9 @@ function getGridMode(state) {
   if (!state || !Array.isArray(state.modeKeys)) {
     return "hex";
   }
+  if (state.modeKeys.includes("radialGrid")) {
+    return "radial";
+  }
   if (state.modeKeys.includes("octagonGrid")) {
     return "octagon";
   }
@@ -1006,9 +1141,16 @@ function usesSquareGridMode(state) {
   return getGridMode(state) === "square";
 }
 
+function usesRadialGridMode(state) {
+  return getGridMode(state) === "radial";
+}
+
 function getBoardSpaceLabel(state) {
   if (usesTriangleGridMode(state)) {
     return "triangle";
+  }
+  if (usesRadialGridMode(state)) {
+    return "radial cell";
   }
   if (usesOctagonGridMode(state)) {
     return "tile";
@@ -1023,6 +1165,9 @@ function getBoardCoordinateLabel(state) {
   if (usesTriangleGridMode(state)) {
     return "Triangle";
   }
+  if (usesRadialGridMode(state)) {
+    return "Radial";
+  }
   if (usesOctagonGridMode(state)) {
     return "Octagon";
   }
@@ -1033,10 +1178,27 @@ function getBoardCoordinateLabel(state) {
 }
 
 function isCellSupportedForMode(state, hex) {
+  if (usesRadialGridMode(state)) {
+    return isRadialCellCoordinate(hex);
+  }
   if (usesOctagonGridMode(state)) {
     return isOctagonTileCoordinate(hex);
   }
   return true;
+}
+
+function getMirrorCellForMode(state, hex) {
+  if (usesRadialGridMode(state)) {
+    const cell = normaliseRadialCell(hex);
+    if (cell.q === 0) {
+      return { q: 0, r: 0 };
+    }
+    return {
+      q: cell.q,
+      r: normaliseRadialSector(cell.r + (RADIAL_SECTOR_COUNT / 2))
+    };
+  }
+  return { q: -hex.q, r: -hex.r };
 }
 
 function usesBirdMode(state) {
@@ -2046,6 +2208,9 @@ function getLastTurnMeteorRemovalEvents(state) {
 }
 
 function getCellAt(state, hex) {
+  if (usesRadialGridMode(state) && Number(hex?.q) === 0) {
+    return state.cells[keyOf(0, 0)] || null;
+  }
   return state.cells[keyOf(hex.q, hex.r)] || null;
 }
 
@@ -2331,7 +2496,7 @@ function syncBirdEchoCopy(state, birdKind) {
     return;
   }
 
-  const target = { q: -birdHex.q, r: -birdHex.r };
+  const target = getMirrorCellForMode(state, birdHex);
   if (isStoneOccupied(state, target)) {
     rebuildPanicZones(state);
     return;
@@ -2378,6 +2543,135 @@ function getTriangleLineCount(state, start, owner, lineKind) {
     }
   }
   return count;
+}
+
+function getRadialSpokeRunCells(state, start, owner, sectorOverride = null) {
+  const startCell = normaliseRadialCell(start);
+  const sector = normaliseRadialSector(sectorOverride == null ? startCell.r : sectorOverride);
+  const cells = [];
+
+  if (startCell.q === 0) {
+    if (!countsForOwnerAt(state, { q: 0, r: 0 }, owner)) {
+      return [];
+    }
+    cells.push({ q: 0, r: 0 });
+    let ring = 1;
+    while (countsForOwnerAt(state, { q: ring, r: sector }, owner)) {
+      cells.push({ q: ring, r: sector });
+      ring += 1;
+    }
+    return cells;
+  }
+
+  const inward = [];
+  let reachedCentre = startCell.q === 1;
+  for (let ring = startCell.q - 1; ring >= 1; ring -= 1) {
+    const pos = { q: ring, r: sector };
+    if (!countsForOwnerAt(state, pos, owner)) {
+      break;
+    }
+    inward.push(pos);
+    if (ring === 1) {
+      reachedCentre = true;
+    }
+  }
+  if (reachedCentre && countsForOwnerAt(state, { q: 0, r: 0 }, owner)) {
+    inward.push({ q: 0, r: 0 });
+  }
+  inward.reverse();
+
+  cells.push(...inward, { q: startCell.q, r: sector });
+
+  let ring = startCell.q + 1;
+  while (countsForOwnerAt(state, { q: ring, r: sector }, owner)) {
+    cells.push({ q: ring, r: sector });
+    ring += 1;
+  }
+
+  return cells;
+}
+
+function getRadialRingRunCells(state, start, owner) {
+  const startCell = normaliseRadialCell(start);
+  if (startCell.q === 0 || !countsForOwnerAt(state, startCell, owner)) {
+    return [];
+  }
+
+  const visited = new Set([keyOf(startCell.q, startCell.r)]);
+  const before = [];
+  for (let step = 1; step < RADIAL_SECTOR_COUNT; step += 1) {
+    const pos = { q: startCell.q, r: normaliseRadialSector(startCell.r - step) };
+    const key = keyOf(pos.q, pos.r);
+    if (visited.has(key) || !countsForOwnerAt(state, pos, owner)) {
+      break;
+    }
+    visited.add(key);
+    before.push(pos);
+  }
+
+  const after = [];
+  for (let step = 1; step < RADIAL_SECTOR_COUNT; step += 1) {
+    const pos = { q: startCell.q, r: normaliseRadialSector(startCell.r + step) };
+    const key = keyOf(pos.q, pos.r);
+    if (visited.has(key) || !countsForOwnerAt(state, pos, owner)) {
+      break;
+    }
+    visited.add(key);
+    after.push(pos);
+  }
+
+  before.reverse();
+  return [...before, startCell, ...after];
+}
+
+function getRadialWinningLine(state, start, owner) {
+  const startCell = normaliseRadialCell(start);
+  if (!countsForOwnerAt(state, startCell, owner)) {
+    return null;
+  }
+
+  if (startCell.q === 0) {
+    for (let sector = 0; sector < RADIAL_SECTOR_COUNT; sector += 1) {
+      const spokeCells = getRadialSpokeRunCells(state, startCell, owner, sector);
+      if (spokeCells.length >= WIN_LENGTH) {
+        return { kind: "spoke", cells: spokeCells };
+      }
+    }
+    return null;
+  }
+
+  const ringCells = getRadialRingRunCells(state, startCell, owner);
+  if (ringCells.length >= WIN_LENGTH) {
+    return { kind: "ring", cells: ringCells };
+  }
+
+  const spokeCells = getRadialSpokeRunCells(state, startCell, owner);
+  if (spokeCells.length >= WIN_LENGTH) {
+    return { kind: "spoke", cells: spokeCells };
+  }
+
+  return null;
+}
+
+function auditRadialBoardForWinner(state) {
+  for (const [key, cell] of Object.entries(state.cells)) {
+    const pos = parseKey(key);
+    const owners = [];
+    if (cellCountsForOwner(cell, 1)) {
+      owners.push(1);
+    }
+    if (cellCountsForOwner(cell, 2)) {
+      owners.push(2);
+    }
+
+    for (const owner of owners) {
+      if (getRadialWinningLine(state, pos, owner)) {
+        return owner;
+      }
+    }
+  }
+
+  return 0;
 }
 
 function auditTriangleBoardForWinner(state) {
@@ -2446,6 +2740,27 @@ function checkWinnerFrom(state, hex) {
     return 0;
   }
 
+  if (usesRadialGridMode(state)) {
+    const cell = getCellAt(state, hex);
+    if (!cell) {
+      return 0;
+    }
+    const owners = [];
+    if (cellCountsForOwner(cell, 1)) {
+      owners.push(1);
+    }
+    if (cellCountsForOwner(cell, 2)) {
+      owners.push(2);
+    }
+
+    for (const owner of owners) {
+      if (getRadialWinningLine(state, hex, owner)) {
+        return owner;
+      }
+    }
+    return 0;
+  }
+
   const cell = getCellAt(state, hex);
   if (!cell) {
     return 0;
@@ -2472,6 +2787,9 @@ function checkWinnerFrom(state, hex) {
 function auditWholeBoardForWinner(state) {
   if (usesTriangleGridMode(state)) {
     return auditTriangleBoardForWinner(state);
+  }
+  if (usesRadialGridMode(state)) {
+    return auditRadialBoardForWinner(state);
   }
 
   for (const key of Object.keys(state.cells)) {
@@ -2508,7 +2826,7 @@ function resolveEchoes(state) {
       remain.push(echo);
       continue;
     }
-    const target = { q: -echo.source.q, r: -echo.source.r };
+    const target = getMirrorCellForMode(state, echo.source);
     if (echo.kind === "bird") {
       // Legacy save compatibility: bird echoes are now immediate mirrored copies, not delayed moves.
       syncBirdEchoCopy(state, echo.birdKind);
@@ -3004,6 +3322,45 @@ function drawCircle(x, y, radius, fill, stroke, lineWidth = 1) {
   }
 }
 
+function drawRadialCell(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
+  const cell = normaliseRadialCell(hex);
+  const baseSize = currentHexSize();
+  const scale = Math.max(0.1, Math.min(1.25, (Number(size) || baseSize) / baseSize));
+  const pitch = getRadialRingPitch(baseSize);
+  if (cell.q === 0) {
+    drawCircle(x, y, pitch * 0.43 * scale, fill, stroke, lineWidth);
+    return;
+  }
+
+  const origin = worldToScreen(0, 0);
+  const radialGap = Math.max(0.6, size * 0.035);
+  const radialInset = Math.max(0, (1 - Math.min(scale, 1)) * pitch * 0.32);
+  const angleGap = Math.min(RADIAL_SECTOR_ANGLE * 0.07, 0.018)
+    + Math.max(0, (1 - Math.min(scale, 1)) * RADIAL_SECTOR_ANGLE * 0.22);
+  const innerRadius = Math.max(0, (cell.q - 0.5) * pitch + radialGap + radialInset);
+  const outerRadius = Math.max(innerRadius + 1, (cell.q + 0.5) * pitch - radialGap - radialInset);
+  const startAngle = (cell.r - 0.5) * RADIAL_SECTOR_ANGLE + angleGap;
+  const endAngle = (cell.r + 0.5) * RADIAL_SECTOR_ANGLE - angleGap;
+
+  ctx.beginPath();
+  ctx.arc(origin.x, origin.y, outerRadius, startAngle, endAngle);
+  ctx.lineTo(
+    origin.x + Math.cos(endAngle) * innerRadius,
+    origin.y + Math.sin(endAngle) * innerRadius
+  );
+  ctx.arc(origin.x, origin.y, innerRadius, endAngle, startAngle, true);
+  ctx.closePath();
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+}
+
 function drawTriangle(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
   const edgeLength = getTriangleEdgeLength(size);
   const unitVertices = (hex && isOddInt(hex.q))
@@ -3035,6 +3392,10 @@ function drawTriangle(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
 function drawBoardShape(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
   if (usesTriangleGridMode(game.state)) {
     drawTriangle(x, y, size, fill, stroke, lineWidth, hex);
+    return;
+  }
+  if (usesRadialGridMode(game.state)) {
+    drawRadialCell(x, y, size, fill, stroke, lineWidth, hex);
     return;
   }
   if (usesOctagonGridMode(game.state)) {
@@ -3241,6 +3602,47 @@ function getTriangleVisibleCellBounds(params) {
   };
 }
 
+function getRadialVisibleCellBounds(params) {
+  const width = params.width;
+  const height = params.height;
+  const offsetX = params.offsetX;
+  const offsetY = params.offsetY;
+  const pitch = getRadialRingPitch(params.hexSize);
+  const marginCells = params.marginCells == null ? 2 : params.marginCells;
+  const margin = Math.max(pitch * marginCells, pitch * 1.4);
+  const originScreen = { x: offsetX, y: offsetY };
+  const corners = [
+    { x: -margin, y: -margin },
+    { x: width + margin, y: -margin },
+    { x: -margin, y: height + margin },
+    { x: width + margin, y: height + margin }
+  ];
+
+  let maxDistance = 0;
+  for (const corner of corners) {
+    maxDistance = Math.max(maxDistance, Math.hypot(corner.x - originScreen.x, corner.y - originScreen.y));
+  }
+
+  const dx = originScreen.x < -margin
+    ? -margin - originScreen.x
+    : originScreen.x > width + margin
+      ? originScreen.x - (width + margin)
+      : 0;
+  const dy = originScreen.y < -margin
+    ? -margin - originScreen.y
+    : originScreen.y > height + margin
+      ? originScreen.y - (height + margin)
+      : 0;
+  const minDistance = Math.hypot(dx, dy);
+
+  return {
+    minQ: Math.max(0, Math.floor((minDistance - pitch) / pitch)),
+    maxQ: Math.max(0, Math.ceil((maxDistance + pitch) / pitch)),
+    minR: 0,
+    maxR: RADIAL_SECTOR_COUNT - 1
+  };
+}
+
 function drawTriangleLowDetailGrid(params) {
   const size = params.size;
   const w = params.w;
@@ -3361,6 +3763,109 @@ function drawTriangleLatticeGrid(params) {
   }
 }
 
+function drawRadialLowDetailGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = Math.max(1, params.drawStep || 1);
+  const pitch = getRadialRingPitch(size);
+  const lineStep = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? Math.max(2, drawStep) : drawStep;
+  const origin = worldToScreen(0, 0);
+  const minRadius = Math.max(0, (bounds.minQ - 0.5) * pitch);
+  const maxRadius = Math.max(pitch, (bounds.maxQ + 0.5) * pitch);
+
+  ctx.save();
+  ctx.strokeStyle = size < GRID_VERY_LOW_DETAIL_HEX_SIZE
+    ? "rgba(255, 255, 255, 0.065)"
+    : "rgba(255, 255, 255, 0.092)";
+  ctx.lineWidth = size < GRID_VERY_LOW_DETAIL_HEX_SIZE ? 0.8 : 1;
+  ctx.beginPath();
+
+  for (let ring = firstGridLineAtOrAfter(Math.max(0, bounds.minQ), lineStep); ring <= bounds.maxQ; ring += lineStep) {
+    ctx.moveTo(origin.x + (ring + 0.5) * pitch, origin.y);
+    ctx.arc(origin.x, origin.y, (ring + 0.5) * pitch, 0, Math.PI * 2);
+  }
+
+  for (let sector = 0; sector < RADIAL_SECTOR_COUNT; sector += 1) {
+    const angle = (sector + 0.5) * RADIAL_SECTOR_ANGLE;
+    ctx.moveTo(origin.x + Math.cos(angle) * minRadius, origin.y + Math.sin(angle) * minRadius);
+    ctx.lineTo(origin.x + Math.cos(angle) * maxRadius, origin.y + Math.sin(angle) * maxRadius);
+  }
+
+  ctx.stroke();
+  ctx.restore();
+
+  drawLowDetailHoverCell(size, w, h, size * 3.5);
+}
+
+function drawRadialLatticeGrid(params) {
+  const size = params.size;
+  const w = params.w;
+  const h = params.h;
+  const bounds = params.bounds;
+  const drawStep = params.drawStep;
+  const showPlacementHints = params.showPlacementHints;
+  if (drawStep > 1 || size < GRID_LOW_DETAIL_HEX_SIZE) {
+    drawRadialLowDetailGrid(params);
+    return;
+  }
+
+  const margin = getRadialRingPitch(size) * 1.2;
+  const gridStroke = "rgba(255, 255, 255, 0.09)";
+  const gridFill = "rgba(255, 255, 255, 0.026)";
+  let hoverDrawn = false;
+
+  for (let ring = bounds.minQ; ring <= bounds.maxQ; ring += 1) {
+    const sectors = ring === 0 ? [0] : Array.from({ length: RADIAL_SECTOR_COUNT }, (_, sector) => sector);
+    for (const sector of sectors) {
+      const hex = { q: ring, r: sector };
+      const world = boardCellToPixel(hex, size, game.state);
+      const screen = worldToScreen(world.x, world.y);
+      if (!isOnScreenWithMargin(screen, margin, w, h)) {
+        continue;
+      }
+
+      let fill = gridFill;
+      let stroke = gridStroke;
+
+      if (usesPanicBirdMode(game.state) && game.state.panicZones[keyOf(hex.q, hex.r)]) {
+        fill = "rgba(255, 179, 92, 0.16)";
+        stroke = "rgba(255, 179, 92, 0.52)";
+      }
+
+      if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
+        fill = "rgba(255, 255, 255, 0.012)";
+        stroke = null;
+      }
+
+      if (equalHex(hex, game.hoverHex)) {
+        hoverDrawn = true;
+        fill = "rgba(255, 255, 255, 0.095)";
+        stroke = "rgba(255, 255, 255, 0.42)";
+      }
+
+      drawBoardShape(screen.x, screen.y, size - 1, fill, stroke, 1.05, hex);
+    }
+  }
+
+  if (!hoverDrawn) {
+    const hoverWorld = boardCellToPixel(game.hoverHex, size, game.state);
+    const hoverScreen = worldToScreen(hoverWorld.x, hoverWorld.y);
+    if (isOnScreenWithMargin(hoverScreen, margin, w, h)) {
+      drawBoardShape(
+        hoverScreen.x,
+        hoverScreen.y,
+        size - 1,
+        "rgba(255, 255, 255, 0.18)",
+        "rgba(255, 255, 255, 0.38)",
+        1.3,
+        game.hoverHex
+      );
+    }
+  }
+}
+
 function drawSquareLowDetailGrid(params) {
   const size = params.size;
   const w = params.w;
@@ -3451,6 +3956,7 @@ function drawGrid() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   const triangleMode = usesTriangleGridMode(game.state);
+  const radialMode = usesRadialGridMode(game.state);
   const octagonMode = usesOctagonGridMode(game.state);
   const squareMode = usesSquareGridMode(game.state);
   const bounds = triangleMode
@@ -3461,6 +3967,15 @@ function drawGrid() {
       offsetY: game.viewport.offsetY,
       hexSize: size
     })
+    : radialMode
+      ? getRadialVisibleCellBounds({
+        width: w,
+        height: h,
+        offsetX: game.viewport.offsetX,
+        offsetY: game.viewport.offsetY,
+        hexSize: size,
+        marginCells: size < GRID_LOW_DETAIL_HEX_SIZE ? 1 : 2
+      })
     : octagonMode
       ? getOctagonVisibleCellBounds({
         width: w,
@@ -3498,6 +4013,18 @@ function drawGrid() {
 
   if (triangleMode) {
     drawTriangleLatticeGrid({
+      size,
+      w,
+      h,
+      bounds,
+      drawStep,
+      showPlacementHints
+    });
+    return;
+  }
+
+  if (radialMode) {
+    drawRadialLatticeGrid({
       size,
       w,
       h,
@@ -3623,7 +4150,7 @@ function drawEchoTargets() {
   const h = canvas.clientHeight;
 
   for (const echo of game.state.pendingEchoes) {
-    const hex = { q: -echo.source.q, r: -echo.source.r };
+    const hex = getMirrorCellForMode(game.state, echo.source);
     const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
@@ -3667,7 +4194,7 @@ function canBirdEchoCopyAppearAfterMove(state, birdKind, destinationHex) {
     return false;
   }
 
-  const target = { q: -destinationHex.q, r: -destinationHex.r };
+  const target = getMirrorCellForMode(state, destinationHex);
   if (isStoneOccupied(state, target)) {
     return false;
   }
@@ -3735,7 +4262,7 @@ function drawHoverEchoPreview() {
       return;
     }
 
-    target = { q: -game.hoverHex.q, r: -game.hoverHex.r };
+    target = getMirrorCellForMode(state, game.hoverHex);
     if (birdKind === "kingDuck") {
       fill = "rgba(255, 179, 92, 0.12)";
       stroke = "rgba(255, 179, 92, 0.9)";
@@ -3749,7 +4276,7 @@ function drawHoverEchoPreview() {
     if (!isLegalPlacement(state, game.hoverHex)) {
       return;
     }
-    target = { q: -game.hoverHex.q, r: -game.hoverHex.r };
+    target = getMirrorCellForMode(state, game.hoverHex);
     const owner = state.turnPlayer === 2 ? 2 : 1;
     fill = owner === 1 ? "rgba(109, 198, 255, 0.10)" : "rgba(255, 140, 140, 0.10)";
     stroke = owner === 1 ? "rgba(109, 198, 255, 0.88)" : "rgba(255, 140, 140, 0.88)";
@@ -4120,6 +4647,44 @@ function drawWinnerLineHint() {
   const last = game.state.lastPlacement;
   const lastCell = getCellAt(game.state, last);
   if (!lastCell) {
+    return;
+  }
+
+  if (usesRadialGridMode(game.state)) {
+    const owners = [];
+    if (game.state.winner && cellCountsForOwner(lastCell, game.state.winner)) {
+      owners.push(game.state.winner);
+    }
+    if (cellCountsForOwner(lastCell, 1) && !owners.includes(1)) {
+      owners.push(1);
+    }
+    if (cellCountsForOwner(lastCell, 2) && !owners.includes(2)) {
+      owners.push(2);
+    }
+
+    for (const owner of owners) {
+      const line = getRadialWinningLine(game.state, last, owner);
+      if (!line) {
+        continue;
+      }
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
+      ctx.lineWidth = 6;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i < line.cells.length; i += 1) {
+        const world = boardCellToPixel(line.cells[i], size, game.state);
+        const screen = worldToScreen(world.x, world.y);
+        if (i === 0) {
+          ctx.moveTo(screen.x, screen.y);
+        } else {
+          ctx.lineTo(screen.x, screen.y);
+        }
+      }
+      ctx.stroke();
+      return;
+    }
     return;
   }
 
