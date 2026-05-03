@@ -3,6 +3,9 @@
   if (!internals) {
     return;
   }
+  if (internals.supportsMultiPlayerTurnOrder) {
+    return;
+  }
 
   const {
     ui,

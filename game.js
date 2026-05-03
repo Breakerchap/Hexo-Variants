@@ -37,10 +37,20 @@ const ui = {
   turnOrderSummaryText: document.getElementById("turnOrderSummaryText"),
   p1ClockText: document.getElementById("p1ClockText"),
   p2ClockText: document.getElementById("p2ClockText"),
+  p3ClockText: document.getElementById("p3ClockText"),
+  p4ClockText: document.getElementById("p4ClockText"),
+  p3ClockLabel: document.getElementById("p3ClockLabel"),
+  p4ClockLabel: document.getElementById("p4ClockLabel"),
   boardClockP1: document.getElementById("boardClockP1"),
   boardClockP2: document.getElementById("boardClockP2"),
+  boardClockP3: document.getElementById("boardClockP3"),
+  boardClockP4: document.getElementById("boardClockP4"),
   boardClockP1Time: document.getElementById("boardClockP1Time"),
   boardClockP2Time: document.getElementById("boardClockP2Time"),
+  boardClockP3Time: document.getElementById("boardClockP3Time"),
+  boardClockP4Time: document.getElementById("boardClockP4Time"),
+  legendP3: document.getElementById("legendP3"),
+  legendP4: document.getElementById("legendP4"),
   onlineCreateBtn: document.getElementById("onlineCreateBtn"),
   onlineJoinBtn: document.getElementById("onlineJoinBtn"),
   onlineLeaveBtn: document.getElementById("onlineLeaveBtn"),
@@ -65,6 +75,8 @@ const OCTAGON_PITCH_FACTOR = 2 * COS_22_5;
 const OCTAGON_DIAMOND_RADIUS_FACTOR = COS_22_5 - SIN_22_5;
 const MIN_TIMER_INITIAL_SECONDS = 1;
 const MAX_TIMER_INITIAL_SECONDS = 180 * 60;
+const MIN_PLAYER_COUNT = 2;
+const MAX_PLAYER_COUNT = 4;
 const RADIAL_SECTOR_COUNT = 12;
 const RADIAL_SECTOR_ANGLE = (Math.PI * 2) / RADIAL_SECTOR_COUNT;
 const DEFAULT_TIMER_CONFIG = {
@@ -148,17 +160,30 @@ const normaliseTimerConfig = timerHelpers.normaliseTimerConfig || function local
   };
 };
 
-const createClockState = timerHelpers.createClockState || function localCreateClockState(config) {
+function normalisePlayerCount(playerCount) {
+  const parsed = Math.trunc(Number(playerCount) || MIN_PLAYER_COUNT);
+  return Math.max(MIN_PLAYER_COUNT, Math.min(MAX_PLAYER_COUNT, parsed));
+}
+
+function createPlayerMap(playerCount, createValue) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const map = {};
+  for (let player = 1; player <= safePlayerCount; player += 1) {
+    map[player] = createValue(player);
+  }
+  return map;
+}
+
+const createClockState = timerHelpers.createClockState || function localCreateClockState(config, playerCount = MIN_PLAYER_COUNT) {
   const timer = normaliseTimerConfig(config);
   const initialSeconds = timer.initialSeconds;
+  const safePlayerCount = normalisePlayerCount(playerCount);
   return {
     enabled: timer.enabled,
     initialSeconds,
     incrementSeconds: timer.incrementSeconds,
-    remaining: {
-      1: initialSeconds,
-      2: initialSeconds
-    },
+    playerCount: safePlayerCount,
+    remaining: createPlayerMap(safePlayerCount, () => initialSeconds),
     activePlayer: 1,
     flaggedPlayer: 0
   };
@@ -187,7 +212,10 @@ const applyElapsedToClock = timerHelpers.applyElapsed || function localApplyElap
   if (elapsed <= 0) {
     return { expiredPlayer: 0 };
   }
-  const activePlayer = clock.activePlayer === 2 ? 2 : 1;
+  const activePlayer = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(clock.activePlayer) || 1)));
+  if (!Number.isFinite(Number(clock.remaining?.[activePlayer]))) {
+    clock.remaining[activePlayer] = clock.initialSeconds || 0;
+  }
   const nextRemaining = Math.max(0, clock.remaining[activePlayer] - elapsed);
   clock.remaining[activePlayer] = nextRemaining;
   if (nextRemaining === 0) {
@@ -201,11 +229,14 @@ const switchClockTurn = timerHelpers.switchTurnWithIncrement || function localSw
   if (!clock) {
     return;
   }
-  const current = clock.activePlayer === 2 ? 2 : 1;
+  const current = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(clock.activePlayer) || 1)));
   if (clock.enabled && !clock.flaggedPlayer) {
+    if (!Number.isFinite(Number(clock.remaining?.[current]))) {
+      clock.remaining[current] = clock.initialSeconds || 0;
+    }
     clock.remaining[current] += Math.max(0, Number(clock.incrementSeconds) || 0);
   }
-  clock.activePlayer = nextPlayer === 2 ? 2 : 1;
+  clock.activePlayer = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(nextPlayer) || 1)));
 };
 
 const BASE_MODE = {
@@ -214,7 +245,56 @@ const BASE_MODE = {
   hint: "Classic mode: make a line of 6. No extra effects are active."
 };
 
+const PLAYER_STYLES = {
+  1: {
+    hex: "#6dc6ff",
+    fill: "rgba(109, 198, 255, 0.10)",
+    softFill: "rgba(109, 198, 255, 0.08)",
+    stroke: "rgba(109, 198, 255, 0.88)",
+    strongStroke: "rgba(109, 198, 255, 0.92)",
+    echoStroke: "rgba(109, 198, 255, 0.28)",
+    echoText: "rgba(109, 198, 255, 0.7)"
+  },
+  2: {
+    hex: "#ff8c8c",
+    fill: "rgba(255, 140, 140, 0.10)",
+    softFill: "rgba(255, 140, 140, 0.08)",
+    stroke: "rgba(255, 140, 140, 0.88)",
+    strongStroke: "rgba(255, 140, 140, 0.92)",
+    echoStroke: "rgba(255, 140, 140, 0.28)",
+    echoText: "rgba(255, 140, 140, 0.7)"
+  },
+  3: {
+    hex: "#76e3a8",
+    fill: "rgba(118, 227, 168, 0.10)",
+    softFill: "rgba(118, 227, 168, 0.08)",
+    stroke: "rgba(118, 227, 168, 0.88)",
+    strongStroke: "rgba(118, 227, 168, 0.92)",
+    echoStroke: "rgba(118, 227, 168, 0.28)",
+    echoText: "rgba(118, 227, 168, 0.7)"
+  },
+  4: {
+    hex: "#c8a5ff",
+    fill: "rgba(200, 165, 255, 0.10)",
+    softFill: "rgba(200, 165, 255, 0.08)",
+    stroke: "rgba(200, 165, 255, 0.88)",
+    strongStroke: "rgba(200, 165, 255, 0.92)",
+    echoStroke: "rgba(200, 165, 255, 0.28)",
+    echoText: "rgba(200, 165, 255, 0.7)"
+  }
+};
+
 const MODES = {
+  threePlayer: {
+    name: "3 Players",
+    summary: "Adds Player 3 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
+    hint: "Three-player game: turns rotate P1, P2, P3. Connect 6 to win."
+  },
+  fourPlayer: {
+    name: "4 Players",
+    summary: "Adds Players 3 and 4 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
+    hint: "Four-player game: turns rotate P1, P2, P3, P4. Connect 6 to win."
+  },
   triangleGrid: {
     name: "Triangle Grid",
     summary: "Replaces hex tiles with triangle tiles while keeping the same placement range and connect-6 win condition.",
@@ -1070,6 +1150,9 @@ function normaliseModeKeys(modeKeys) {
     (Array.isArray(modeKeys) ? modeKeys : [])
       .map((modeKey) => toCanonicalModeKey(modeKey))
   );
+  if (requested.has("fourPlayer")) {
+    requested.delete("threePlayer");
+  }
   const ordered = [];
   for (const key of Object.keys(MODES)) {
     if (requested.has(key)) {
@@ -1114,6 +1197,59 @@ function getModeConfig(modeKeys) {
 
 function hasMode(state, modeKey) {
   return state.modeKeys.includes(modeKey);
+}
+
+function getPlayerCountFromModeKeys(modeKeys) {
+  const keys = normaliseModeKeys(modeKeys);
+  if (keys.includes("fourPlayer")) {
+    return 4;
+  }
+  if (keys.includes("threePlayer")) {
+    return 3;
+  }
+  return 2;
+}
+
+function getPlayerCount(state) {
+  if (!state) {
+    return getPlayerCountFromModeKeys(getSelectedModeKeys());
+  }
+  return normalisePlayerCount(state.playerCount || getPlayerCountFromModeKeys(state.modeKeys));
+}
+
+function getPlayerNumbers(stateOrCount) {
+  const count = typeof stateOrCount === "number" ? normalisePlayerCount(stateOrCount) : getPlayerCount(stateOrCount);
+  return Array.from({ length: count }, (_, index) => index + 1);
+}
+
+function isValidPlayerNumber(player, stateOrCount = game.state) {
+  const safePlayer = Math.trunc(Number(player));
+  return Number.isInteger(safePlayer) && safePlayer >= 1 && safePlayer <= (
+    typeof stateOrCount === "number" ? normalisePlayerCount(stateOrCount) : getPlayerCount(stateOrCount)
+  );
+}
+
+function normalisePlayerNumber(player, stateOrCount = game.state) {
+  const safePlayer = Math.trunc(Number(player));
+  return isValidPlayerNumber(safePlayer, stateOrCount) ? safePlayer : 1;
+}
+
+function getNextPlayerNumber(state, player = state?.turnPlayer) {
+  const playerCount = getPlayerCount(state);
+  const safePlayer = normalisePlayerNumber(player, playerCount);
+  return safePlayer >= playerCount ? 1 : safePlayer + 1;
+}
+
+function getPlayerStyle(player) {
+  return PLAYER_STYLES[normalisePlayerNumber(player, MAX_PLAYER_COUNT)] || PLAYER_STYLES[1];
+}
+
+function getOwnersForCell(state, cell) {
+  if (!cell || cell.kind !== "stone") {
+    return [];
+  }
+  const owner = Math.trunc(Number(cell.owner));
+  return isValidPlayerNumber(owner, state) ? [owner] : [];
 }
 
 function getGridMode(state) {
@@ -1272,8 +1408,10 @@ function setSelectedModeKeys(modeKeys) {
 
 function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap) {
   const activeModeKeys = normaliseModeKeys(modeKeys);
+  const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
   return {
     modeKeys: activeModeKeys,
+    playerCount,
     egyptianStoneCap: normaliseEgyptianStoneCap(egyptianStoneCap),
     cells: {},
     turnPlayer: 1,
@@ -1296,17 +1434,17 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     panicZones: {},
     pendingEchoes: [],
     egyptianRemoval: null,
-    egyptianRemovalsThisTurn: { 1: 0, 2: 0 },
+    egyptianRemovalsThisTurn: createPlayerMap(playerCount, () => 0),
     lastPlacedThisTurn: [],
     lastPlacement: null,
     recentBirdEvents: [],
     recentCapRemovalEvents: [],
     recentMeteorRemovalEvents: [],
-    lastPlacedByPlayer: { 1: null, 2: null },
+    lastPlacedByPlayer: createPlayerMap(playerCount, () => null),
     moveSerial: 0,
     log: ["Game started."],
     accountingEvents: [],
-    clock: createClockState(timerConfig)
+    clock: createClockState(timerConfig, playerCount)
   };
 }
 
@@ -1318,6 +1456,7 @@ function setModeUI(modeKeys) {
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
   refreshEgyptianCapControls(modeKeys);
+  updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
 function setOptionsMenuCollapsed(collapsed) {
@@ -1373,48 +1512,67 @@ function setTimerInputs(timerConfig) {
   ui.timerSummaryText.textContent = formatTimerSummary(timer);
 }
 
-function normaliseTurnOrder(value) {
-  if (value === "p1First" || value === "p2First" || value === "random") {
+function normaliseTurnOrder(value, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  if (value === "random") {
+    return value;
+  }
+  const match = /^p([1-4])First$/.exec(String(value || ""));
+  if (match && Number(match[1]) <= safePlayerCount) {
     return value;
   }
   return "random";
 }
 
-function resolveStartingPlayer(turnOrder) {
-  const safeTurnOrder = normaliseTurnOrder(turnOrder);
-  if (safeTurnOrder === "p2First") {
-    return 2;
-  }
+function resolveStartingPlayer(turnOrder, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const safeTurnOrder = normaliseTurnOrder(turnOrder, safePlayerCount);
   if (safeTurnOrder === "random") {
-    return Math.random() < 0.5 ? 1 : 2;
+    return 1 + Math.floor(Math.random() * safePlayerCount);
   }
-  return 1;
+  const match = /^p([1-4])First$/.exec(safeTurnOrder);
+  return match ? Number(match[1]) : 1;
 }
 
 function getTurnOrderFromInput() {
-  return normaliseTurnOrder(ui.turnOrderInput?.value || game.turnOrder);
+  return normaliseTurnOrder(ui.turnOrderInput?.value || game.turnOrder, getPlayerCountFromModeKeys(getSelectedModeKeys()));
 }
 
-function setTurnOrderInput(turnOrder) {
-  const safeTurnOrder = normaliseTurnOrder(turnOrder);
+function setTurnOrderInput(turnOrder, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  const safeTurnOrder = normaliseTurnOrder(turnOrder, playerCount);
   game.turnOrder = safeTurnOrder;
   if (ui.turnOrderInput) {
     ui.turnOrderInput.value = safeTurnOrder;
   }
-  updateTurnOrderSummary();
+  updateTurnOrderSummary(playerCount);
 }
 
-function updateTurnOrderSummary() {
+function updateTurnOrderOptions(playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  if (!ui.turnOrderInput) {
+    return;
+  }
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  for (const option of Array.from(ui.turnOrderInput.options || [])) {
+    const match = /^p([1-4])First$/.exec(option.value);
+    option.hidden = Boolean(match && Number(match[1]) > safePlayerCount);
+    option.disabled = option.hidden;
+  }
+  if (normaliseTurnOrder(ui.turnOrderInput.value, safePlayerCount) !== ui.turnOrderInput.value) {
+    ui.turnOrderInput.value = "random";
+  }
+}
+
+function updateTurnOrderSummary(playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
   if (!ui.turnOrderSummaryText) {
     return;
   }
-  const turnOrder = getTurnOrderFromInput();
-  if (turnOrder === "p2First") {
-    ui.turnOrderSummaryText.textContent = "First player: P2";
-  } else if (turnOrder === "random") {
+  updateTurnOrderOptions(playerCount);
+  const turnOrder = normaliseTurnOrder(ui.turnOrderInput?.value || game.turnOrder, playerCount);
+  if (turnOrder === "random") {
     ui.turnOrderSummaryText.textContent = "First player: Random";
   } else {
-    ui.turnOrderSummaryText.textContent = "First player: P1";
+    const match = /^p([1-4])First$/.exec(turnOrder);
+    ui.turnOrderSummaryText.textContent = `First player: P${match ? match[1] : "1"}`;
   }
 }
 
@@ -1441,17 +1599,22 @@ function setEgyptianCapInput(value) {
 }
 
 function ensureClockState(state) {
+  const playerCount = getPlayerCount(state);
   if (!state.clock) {
-    state.clock = createClockState(game.timerConfig);
+    state.clock = createClockState(game.timerConfig, playerCount);
     return;
   }
+  state.playerCount = playerCount;
+  state.clock.playerCount = playerCount;
   if (!state.clock.remaining) {
-    state.clock.remaining = {
-      1: state.clock.initialSeconds || 300,
-      2: state.clock.initialSeconds || 300
-    };
+    state.clock.remaining = {};
   }
-  if (!state.clock.activePlayer) {
+  for (const player of getPlayerNumbers(playerCount)) {
+    if (!Number.isFinite(Number(state.clock.remaining[player]))) {
+      state.clock.remaining[player] = state.clock.initialSeconds || 300;
+    }
+  }
+  if (!isValidPlayerNumber(state.clock.activePlayer, playerCount)) {
     state.clock.activePlayer = 1;
   }
   if (!state.clock.incrementSeconds && state.clock.incrementSeconds !== 0) {
@@ -1459,11 +1622,12 @@ function ensureClockState(state) {
   }
   if (!state.clock.initialSeconds) {
     state.clock.initialSeconds = Math.max(
-      Number(state.clock.remaining[1]) || 300,
-      Number(state.clock.remaining[2]) || 300
+      ...getPlayerNumbers(playerCount).map((player) => Number(state.clock.remaining[player]) || 300)
     );
   }
   if (!state.clock.flaggedPlayer) {
+    state.clock.flaggedPlayer = 0;
+  } else if (!isValidPlayerNumber(state.clock.flaggedPlayer, playerCount)) {
     state.clock.flaggedPlayer = 0;
   }
 }
@@ -1486,29 +1650,43 @@ function shouldRunClockTicker(state) {
 }
 
 function updateClockUI() {
+  const clockRows = [
+    { player: 1, text: ui.p1ClockText, board: ui.boardClockP1, boardTime: ui.boardClockP1Time },
+    { player: 2, text: ui.p2ClockText, board: ui.boardClockP2, boardTime: ui.boardClockP2Time },
+    { player: 3, label: ui.p3ClockLabel, text: ui.p3ClockText, board: ui.boardClockP3, boardTime: ui.boardClockP3Time },
+    { player: 4, label: ui.p4ClockLabel, text: ui.p4ClockText, board: ui.boardClockP4, boardTime: ui.boardClockP4Time }
+  ];
   if (!game.state) {
-    ui.p1ClockText.textContent = "--:--";
-    ui.p2ClockText.textContent = "--:--";
-    ui.boardClockP1Time.textContent = "--:--";
-    ui.boardClockP2Time.textContent = "--:--";
-    ui.boardClockP1.classList.remove("active", "flagged");
-    ui.boardClockP2.classList.remove("active", "flagged");
+    for (const row of clockRows) {
+      if (row.text) row.text.textContent = "--:--";
+      if (row.boardTime) row.boardTime.textContent = "--:--";
+      if (row.board) row.board.classList.remove("active", "flagged");
+    }
     return;
   }
   ensureClockState(game.state);
   const clock = game.state.clock;
-  ui.p1ClockText.textContent = formatClock(clock.remaining[1]);
-  ui.p2ClockText.textContent = formatClock(clock.remaining[2]);
-  ui.boardClockP1Time.textContent = formatClock(clock.remaining[1]);
-  ui.boardClockP2Time.textContent = formatClock(clock.remaining[2]);
-
-  const activePlayer = clock.activePlayer === 2 ? 2 : 1;
+  const playerCount = getPlayerCount(game.state);
+  const activePlayer = normalisePlayerNumber(clock.activePlayer, playerCount);
   const flaggedPlayer = clock.flaggedPlayer || 0;
   const clockIsRunning = shouldRunClockTicker(game.state);
-  ui.boardClockP1.classList.toggle("active", clockIsRunning && activePlayer === 1);
-  ui.boardClockP2.classList.toggle("active", clockIsRunning && activePlayer === 2);
-  ui.boardClockP1.classList.toggle("flagged", flaggedPlayer === 1);
-  ui.boardClockP2.classList.toggle("flagged", flaggedPlayer === 2);
+  for (const row of clockRows) {
+    const visible = row.player <= playerCount;
+    const display = formatClock(clock.remaining[row.player]);
+    if (row.text) {
+      row.text.textContent = display;
+      row.text.hidden = !visible;
+    }
+    if (row.label) row.label.hidden = !visible;
+    if (row.boardTime) row.boardTime.textContent = display;
+    if (row.board) {
+      row.board.hidden = !visible;
+      row.board.classList.toggle("active", clockIsRunning && activePlayer === row.player);
+      row.board.classList.toggle("flagged", flaggedPlayer === row.player);
+    }
+  }
+  if (ui.legendP3) ui.legendP3.hidden = playerCount < 3;
+  if (ui.legendP4) ui.legendP4.hidden = playerCount < 4;
 }
 
 function stopClockTicker() {
@@ -1523,7 +1701,7 @@ function handleClockExpiry(expiredPlayer) {
   if (!game.state || game.state.winner) {
     return;
   }
-  const winningPlayer = expiredPlayer === 1 ? 2 : 1;
+  const winningPlayer = getNextPlayerNumber(game.state, expiredPlayer);
   game.state.winner = winningPlayer;
   pushLog(`Player ${expiredPlayer} ran out of time. Player ${winningPlayer} wins on time.`);
   stopClockTicker();
@@ -2054,7 +2232,7 @@ function replaceTrackedHex(state, fromHex, toHex) {
     equalHex(placedHex, fromHex) ? { ...toHex } : placedHex
   ));
 
-  for (const owner of [1, 2]) {
+  for (const owner of getPlayerNumbers(state)) {
     const placed = state.lastPlacedByPlayer[owner];
     if (placed && equalHex(placed, fromHex)) {
       state.lastPlacedByPlayer[owner] = { ...toHex };
@@ -2067,7 +2245,7 @@ function transformTrackedHexes(state, transform) {
     state.lastPlacement = transform(state.lastPlacement);
   }
   state.lastPlacedThisTurn = state.lastPlacedThisTurn.map((hex) => transform(hex));
-  for (const owner of [1, 2]) {
+  for (const owner of getPlayerNumbers(state)) {
     if (state.lastPlacedByPlayer[owner]) {
       state.lastPlacedByPlayer[owner] = transform(state.lastPlacedByPlayer[owner]);
     }
@@ -2174,7 +2352,7 @@ function recordRecentCapRemovalEvent(state, event) {
   }
   ensureRecentCapRemovalEventsState(state);
   const mode = "egyptian";
-  const owner = event.owner === 2 ? 2 : 1;
+  const owner = normalisePlayerNumber(event.owner, state);
   state.recentCapRemovalEvents.push({
     completedTurn: state.turnCount + 1,
     mode,
@@ -2202,7 +2380,7 @@ function getLastTurnCapRemovalEvents(state) {
     .filter((event) => (
       event.completedTurn === state.turnCount
         && (event.mode === "egyptian" || event.mode === "greek")
-        && (event.owner === 1 || event.owner === 2)
+        && isValidPlayerNumber(event.owner, state)
         && event.hex
         && Number.isFinite(event.hex.q)
         && Number.isFinite(event.hex.r)
@@ -2230,7 +2408,7 @@ function recordRecentMeteorRemovalEvent(state, event) {
   state.recentMeteorRemovalEvents.push({
     completedTurn: state.turnCount,
     type,
-    owner: type === "stone" ? (event.owner === 2 ? 2 : 1) : null,
+    owner: type === "stone" ? normalisePlayerNumber(event.owner, state) : null,
     birdKind: type === "bird"
       ? (event.birdKind === "kingDuck" ? "kingDuck" : "duck")
       : null,
@@ -2410,15 +2588,14 @@ function ensureEgyptianTurnRemovalState(state) {
   const current = state.egyptianRemovalsThisTurn && typeof state.egyptianRemovalsThisTurn === "object"
     ? state.egyptianRemovalsThisTurn
     : {};
-  state.egyptianRemovalsThisTurn = {
-    1: Math.max(0, Math.min(MAX_EGYPTIAN_REMOVALS_PER_TURN, Math.trunc(Number(current[1]) || 0))),
-    2: Math.max(0, Math.min(MAX_EGYPTIAN_REMOVALS_PER_TURN, Math.trunc(Number(current[2]) || 0)))
-  };
+  state.egyptianRemovalsThisTurn = createPlayerMap(getPlayerCount(state), (player) => (
+    Math.max(0, Math.min(MAX_EGYPTIAN_REMOVALS_PER_TURN, Math.trunc(Number(current[player]) || 0)))
+  ));
 }
 
 function getEgyptianRemovalsThisTurn(state, owner) {
   ensureEgyptianTurnRemovalState(state);
-  const safeOwner = owner === 2 ? 2 : 1;
+  const safeOwner = normalisePlayerNumber(owner, state);
   return state.egyptianRemovalsThisTurn[safeOwner];
 }
 
@@ -2428,7 +2605,7 @@ function getEgyptianRemovalSlotsRemaining(state, owner) {
 
 function recordEgyptianChosenRemoval(state, owner) {
   ensureEgyptianTurnRemovalState(state);
-  const safeOwner = owner === 2 ? 2 : 1;
+  const safeOwner = normalisePlayerNumber(owner, state);
   state.egyptianRemovalsThisTurn[safeOwner] = Math.min(
     MAX_EGYPTIAN_REMOVALS_PER_TURN,
     getEgyptianRemovalsThisTurn(state, safeOwner) + 1
@@ -2442,7 +2619,7 @@ function ensureEgyptianRemovalState(state) {
     state.egyptianRemoval = null;
     return;
   }
-  const owner = pending.owner === 2 ? 2 : 1;
+  const owner = normalisePlayerNumber(pending.owner, state);
   const remaining = Math.max(0, Math.round(Number(pending.remaining) || 0));
   const cappedRemaining = Math.min(remaining, getEgyptianRemovalSlotsRemaining(state, owner));
   state.egyptianRemoval = cappedRemaining > 0 ? { owner, remaining: cappedRemaining } : null;
@@ -2517,14 +2694,18 @@ function canSelectEgyptianRemovalHex(state, hex) {
 }
 
 function placeStone(state, hex, owner, kind = "stone") {
+  const safeOwner = normalisePlayerNumber(owner, state);
   state.moveSerial += 1;
   state.cells[keyOf(hex.q, hex.r)] = {
-    owner,
+    owner: safeOwner,
     kind,
     serial: state.moveSerial
   };
   state.lastPlacement = { ...hex };
-  state.lastPlacedByPlayer[owner] = { ...hex };
+  if (!state.lastPlacedByPlayer || typeof state.lastPlacedByPlayer !== "object") {
+    state.lastPlacedByPlayer = createPlayerMap(getPlayerCount(state), () => null);
+  }
+  state.lastPlacedByPlayer[safeOwner] = { ...hex };
   state.lastPlacedThisTurn.push({ ...hex });
 }
 
@@ -2722,13 +2903,7 @@ function getRadialWinningLine(state, start, owner) {
 function auditRadialBoardForWinner(state) {
   for (const [key, cell] of Object.entries(state.cells)) {
     const pos = parseKey(key);
-    const owners = [];
-    if (cellCountsForOwner(cell, 1)) {
-      owners.push(1);
-    }
-    if (cellCountsForOwner(cell, 2)) {
-      owners.push(2);
-    }
+    const owners = getOwnersForCell(state, cell);
 
     for (const owner of owners) {
       if (getRadialWinningLine(state, pos, owner)) {
@@ -2743,13 +2918,7 @@ function auditRadialBoardForWinner(state) {
 function auditTriangleBoardForWinner(state) {
   for (const [key, cell] of Object.entries(state.cells)) {
     const pos = parseKey(key);
-    const owners = [];
-    if (cellCountsForOwner(cell, 1)) {
-      owners.push(1);
-    }
-    if (cellCountsForOwner(cell, 2)) {
-      owners.push(2);
-    }
+    const owners = getOwnersForCell(state, cell);
 
     for (const owner of owners) {
       for (const lineKind of triangleLineKinds) {
@@ -2788,13 +2957,7 @@ function checkWinnerFrom(state, hex) {
     if (!cell) {
       return 0;
     }
-    const owners = [];
-    if (cellCountsForOwner(cell, 1)) {
-      owners.push(1);
-    }
-    if (cellCountsForOwner(cell, 2)) {
-      owners.push(2);
-    }
+    const owners = getOwnersForCell(state, cell);
 
     for (const owner of owners) {
       for (const lineKind of triangleLineKinds) {
@@ -2811,13 +2974,7 @@ function checkWinnerFrom(state, hex) {
     if (!cell) {
       return 0;
     }
-    const owners = [];
-    if (cellCountsForOwner(cell, 1)) {
-      owners.push(1);
-    }
-    if (cellCountsForOwner(cell, 2)) {
-      owners.push(2);
-    }
+    const owners = getOwnersForCell(state, cell);
 
     for (const owner of owners) {
       if (getRadialWinningLine(state, hex, owner)) {
@@ -2832,13 +2989,7 @@ function checkWinnerFrom(state, hex) {
     return 0;
   }
 
-  const owners = [];
-  if (cellCountsForOwner(cell, 1)) {
-    owners.push(1);
-  }
-  if (cellCountsForOwner(cell, 2)) {
-    owners.push(2);
-  }
+  const owners = getOwnersForCell(state, cell);
 
   for (const owner of owners) {
     for (const dir of getLineAxesForMode(state)) {
@@ -3040,7 +3191,7 @@ function endTurn(state) {
     return;
   }
 
-  const nextPlayer = previousPlayer === 1 ? 2 : 1;
+  const nextPlayer = getNextPlayerNumber(state, previousPlayer);
   switchClockTurn(state.clock, nextPlayer);
   state.turnPlayer = nextPlayer;
   state.movesLeftInTurn = 2;
@@ -3048,7 +3199,7 @@ function endTurn(state) {
   state.birdMovesPending = [];
   state.currentBirdMoveKind = null;
   state.egyptianRemoval = null;
-  state.egyptianRemovalsThisTurn = { 1: 0, 2: 0 };
+  state.egyptianRemovalsThisTurn = createPlayerMap(getPlayerCount(state), () => 0);
   state.lastPlacedThisTurn = [];
   syncClockTickerFromState();
 }
@@ -3232,8 +3383,9 @@ function updateStatus() {
     setModeUI(state.modeKeys);
   }
 
+  const displayPlayer = state.winner || state.turnPlayer;
   ui.turnBig.textContent = state.winner ? `Player ${state.winner} wins` : `Player ${state.turnPlayer}`;
-  ui.turnBig.className = `turnBig ${state.winner === 2 || state.turnPlayer === 2 ? "playerP2" : "playerP1"}`;
+  ui.turnBig.className = `turnBig playerP${normalisePlayerNumber(displayPlayer, getPlayerCount(state))}`;
   ui.roundText.textContent = String(state.round);
   ui.movesLeftText.textContent = String(state.movesLeftInTurn);
   ui.duckPhaseText.textContent = state.duckPhase ? "Yes" : "No";
@@ -3254,7 +3406,7 @@ function updateStatus() {
   }
 
   updateClockUI();
-  updateTurnOrderSummary();
+  updateTurnOrderSummary(getPlayerCount(state));
   renderLog();
   updateOnlineStatusUI();
 }
@@ -4225,12 +4377,13 @@ function drawEchoTargets() {
 
     const countdown = Math.max(0, echo.targetTurn - game.state.turnCount);
     const isBirdEcho = echo.kind === "bird";
+    const ownerStyle = getPlayerStyle(echo.owner);
     const fill = isBirdEcho
       ? (echo.birdKind === "kingDuck" ? "rgba(255, 179, 92, 0.10)" : "rgba(255, 215, 94, 0.10)")
-      : (echo.owner === 1 ? "rgba(109, 198, 255, 0.08)" : "rgba(255, 140, 140, 0.08)");
+      : ownerStyle.softFill;
     const stroke = isBirdEcho
       ? (echo.birdKind === "kingDuck" ? "rgba(255, 179, 92, 0.34)" : "rgba(255, 215, 94, 0.32)")
-      : (echo.owner === 1 ? "rgba(109, 198, 255, 0.28)" : "rgba(255, 140, 140, 0.28)");
+      : ownerStyle.echoStroke;
     ctx.save();
     ctx.setLineDash([6, 5]);
     drawBoardShape(screen.x, screen.y, size * 0.68, fill, stroke, 1.5, hex);
@@ -4238,7 +4391,7 @@ function drawEchoTargets() {
 
     ctx.fillStyle = isBirdEcho
       ? (echo.birdKind === "kingDuck" ? "rgba(255, 179, 92, 0.84)" : "rgba(255, 215, 94, 0.84)")
-      : (echo.owner === 1 ? "rgba(109, 198, 255, 0.7)" : "rgba(255, 140, 140, 0.7)");
+      : ownerStyle.echoText;
     ctx.font = `${Math.max(10, size * 0.33)}px system-ui`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -4343,9 +4496,9 @@ function drawHoverEchoPreview() {
       return;
     }
     target = getMirrorCellForMode(state, game.hoverHex);
-    const owner = state.turnPlayer === 2 ? 2 : 1;
-    fill = owner === 1 ? "rgba(109, 198, 255, 0.10)" : "rgba(255, 140, 140, 0.10)";
-    stroke = owner === 1 ? "rgba(109, 198, 255, 0.88)" : "rgba(255, 140, 140, 0.88)";
+    const ownerStyle = getPlayerStyle(state.turnPlayer);
+    fill = ownerStyle.fill;
+    stroke = ownerStyle.stroke;
   }
 
   const world = boardCellToPixel(target, size, state);
@@ -4462,6 +4615,51 @@ function drawOrbitPreview() {
   }
 }
 
+function drawKingDuckRadius() {
+  if (!usesPanicBirdMode(game.state)) {
+    return;
+  }
+
+  const size = currentHexSize();
+  if (size < 7) {
+    return;
+  }
+
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const sources = [
+    ...getBirdEntries(game.state),
+    ...getBirdEchoCopyEntries(game.state)
+  ].filter((entry) => entry.birdKind === "kingDuck");
+
+  for (const source of sources) {
+    for (const hex of getAdjacentsForMode(game.state, source.hex)) {
+      if (!isCellSupportedForMode(game.state, hex)) {
+        continue;
+      }
+      const world = boardCellToPixel(hex, size, game.state);
+      const screen = worldToScreen(world.x, world.y);
+      if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
+        continue;
+      }
+
+      const blocked = isOccupied(game.state, hex);
+      ctx.save();
+      ctx.setLineDash(blocked ? [4, 4] : []);
+      drawBoardShape(
+        screen.x,
+        screen.y,
+        size * 0.94,
+        blocked ? "rgba(255, 179, 92, 0.06)" : "rgba(255, 179, 92, 0.14)",
+        blocked ? "rgba(255, 179, 92, 0.28)" : "rgba(255, 179, 92, 0.62)",
+        blocked ? 1.5 : 2,
+        hex
+      );
+      ctx.restore();
+    }
+  }
+}
+
 function drawBirdEchoCopy(birdKind, copyHex, size) {
   const world = boardCellToPixel(copyHex, size, game.state);
   const screen = worldToScreen(world.x, world.y);
@@ -4525,10 +4723,11 @@ function drawPieces() {
       continue;
     }
 
-    const colour = cell.owner === 1 ? "#6dc6ff" : "#ff8c8c";
+    const ownerStyle = getPlayerStyle(cell.owner);
+    const colour = ownerStyle.hex;
     if (!lowDetail && recentSerialSet.has(cell.serial)) {
       const isNewest = cell.serial === newestSerial;
-      const recentStroke = cell.owner === 1 ? "rgba(109, 198, 255, 0.9)" : "rgba(255, 140, 140, 0.9)";
+      const recentStroke = ownerStyle.strongStroke;
       drawBoardShape(
         screen.x,
         screen.y,
@@ -4560,7 +4759,7 @@ function drawPieces() {
   if (hasEgyptianRemovalPhase(game.state) && !game.state.winner) {
     const owner = game.state.egyptianRemoval.owner;
     const ownerEntries = getOwnerStoneEntriesSortedByAge(game.state, owner);
-    const stroke = owner === 2 ? "rgba(255, 140, 140, 0.92)" : "rgba(109, 198, 255, 0.92)";
+    const stroke = getPlayerStyle(owner).strongStroke;
 
     for (const entry of ownerEntries) {
       if (!canSelectEgyptianRemovalHex(game.state, entry.hex)) {
@@ -4587,7 +4786,7 @@ function drawPieces() {
       continue;
     }
 
-    const stroke = event.owner === 2 ? "rgba(255, 140, 140, 0.9)" : "rgba(109, 198, 255, 0.9)";
+    const stroke = getPlayerStyle(event.owner).strongStroke;
     const accent = "rgba(230, 245, 255, 0.95)";
     ctx.save();
     drawBoardShape(
@@ -4752,15 +4951,10 @@ function drawWinnerLineHint() {
   }
 
   if (usesRadialGridMode(game.state)) {
-    const owners = [];
-    if (game.state.winner && cellCountsForOwner(lastCell, game.state.winner)) {
-      owners.push(game.state.winner);
-    }
-    if (cellCountsForOwner(lastCell, 1) && !owners.includes(1)) {
-      owners.push(1);
-    }
-    if (cellCountsForOwner(lastCell, 2) && !owners.includes(2)) {
-      owners.push(2);
+    const owners = getOwnersForCell(game.state, lastCell);
+    if (game.state.winner && owners.includes(game.state.winner)) {
+      owners.splice(owners.indexOf(game.state.winner), 1);
+      owners.unshift(game.state.winner);
     }
 
     for (const owner of owners) {
@@ -4775,15 +4969,10 @@ function drawWinnerLineHint() {
     return;
   }
 
-  const owners = [];
-  if (game.state.winner && cellCountsForOwner(lastCell, game.state.winner)) {
-    owners.push(game.state.winner);
-  }
-  if (cellCountsForOwner(lastCell, 1) && !owners.includes(1)) {
-    owners.push(1);
-  }
-  if (cellCountsForOwner(lastCell, 2) && !owners.includes(2)) {
-    owners.push(2);
+  const owners = getOwnersForCell(game.state, lastCell);
+  if (game.state.winner && owners.includes(game.state.winner)) {
+    owners.splice(owners.indexOf(game.state.winner), 1);
+    owners.unshift(game.state.winner);
   }
 
   for (const owner of owners) {
@@ -4840,6 +5029,7 @@ function renderNow() {
   drawHoverEchoPreview();
   drawMeteorPreview();
   drawOrbitPreview();
+  drawKingDuckRadius();
   drawWinnerLineHint();
   drawPieces();
 
@@ -4866,14 +5056,16 @@ function centreBoard() {
 }
 
 function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfig, turnOrder = getTurnOrderFromInput()) {
+  const activeModeKeys = normaliseModeKeys(modeKeys);
+  const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
   game.timerConfig = normaliseTimerConfig(timerConfig);
-  game.turnOrder = normaliseTurnOrder(turnOrder);
+  game.turnOrder = normaliseTurnOrder(turnOrder, playerCount);
   game.egyptianStoneCap = getEgyptianStoneCapFromInputs();
   setTimerInputs(game.timerConfig);
-  setTurnOrderInput(game.turnOrder);
+  setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
-  game.state = makeInitialState(modeKeys, game.timerConfig, game.egyptianStoneCap);
-  const startingPlayer = resolveStartingPlayer(game.turnOrder);
+  game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap);
+  const startingPlayer = resolveStartingPlayer(game.turnOrder, playerCount);
   game.state.startingPlayer = startingPlayer;
   game.state.turnPlayer = startingPlayer;
   game.state.clock.activePlayer = startingPlayer;
@@ -4903,6 +5095,10 @@ function fillModePicker() {
       if (nextModeKeys.has(key)) {
         nextModeKeys.delete(key);
       } else {
+        if (key === "threePlayer" || key === "fourPlayer") {
+          nextModeKeys.delete("threePlayer");
+          nextModeKeys.delete("fourPlayer");
+        }
         nextModeKeys.add(key);
       }
       setSelectedModeKeys([...nextModeKeys]);
@@ -5245,6 +5441,7 @@ newGame([], game.timerConfig);
 resizeCanvas();
 
 window.HexTicTacToeInternals = {
+  supportsMultiPlayerTurnOrder: true,
   ui,
   game,
   normaliseTimerConfig,

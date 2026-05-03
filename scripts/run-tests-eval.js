@@ -238,6 +238,18 @@ function runTimerTests(timer) {
   assert.equal(clock.flaggedPlayer, 2);
   assert.equal(clock.remaining[2], 0);
 
+  const fourPlayerClock = timer.createClockState({
+    enabled: true,
+    initialSeconds: 30,
+    incrementSeconds: 1
+  }, 4);
+  assert.equal(fourPlayerClock.remaining[3], 30);
+  assert.equal(fourPlayerClock.remaining[4], 30);
+  timer.switchTurnWithIncrement(fourPlayerClock, 4);
+  assert.equal(fourPlayerClock.activePlayer, 4);
+  timer.applyElapsed(fourPlayerClock, 5);
+  assert.equal(fourPlayerClock.remaining[4], 25);
+
   assert.equal(timer.formatClock(0), "00:00");
   assert.equal(timer.formatClock(65.9), "01:05");
   assert.equal(timer.formatClock(599), "09:59");

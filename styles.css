@@ -7,6 +7,8 @@
   --muted: #9db0d4;
   --p1: #6dc6ff;
   --p2: #ff8c8c;
+  --p3: #76e3a8;
+  --p4: #c8a5ff;
   --duck: #ffd75e;
   --hole: #a56bff;
   --warning: #ffb35c;
@@ -437,6 +439,14 @@ select:focus-visible,
   color: var(--p2);
 }
 
+.playerP3 {
+  color: var(--p3);
+}
+
+.playerP4 {
+  color: var(--p4);
+}
+
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -600,6 +610,16 @@ canvas:focus-visible {
 .boardClockP2.active {
   border-color: rgba(255, 140, 140, 0.6);
   box-shadow: 0 0 0 1px rgba(255, 140, 140, 0.18), var(--shadow);
+}
+
+.boardClockP3.active {
+  border-color: rgba(118, 227, 168, 0.6);
+  box-shadow: 0 0 0 1px rgba(118, 227, 168, 0.18), var(--shadow);
+}
+
+.boardClockP4.active {
+  border-color: rgba(200, 165, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(200, 165, 255, 0.18), var(--shadow);
 }
 
 .boardClock.flagged {

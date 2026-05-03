@@ -41,17 +41,29 @@
     };
   }
 
-  function createClockState(config) {
+  function normalisePlayerCount(playerCount) {
+    const parsed = Math.trunc(Number(playerCount) || 2);
+    return Math.max(2, Math.min(4, parsed));
+  }
+
+  function createRemainingMap(initialSeconds, playerCount) {
+    const remaining = {};
+    for (let player = 1; player <= normalisePlayerCount(playerCount); player += 1) {
+      remaining[player] = initialSeconds;
+    }
+    return remaining;
+  }
+
+  function createClockState(config, playerCount = 2) {
     const timer = normaliseTimerConfig(config);
     const initialSeconds = timer.initialSeconds;
+    const safePlayerCount = normalisePlayerCount(playerCount);
     return {
       enabled: timer.enabled,
       initialSeconds,
       incrementSeconds: timer.incrementSeconds,
-      remaining: {
-        1: initialSeconds,
-        2: initialSeconds
-      },
+      playerCount: safePlayerCount,
+      remaining: createRemainingMap(initialSeconds, safePlayerCount),
       activePlayer: 1,
       flaggedPlayer: 0
     };
@@ -75,7 +87,10 @@
       return { expiredPlayer: 0 };
     }
 
-    const activePlayer = clock.activePlayer === 2 ? 2 : 1;
+    const activePlayer = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(clock.activePlayer) || 1)));
+    if (!Number.isFinite(Number(clock.remaining?.[activePlayer]))) {
+      clock.remaining[activePlayer] = clock.initialSeconds || 0;
+    }
     const nextRemaining = Math.max(0, clock.remaining[activePlayer] - elapsed);
     clock.remaining[activePlayer] = nextRemaining;
 
@@ -92,11 +107,14 @@
       return;
     }
 
-    const current = clock.activePlayer === 2 ? 2 : 1;
+    const current = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(clock.activePlayer) || 1)));
     if (clock.enabled && !clock.flaggedPlayer) {
+      if (!Number.isFinite(Number(clock.remaining?.[current]))) {
+        clock.remaining[current] = clock.initialSeconds || 0;
+      }
       clock.remaining[current] += Math.max(0, toFiniteNumber(clock.incrementSeconds, 0));
     }
-    clock.activePlayer = nextPlayer === 2 ? 2 : 1;
+    clock.activePlayer = Math.max(1, Math.min(normalisePlayerCount(clock.playerCount), Math.trunc(Number(nextPlayer) || 1)));
   }
 
   function setTimerEnabled(clock, enabled) {

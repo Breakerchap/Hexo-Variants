@@ -14,7 +14,7 @@
     <aside class="sidebar">
       <section class="titleCard">
         <h1>Infinite Hex Tic-Tac-Toe</h1>
-        <p>Connect 6 in a straight line. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. Player 1 opens with 1 move, then every turn uses 2.</p>
+        <p>Connect 6 in a straight line. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. The starting player opens with 1 move, then every turn uses 2.</p>
       </section>
 
       <section class="section">
@@ -72,6 +72,8 @@
                 <option value="random" selected>Random</option>
                 <option value="p1First">P1</option>
                 <option value="p2First">P2</option>
+                <option value="p3First" hidden disabled>P3</option>
+                <option value="p4First" hidden disabled>P4</option>
               </select>
             </div>
           </div>
@@ -113,6 +115,8 @@
         <div class="kv">
           <strong>Player 1 clock</strong><span id="p1ClockText">05:00</span>
           <strong>Player 2 clock</strong><span id="p2ClockText">05:00</span>
+          <strong id="p3ClockLabel" hidden>Player 3 clock</strong><span id="p3ClockText" hidden>05:00</span>
+          <strong id="p4ClockLabel" hidden>Player 4 clock</strong><span id="p4ClockText" hidden>05:00</span>
         </div>
       </section>
 
@@ -155,6 +159,14 @@
       </div>
       <div id="meteorTimerBadge" class="meteorTimerBadge" hidden>Meteor in 3 turns</div>
       <div class="boardClocks" aria-live="polite">
+        <div id="boardClockP4" class="boardClock boardClockP4" hidden>
+          <div class="boardClockLabel">Player 4</div>
+          <div id="boardClockP4Time" class="boardClockTime">05:00</div>
+        </div>
+        <div id="boardClockP3" class="boardClock boardClockP3" hidden>
+          <div class="boardClockLabel">Player 3</div>
+          <div id="boardClockP3Time" class="boardClockTime">05:00</div>
+        </div>
         <div id="boardClockP2" class="boardClock boardClockP2">
           <div class="boardClockLabel">Player 2</div>
           <div id="boardClockP2Time" class="boardClockTime">05:00</div>
@@ -167,6 +179,8 @@
       <div class="help">
         <div><span class="legendDot" style="background: var(--p1)"></span>Player 1</div>
         <div><span class="legendDot" style="background: var(--p2)"></span>Player 2</div>
+        <div id="legendP3" hidden><span class="legendDot" style="background: var(--p3)"></span>Player 3</div>
+        <div id="legendP4" hidden><span class="legendDot" style="background: var(--p4)"></span>Player 4</div>
         <div><span class="legendDot" style="background: var(--duck)"></span>Duck</div>
       </div>
     </main>
