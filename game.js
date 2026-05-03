@@ -388,6 +388,10 @@ function radialSectorDistance(a, b) {
   return Math.min(diff, RADIAL_SECTOR_COUNT - diff);
 }
 
+function getRadialOppositeSector(sector) {
+  return normaliseRadialSector(sector + (RADIAL_SECTOR_COUNT / 2));
+}
+
 function isOctagonTileCoordinate(hex) {
   const q = Math.trunc(Number(hex?.q) || 0);
   const r = Math.trunc(Number(hex?.r) || 0);
@@ -2548,19 +2552,31 @@ function getTriangleLineCount(state, start, owner, lineKind) {
 function getRadialSpokeRunCells(state, start, owner, sectorOverride = null) {
   const startCell = normaliseRadialCell(start);
   const sector = normaliseRadialSector(sectorOverride == null ? startCell.r : sectorOverride);
-  const cells = [];
+  const oppositeSector = getRadialOppositeSector(sector);
+
+  function collectOutward(runSector, firstRing = 1) {
+    const cells = [];
+    let ring = firstRing;
+    while (countsForOwnerAt(state, { q: ring, r: runSector }, owner)) {
+      cells.push({ q: ring, r: runSector });
+      ring += 1;
+    }
+    return cells;
+  }
 
   if (startCell.q === 0) {
     if (!countsForOwnerAt(state, { q: 0, r: 0 }, owner)) {
       return [];
     }
-    cells.push({ q: 0, r: 0 });
-    let ring = 1;
-    while (countsForOwnerAt(state, { q: ring, r: sector }, owner)) {
-      cells.push({ q: ring, r: sector });
-      ring += 1;
-    }
-    return cells;
+    return [
+      ...collectOutward(oppositeSector).reverse(),
+      { q: 0, r: 0 },
+      ...collectOutward(sector)
+    ];
+  }
+
+  if (!countsForOwnerAt(state, startCell, owner)) {
+    return [];
   }
 
   const inward = [];
@@ -2575,20 +2591,19 @@ function getRadialSpokeRunCells(state, start, owner, sectorOverride = null) {
       reachedCentre = true;
     }
   }
+
+  const outward = collectOutward(sector, startCell.q + 1);
   if (reachedCentre && countsForOwnerAt(state, { q: 0, r: 0 }, owner)) {
-    inward.push({ q: 0, r: 0 });
-  }
-  inward.reverse();
-
-  cells.push(...inward, { q: startCell.q, r: sector });
-
-  let ring = startCell.q + 1;
-  while (countsForOwnerAt(state, { q: ring, r: sector }, owner)) {
-    cells.push({ q: ring, r: sector });
-    ring += 1;
+    return [
+      ...collectOutward(oppositeSector).reverse(),
+      { q: 0, r: 0 },
+      ...inward.reverse(),
+      { q: startCell.q, r: sector },
+      ...outward
+    ];
   }
 
-  return cells;
+  return [...inward.reverse(), { q: startCell.q, r: sector }, ...outward];
 }
 
 function getRadialRingRunCells(state, start, owner) {
@@ -3335,10 +3350,11 @@ function drawRadialCell(x, y, size, fill, stroke, lineWidth = 1, hex = null) {
   const origin = worldToScreen(0, 0);
   const radialGap = Math.max(0.6, size * 0.035);
   const radialInset = Math.max(0, (1 - Math.min(scale, 1)) * pitch * 0.32);
-  const angleGap = Math.min(RADIAL_SECTOR_ANGLE * 0.07, 0.018)
-    + Math.max(0, (1 - Math.min(scale, 1)) * RADIAL_SECTOR_ANGLE * 0.22);
   const innerRadius = Math.max(0, (cell.q - 0.5) * pitch + radialGap + radialInset);
   const outerRadius = Math.max(innerRadius + 1, (cell.q + 0.5) * pitch - radialGap - radialInset);
+  const middleRadius = Math.max(1, (innerRadius + outerRadius) / 2);
+  const tangentialGap = radialGap + Math.max(0, (1 - Math.min(scale, 1)) * pitch * 0.13);
+  const angleGap = Math.min(RADIAL_SECTOR_ANGLE * 0.28, tangentialGap / middleRadius);
   const startAngle = (cell.r - 0.5) * RADIAL_SECTOR_ANGLE + angleGap;
   const endAngle = (cell.r + 0.5) * RADIAL_SECTOR_ANGLE - angleGap;
 
@@ -4005,7 +4021,6 @@ function drawGrid() {
   const drawStep = getGridDrawStep(bounds, size);
   const showPlacementHints = (
     size >= GRID_HINT_MIN_HEX_SIZE
-    && canActForCurrentTurn()
     && !game.state.winner
     && !game.state.duckPhase
     && !hasEgyptianRemovalPhase(game.state)
@@ -4635,6 +4650,41 @@ function drawPieces() {
   }
 }
 
+function drawRadialWinnerLine(line, size) {
+  if (!line || !Array.isArray(line.cells) || line.cells.length === 0) {
+    return;
+  }
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+
+  if (line.kind === "ring") {
+    const ring = normaliseRadialCell(line.cells[0]).q;
+    const origin = worldToScreen(0, 0);
+    const radius = ring * getRadialRingPitch(size);
+    let startAngle = normaliseRadialCell(line.cells[0]).r * RADIAL_SECTOR_ANGLE;
+    let endAngle = normaliseRadialCell(line.cells[line.cells.length - 1]).r * RADIAL_SECTOR_ANGLE;
+    while (endAngle < startAngle) {
+      endAngle += Math.PI * 2;
+    }
+    ctx.arc(origin.x, origin.y, radius, startAngle, endAngle);
+  } else {
+    const first = line.cells[0];
+    const last = line.cells[line.cells.length - 1];
+    const a = boardCellToPixel(first, size, game.state);
+    const b = boardCellToPixel(last, size, game.state);
+    const sa = worldToScreen(a.x, a.y);
+    const sb = worldToScreen(b.x, b.y);
+    ctx.moveTo(sa.x, sa.y);
+    ctx.lineTo(sb.x, sb.y);
+  }
+
+  ctx.stroke();
+}
+
 function drawWinnerLineHint() {
   if (usesTriangleGridMode(game.state)) {
     return;
@@ -4668,21 +4718,7 @@ function drawWinnerLineHint() {
         continue;
       }
 
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
-      ctx.lineWidth = 6;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      for (let i = 0; i < line.cells.length; i += 1) {
-        const world = boardCellToPixel(line.cells[i], size, game.state);
-        const screen = worldToScreen(world.x, world.y);
-        if (i === 0) {
-          ctx.moveTo(screen.x, screen.y);
-        } else {
-          ctx.lineTo(screen.x, screen.y);
-        }
-      }
-      ctx.stroke();
+      drawRadialWinnerLine(line, size);
       return;
     }
     return;

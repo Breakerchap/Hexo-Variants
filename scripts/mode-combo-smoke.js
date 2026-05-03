@@ -763,6 +763,17 @@ function runRadialWinDirectionChecks(context) {
       line: [{ q: 0, r: 0 }, ...Array.from({ length: 5 }, (_, idx) => ({ q: idx + 1, r: 7 }))]
     },
     {
+      name: "spoke through centre",
+      line: [
+        { q: 2, r: 1 },
+        { q: 1, r: 1 },
+        { q: 0, r: 0 },
+        { q: 1, r: 7 },
+        { q: 2, r: 7 },
+        { q: 3, r: 7 }
+      ]
+    },
+    {
       name: "ring",
       line: Array.from({ length: 6 }, (_, idx) => ({ q: 4, r: idx + 2 }))
     },
