@@ -379,6 +379,17 @@ function handleStateUpdate(ws, message) {
     return;
   }
 
+  const intent = getUpdateIntent(message);
+  if (intent === "newGame" && meta.playerSlot !== 1) {
+    rejectStateUpdate(
+      ws,
+      room,
+      "ADMIN_ONLY_RESET",
+      "Only player 1 can start a new online game."
+    );
+    return;
+  }
+
   if (!Number.isInteger(message.baseRevision)) {
     rejectStateUpdate(
       ws,
@@ -389,7 +400,8 @@ function handleStateUpdate(ws, message) {
     return;
   }
 
-  if (message.baseRevision !== room.revision) {
+  const isAdminReset = intent === "newGame" && meta.playerSlot === 1;
+  if (!isAdminReset && message.baseRevision !== room.revision) {
     rejectStateUpdate(
       ws,
       room,
@@ -409,19 +421,8 @@ function handleStateUpdate(ws, message) {
     return;
   }
 
-  const intent = getUpdateIntent(message);
-  if (intent === "newGame" && meta.playerSlot !== 1) {
-    rejectStateUpdate(
-      ws,
-      room,
-      "ADMIN_ONLY_RESET",
-      "Only player 1 can start a new online game."
-    );
-    return;
-  }
-
   const expectedTurnPlayer = getExpectedTurnPlayer(room);
-  const bypassTurnCheck = intent === "newGame" && meta.playerSlot === 1;
+  const bypassTurnCheck = isAdminReset;
   if (!bypassTurnCheck && meta.playerSlot !== expectedTurnPlayer) {
     rejectStateUpdate(
       ws,

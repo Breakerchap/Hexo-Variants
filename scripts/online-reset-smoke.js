@@ -152,6 +152,83 @@ function makeState(turnPlayer, marker) {
   };
 }
 
+async function connectClientPair(url) {
+  const clientA = new WsClient(url);
+  const clientB = new WsClient(url);
+  await Promise.all([clientA.openPromise, clientB.openPromise]);
+
+  const welcomeA = await clientA.waitFor((m) => m.type === "welcome");
+  const welcomeB = await clientB.waitFor((m) => m.type === "welcome");
+  assert.ok(welcomeA.clientId);
+  assert.ok(welcomeB.clientId);
+
+  return { clientA, clientB };
+}
+
+async function createJoinedRoom(url) {
+  const pair = await connectClientPair(url);
+  pair.clientA.send({ type: "createRoom" });
+  const roomJoinA = await pair.clientA.waitFor((m) => m.type === "roomJoined" && m.roomCode);
+  const roomCode = roomJoinA.roomCode;
+  assert.ok(roomCode, "Room code should be present after createRoom");
+
+  pair.clientB.send({ type: "joinRoom", roomCode });
+  const roomJoinB = await pair.clientB.waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
+  assert.equal(roomJoinB.roomCode, roomCode);
+
+  return { ...pair, roomCode };
+}
+
+async function closeClients(clients) {
+  await Promise.all(clients.map((client) => client.close().catch(() => {})));
+}
+
+async function runConcurrentRoomSmoke(url, roomCount) {
+  const rooms = await Promise.all(
+    Array.from({ length: roomCount }, async (_, index) => {
+      const room = await createJoinedRoom(url);
+      const marker = `room-${index}-seed`;
+
+      room.clientA.send({
+        type: "stateUpdate",
+        baseRevision: 0,
+        state: makeState(1, marker)
+      });
+
+      const seedA = await room.clientA.waitFor((m) => m.type === "stateUpdate" && m.revision === 1);
+      const seedB = await room.clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 1);
+      assert.equal(seedA.roomCode, room.roomCode);
+      assert.equal(seedB.roomCode, room.roomCode);
+      assert.equal(seedA.state.marker, marker);
+      assert.equal(seedB.state.marker, marker);
+
+      return { ...room, index };
+    })
+  );
+
+  assert.equal(new Set(rooms.map((room) => room.roomCode)).size, roomCount);
+
+  await Promise.all(
+    rooms.map(async (room) => {
+      const marker = `room-${room.index}-move`;
+      room.clientA.send({
+        type: "stateUpdate",
+        baseRevision: 1,
+        state: makeState(2, marker)
+      });
+
+      const moveA = await room.clientA.waitFor((m) => m.type === "stateUpdate" && m.revision === 2);
+      const moveB = await room.clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 2);
+      assert.equal(moveA.roomCode, room.roomCode);
+      assert.equal(moveB.roomCode, room.roomCode);
+      assert.equal(moveA.state.marker, marker);
+      assert.equal(moveB.state.marker, marker);
+    })
+  );
+
+  await closeClients(rooms.flatMap((room) => [room.clientA, room.clientB]));
+}
+
 async function main() {
   const port = makePort();
   const { child, ready } = spawnServer(port);
@@ -161,23 +238,10 @@ async function main() {
   let clientB = null;
   try {
     await ready;
-    clientA = new WsClient(url);
-    clientB = new WsClient(url);
-    await Promise.all([clientA.openPromise, clientB.openPromise]);
-
-    const welcomeA = await clientA.waitFor((m) => m.type === "welcome");
-    const welcomeB = await clientB.waitFor((m) => m.type === "welcome");
-    assert.ok(welcomeA.clientId);
-    assert.ok(welcomeB.clientId);
-
-    clientA.send({ type: "createRoom" });
-    const roomJoinA = await clientA.waitFor((m) => m.type === "roomJoined" && m.roomCode);
-    const roomCode = roomJoinA.roomCode;
-    assert.ok(roomCode, "Room code should be present after createRoom");
-
-    clientB.send({ type: "joinRoom", roomCode });
-    const roomJoinB = await clientB.waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
-    assert.equal(roomJoinB.roomCode, roomCode);
+    const joinedRoom = await createJoinedRoom(url);
+    clientA = joinedRoom.clientA;
+    clientB = joinedRoom.clientB;
+    const roomCode = joinedRoom.roomCode;
 
     // Seed revision 1.
     clientA.send({
@@ -227,7 +291,35 @@ async function main() {
     const resync = await clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 3);
     assert.equal(resync.state.marker, "reset-r3");
 
-    console.log("Online reset smoke test passed.");
+    // Player 1 reset should also be accepted from a stale base revision so a
+    // high-latency reset can recover the room instead of trapping clients.
+    clientA.send({
+      type: "stateUpdate",
+      baseRevision: 1,
+      intent: "newGame",
+      state: makeState(2, "stale-reset-r4")
+    });
+    const r4A = await clientA.waitFor((m) => m.type === "stateUpdate" && m.revision === 4);
+    const r4B = await clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 4);
+    assert.equal(r4A.state.marker, "stale-reset-r4");
+    assert.equal(r4B.state.marker, "stale-reset-r4");
+    assert.equal(r4A.state.turnPlayer, 2);
+    assert.equal(r4B.state.turnPlayer, 2);
+
+    // The room should keep accepting normal moves after the stale reset.
+    clientB.send({
+      type: "stateUpdate",
+      baseRevision: 4,
+      state: makeState(1, "after-stale-reset-r5")
+    });
+    const r5A = await clientA.waitFor((m) => m.type === "stateUpdate" && m.revision === 5);
+    const r5B = await clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 5);
+    assert.equal(r5A.state.marker, "after-stale-reset-r5");
+    assert.equal(r5B.state.marker, "after-stale-reset-r5");
+
+    await runConcurrentRoomSmoke(url, 10);
+
+    console.log("Online reset and concurrency smoke test passed.");
   } finally {
     if (clientA) {
       await clientA.close().catch(() => {});

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node -e \"eval(require('fs').readFileSync('scripts/run-tests-eval.js','utf8'))\"",
-    "test:node": "node --test"
+    "test:node": "node --test",
+    "test:online": "node -e \"eval(require('fs').readFileSync('scripts/online-reset-smoke.js','utf8'))\""
   },
   "dependencies": {
     "ws": "^8.18.0"

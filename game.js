@@ -1049,6 +1049,8 @@ const online = {
   clientId: null,
   assignedPlayer: null,
   lastRevision: 0,
+  updateInFlight: false,
+  queuedUpdate: null,
   applyingRemoteState: false,
   latestPlayerAssignments: null,
   reconnectTimerId: null,
@@ -1736,6 +1738,11 @@ function sendOnlineMessage(message) {
   online.socket.send(JSON.stringify(message));
 }
 
+function resetOnlineSendState() {
+  online.updateInFlight = false;
+  online.queuedUpdate = null;
+}
+
 function connectOnline(afterConnect) {
   if (online.socket && online.socket.readyState === WebSocket.OPEN) {
     if (afterConnect) {
@@ -1792,6 +1799,7 @@ function connectOnline(afterConnect) {
     online.assignedPlayer = null;
     online.clientId = null;
     online.lastRevision = 0;
+    resetOnlineSendState();
     online.latestPlayerAssignments = null;
     online.pendingAction = null;
     online.socket = null;
@@ -1839,6 +1847,34 @@ function applyRemoteState(state, revision) {
   }
 }
 
+function sendOnlineStateUpdate(update) {
+  const intent = typeof update?.intent === "string" ? update.intent : "";
+  online.updateInFlight = true;
+  sendOnlineMessage({
+    type: "stateUpdate",
+    baseRevision: online.lastRevision,
+    state: update.state,
+    ...(intent ? { intent } : {})
+  });
+}
+
+function flushQueuedOnlineState() {
+  if (
+    online.applyingRemoteState
+    || online.updateInFlight
+    || !online.queuedUpdate
+    || !online.roomCode
+    || !online.socket
+    || online.socket.readyState !== WebSocket.OPEN
+  ) {
+    return;
+  }
+
+  const update = online.queuedUpdate;
+  online.queuedUpdate = null;
+  sendOnlineStateUpdate(update);
+}
+
 function handleOnlineMessage(message) {
   if (message.type === "welcome") {
     online.clientId = message.clientId;
@@ -1852,6 +1888,7 @@ function handleOnlineMessage(message) {
     online.desiredRoomCode = online.roomCode;
     clearOnlineReconnectTimer();
     online.reconnectDelayMs = ONLINE_RECONNECT_BASE_MS;
+    resetOnlineSendState();
     updateAssignmentFromMessage(message);
     if (typeof message.revision === "number") {
       online.lastRevision = message.revision;
@@ -1873,18 +1910,24 @@ function handleOnlineMessage(message) {
 
   if (message.type === "stateUpdate") {
     updateAssignmentFromMessage(message);
-    if (
-      typeof message.revision === "number"
-      && message.revision < online.lastRevision
-      && message.byClientId
-    ) {
+    if (typeof message.revision === "number" && message.revision < online.lastRevision) {
+      return;
+    }
+    online.updateInFlight = false;
+    if (message.byClientId === online.clientId && online.queuedUpdate) {
+      if (typeof message.revision === "number") {
+        online.lastRevision = message.revision;
+      }
+      flushQueuedOnlineState();
       return;
     }
     applyRemoteState(message.state, message.revision);
+    flushQueuedOnlineState();
     return;
   }
 
   if (message.type === "error" && message.message) {
+    online.updateInFlight = false;
     if (message.code === "NOT_YOUR_TURN") {
       pushLog("Online: you can only move on your own turn.");
     } else if (message.code === "ADMIN_ONLY_RESET") {
@@ -1928,6 +1971,7 @@ function leaveOnlineRoom() {
   online.desiredRoomCode = "";
   online.assignedPlayer = null;
   online.lastRevision = 0;
+  resetOnlineSendState();
   online.latestPlayerAssignments = null;
   closeOnlineSocket(true);
   updateOnlineStatusUI();
@@ -1942,13 +1986,20 @@ function broadcastOnlineState(options = {}) {
   }
 
   const intent = typeof options.intent === "string" ? options.intent : "";
-  sendOnlineMessage({
-    type: "stateUpdate",
-    baseRevision: online.lastRevision,
-    state: game.state,
-    ...(intent ? { intent } : {})
-  });
-  online.lastRevision += 1;
+  const update = {
+    intent,
+    state: cloneState(game.state)
+  };
+
+  if (online.updateInFlight) {
+    online.queuedUpdate = {
+      intent: intent || online.queuedUpdate?.intent || "",
+      state: update.state
+    };
+    return;
+  }
+
+  sendOnlineStateUpdate(update);
 }
 
 function saveHistory() {
