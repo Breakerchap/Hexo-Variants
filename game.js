@@ -1148,6 +1148,10 @@ const online = {
 const ONLINE_RECONNECT_BASE_MS = 1000;
 const ONLINE_RECONNECT_MAX_MS = 10000;
 
+function isBrowsingHistory() {
+  return game.futureHistory.length > 0;
+}
+
 function toCanonicalModeKey(modeKey) {
   return modeKey === "greek" ? "egyptian" : modeKey;
 }
@@ -1682,7 +1686,7 @@ function updateClockUI() {
   const playerCount = getPlayerCount(game.state);
   const activePlayer = normalisePlayerNumber(clock.activePlayer, playerCount);
   const flaggedPlayer = clock.flaggedPlayer || 0;
-  const clockIsRunning = shouldRunClockTicker(game.state);
+  const clockIsRunning = !isBrowsingHistory() && shouldRunClockTicker(game.state);
   for (const row of clockRows) {
     const visible = row.player <= playerCount;
     const display = formatClock(clock.remaining[row.player]);
@@ -1711,7 +1715,7 @@ function stopClockTicker() {
 }
 
 function handleClockExpiry(expiredPlayer) {
-  if (!game.state || game.state.winner) {
+  if (!game.state || game.state.winner || isBrowsingHistory()) {
     return;
   }
   const winningPlayer = getNextPlayerNumber(game.state, expiredPlayer);
@@ -1725,6 +1729,9 @@ function handleClockExpiry(expiredPlayer) {
 
 function applyClockElapsedIfNeeded() {
   if (!game.state || !game.state.clock) {
+    return;
+  }
+  if (isBrowsingHistory()) {
     return;
   }
   const clock = game.state.clock;
@@ -1752,7 +1759,7 @@ function syncClockTickerFromState() {
   }
 
   ensureClockState(game.state);
-  const shouldRun = shouldRunClockTicker(game.state);
+  const shouldRun = !isBrowsingHistory() && shouldRunClockTicker(game.state);
   if (!shouldRun) {
     stopClockTicker();
     updateClockUI();
@@ -1773,6 +1780,9 @@ function canUseAdminControls() {
 }
 
 function canActForCurrentTurn() {
+  if (isBrowsingHistory()) {
+    return false;
+  }
   if (!online.roomCode && !online.desiredRoomCode) {
     return true;
   }
@@ -3273,7 +3283,7 @@ function placeTurnTile(state, hex, owner) {
 
 function clickPlacement(hex) {
   const state = game.state;
-  if (game.futureHistory.length > 0) {
+  if (isBrowsingHistory()) {
     updateStatus();
     return;
   }
@@ -3406,7 +3416,7 @@ function updateStatus() {
   ui.duckPhaseText.textContent = state.duckPhase ? "Yes" : "No";
   ui.winnerText.textContent = state.winner ? `Player ${state.winner}` : "None";
 
-  if (game.futureHistory.length > 0) {
+  if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
   } else if (!state.openingMoveDone) {
     ui.subturnText.textContent = "Opening move: 1 placement";
@@ -4239,6 +4249,7 @@ function drawGrid() {
   const drawStep = getGridDrawStep(bounds, size);
   const showPlacementHints = (
     size >= GRID_HINT_MIN_HEX_SIZE
+    && !isBrowsingHistory()
     && !game.state.winner
     && !game.state.duckPhase
     && !hasEgyptianRemovalPhase(game.state)

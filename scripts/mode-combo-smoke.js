@@ -956,6 +956,37 @@ function runKingDuckPanicChecks(context, radialOnly = false) {
   );
 }
 
+function runHistoryReadOnlyChecks(context) {
+  assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
+  assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+  assert.equal(typeof context.navigateHistoryBack, "function", "expected timeline back helper");
+  assert.equal(typeof context.navigateHistoryForward, "function", "expected timeline forward helper");
+  assert.equal(typeof context.applyClockElapsedIfNeeded, "function", "expected clock elapsed helper");
+
+  context.window.newGame([], { enabled: true, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  context.clickPlacement({ q: 0, r: 0 });
+  context.clickPlacement({ q: 1, r: 0 });
+
+  const liveFingerprint = stateFingerprint(context.HexTicTacToeInternals.game.state);
+  context.navigateHistoryBack();
+
+  const game = context.HexTicTacToeInternals.game;
+  assert.equal(context.isBrowsingHistory(), true, "back should enter read-only timeline browsing");
+  assert.equal(game.clockRuntime.intervalId, null, "clock ticker should pause while browsing history");
+
+  const browsedFingerprint = stateFingerprint(game.state);
+  game.clockRuntime.lastTickAt = Date.now() - 10000;
+  context.applyClockElapsedIfNeeded();
+  assert.equal(stateFingerprint(game.state), browsedFingerprint, "clock ticks should not mutate browsed history");
+
+  context.clickPlacement({ q: 1, r: -1 });
+  assert.equal(stateFingerprint(game.state), browsedFingerprint, "placements should not mutate browsed history");
+
+  context.navigateHistoryForward();
+  assert.equal(context.isBrowsingHistory(), false, "forward to the present should leave timeline browsing");
+  assert.equal(stateFingerprint(game.state), liveFingerprint, "forward should restore the live game state exactly");
+}
+
 function main() {
   const sandbox = makeSandbox();
   const context = vm.createContext(sandbox);
@@ -979,6 +1010,12 @@ function main() {
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
 
+  if (process.argv.includes("--history-only")) {
+    runHistoryReadOnlyChecks(context);
+    console.log("History read-only smoke test passed.");
+    return;
+  }
+
   const radialOnly = process.argv.includes("--radial-only");
   const combos = radialOnly
     ? allModeCombos(modeKeys.filter((key) => (
@@ -1001,6 +1038,9 @@ function main() {
   runRadialWinDirectionChecks(context);
   runRadialOrbitChecks(context);
   runKingDuckPanicChecks(context, radialOnly);
+  if (!radialOnly) {
+    runHistoryReadOnlyChecks(context);
+  }
 
   console.log(`${radialOnly ? "Radial mode" : "Mode combo"} smoke tests passed (${combos.length} combos x 2 scenarios).`);
 }
