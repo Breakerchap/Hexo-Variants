@@ -401,6 +401,11 @@ function getOwnerStoneCount(state, owner) {
   return Object.values(state.cells).filter((cell) => cell.kind === "stone" && cell.owner === owner).length;
 }
 
+function getStatePlayerNumbers(state) {
+  const playerCount = Math.max(2, Math.min(4, Math.trunc(Number(state.playerCount) || 2)));
+  return Array.from({ length: playerCount }, (_, idx) => idx + 1);
+}
+
 function assertStateInvariants(sandbox, state) {
   assert.ok(Array.isArray(state.modeKeys), "modeKeys should be an array");
   assert.ok(!state.modeKeys.includes("greek"), "greek mode key should never survive normalisation");
@@ -409,11 +414,10 @@ function assertStateInvariants(sandbox, state) {
   const hasEgyptian = state.modeKeys.includes("egyptian");
   const hasEgyptianRemoval = sandbox.hasEgyptianRemovalPhase(state);
   const cap = sandbox.getEgyptianStoneCap(state);
-  const owner1 = getOwnerStoneCount(state, 1);
-  const owner2 = getOwnerStoneCount(state, 2);
+  const playerNumbers = getStatePlayerNumbers(state);
   const removalsThisTurn = state.egyptianRemovalsThisTurn || {};
 
-  for (const owner of [1, 2]) {
+  for (const owner of playerNumbers) {
     const removalCount = Math.trunc(Number(removalsThisTurn[owner]) || 0);
     assert.ok(removalCount >= 0, "egyptian removal count should not be negative");
     assert.ok(removalCount <= MAX_EGYPTIAN_REMOVALS_PER_TURN, "egyptian removals should be capped per turn");
@@ -422,9 +426,9 @@ function assertStateInvariants(sandbox, state) {
   if (hasEgyptian) {
     if (hasEgyptianRemoval) {
       const removal = state.egyptianRemoval;
-      assert.ok(removal && (removal.owner === 1 || removal.owner === 2), "egyptian removal state owner should be valid");
+      assert.ok(removal && playerNumbers.includes(removal.owner), "egyptian removal state owner should be valid");
       assert.ok(removal.remaining > 0, "egyptian removal remaining should be positive");
-      const currentOwnerCount = removal.owner === 1 ? owner1 : owner2;
+      const currentOwnerCount = getOwnerStoneCount(state, removal.owner);
       const overflow = Math.max(0, currentOwnerCount - cap);
       const alreadyRemoved = Math.trunc(Number(removalsThisTurn[removal.owner]) || 0);
       const removalSlotsRemaining = Math.max(0, MAX_EGYPTIAN_REMOVALS_PER_TURN - alreadyRemoved);
@@ -438,7 +442,10 @@ function assertStateInvariants(sandbox, state) {
         );
       }
     } else if (!state.modeKeys.includes("echo")) {
-      assert.ok(owner1 <= cap && owner2 <= cap, "stone counts should respect egyptian cap when no removal is pending");
+      assert.ok(
+        playerNumbers.every((owner) => getOwnerStoneCount(state, owner) <= cap),
+        "stone counts should respect egyptian cap when no removal is pending"
+      );
     }
   } else {
     assert.equal(hasEgyptianRemoval, false, "egyptian removal should not run when egyptian mode is inactive");
@@ -818,6 +825,32 @@ function runRadialWinDirectionChecks(context) {
   assert.equal(mirroredCentre.r, 0, "radial centre should mirror to itself");
 }
 
+function runRadialOrbitChecks(context) {
+  assert.equal(typeof context.radialOrbitStep, "function", "expected radialOrbitStep helper");
+
+  const cases = [
+    [{ q: 0, r: 0 }, { q: 0, r: 0 }, "centre stays fixed"],
+    [{ q: 1, r: 0 }, { q: 1, r: 1 }, "ring 1 advances one sector"],
+    [{ q: 2, r: 0 }, { q: 2, r: 10 }, "ring 2 counter-rotates two sectors"],
+    [{ q: 3, r: 11 }, { q: 3, r: 2 }, "ring 3 advances three sectors with wrap"],
+    [{ q: 4, r: 1 }, { q: 4, r: 9 }, "ring 4 counter-rotates four sectors"],
+    [{ q: 12, r: 0 }, { q: 12, r: 11 }, "ring 12 still moves instead of aliasing to a full rotation"]
+  ];
+
+  for (const [from, expected, message] of cases) {
+    const actual = context.radialOrbitStep(from);
+    assert.equal(actual.q, expected.q, `radial orbit should ${message} (q)`);
+    assert.equal(actual.r, expected.r, `radial orbit should ${message} (r)`);
+  }
+
+  const spoke = Array.from({ length: 4 }, (_, idx) => context.radialOrbitStep({ q: idx + 1, r: 0 }));
+  assert.equal(
+    spoke.map((hex) => hex.r).join(","),
+    "1,10,3,8",
+    "radial orbit should twist a spoke instead of preserving it as a global rotation"
+  );
+}
+
 function runEgyptianEchoRemovalChecks(context) {
   const makeState = context.HexTicTacToeInternals.makeInitialState;
   assert.equal(typeof makeState, "function", "expected makeInitialState helper");
@@ -966,6 +999,7 @@ function main() {
     runEgyptianEchoRemovalChecks(context);
   }
   runRadialWinDirectionChecks(context);
+  runRadialOrbitChecks(context);
   runKingDuckPanicChecks(context, radialOnly);
 
   console.log(`${radialOnly ? "Radial mode" : "Mode combo"} smoke tests passed (${combos.length} combos x 2 scenarios).`);

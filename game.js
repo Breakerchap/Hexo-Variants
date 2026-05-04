@@ -327,8 +327,8 @@ const MODES = {
   },
   orbit: {
     name: "Orbit",
-    summary: "At the end of every full turn, each stone moves 1 step along its orbit ring. Ducks stay put.",
-    hint: "After each full turn, stones shift one step around their ring (ducks stay put). Faint lines show the next shift."
+    summary: "At the end of every full turn, each stone moves along its orbit ring. On the radial board, outer rings drift farther and neighbouring rings counter-rotate.",
+    hint: "After each full turn, stones shift around their ring. On Radial Grid, each ring has its own counter-rotating drift, so spokes twist apart."
   },
   echo: {
     name: "Echo",
@@ -387,6 +387,7 @@ const triangleLineKinds = [
 
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
+const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
 
 function keyOf(q, r) {
   return `${q},${r}`;
@@ -1067,6 +1068,12 @@ function octagonOrbitStep(hex) {
   return { ...ring[(index + 1) % ring.length] };
 }
 
+function getRadialOrbitSectorShift(ring) {
+  const safeRing = Math.max(1, Math.trunc(Number(ring) || 1));
+  const magnitude = ((safeRing - 1) % (RADIAL_SECTOR_COUNT - 1)) + 1;
+  return safeRing % 2 === 0 ? -magnitude : magnitude;
+}
+
 function radialOrbitStep(hex) {
   const cell = normaliseRadialCell(hex);
   if (cell.q === 0) {
@@ -1074,7 +1081,7 @@ function radialOrbitStep(hex) {
   }
   return {
     q: cell.q,
-    r: normaliseRadialSector(cell.r + 1)
+    r: normaliseRadialSector(cell.r + getRadialOrbitSectorShift(cell.q))
   };
 }
 
@@ -1152,6 +1159,12 @@ function normaliseModeKeys(modeKeys) {
   );
   if (requested.has("fourPlayer")) {
     requested.delete("threePlayer");
+  }
+  const selectedGridModes = GRID_MODE_KEYS.filter((key) => requested.has(key));
+  if (selectedGridModes.length > 1) {
+    for (const key of selectedGridModes.slice(0, -1)) {
+      requested.delete(key);
+    }
   }
   const ordered = [];
   for (const key of Object.keys(MODES)) {
@@ -3082,7 +3095,9 @@ function resolveOrbit(state) {
   state.cells = nextCells;
   rebuildPanicZones(state);
   transformTrackedHexes(state, (hex) => getOrbitDestination(state, hex));
-  pushLog("Orbit moved every stone 1 step along its ring.");
+  pushLog(usesRadialGridMode(state)
+    ? "Orbit twisted each radial ring by its own drift."
+    : "Orbit moved every stone 1 step along its ring.");
 }
 
 function getMeteorTargets(state) {
@@ -5098,6 +5113,11 @@ function fillModePicker() {
         if (key === "threePlayer" || key === "fourPlayer") {
           nextModeKeys.delete("threePlayer");
           nextModeKeys.delete("fourPlayer");
+        }
+        if (GRID_MODE_KEYS.includes(key)) {
+          for (const gridModeKey of GRID_MODE_KEYS) {
+            nextModeKeys.delete(gridModeKey);
+          }
         }
         nextModeKeys.add(key);
       }
