@@ -675,6 +675,53 @@ canvas:focus-visible {
   margin-top: 4px;
 }
 
+.siteFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.siteFooterText {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.siteFooterText a {
+  color: rgba(236, 242, 255, 0.82);
+  text-decoration: none;
+}
+
+.siteFooterText a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.secretModesButton {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid rgba(236, 242, 255, 0.18);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 0.46;
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.secretModesButton:hover,
+.secretModesButton:focus-visible {
+  opacity: 1;
+  background: rgba(255, 215, 94, 0.16);
+  border-color: rgba(255, 215, 94, 0.44);
+}
+
 @media (max-width: 980px) {
   .app {
     grid-template-columns: 1fr;
