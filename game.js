@@ -4777,7 +4777,8 @@ function drawPieces() {
     if (!veryLowDetail) {
       ctx.fillStyle = "rgba(6, 12, 23, 0.52)";
       ctx.beginPath();
-      ctx.arc(screen.x, screen.y, size * 0.28, 0, Math.PI * 2);
+      const innerDotRadius = size * (usesTriangleGridMode(game.state) ? 0.18 : 0.28);
+      ctx.arc(screen.x, screen.y, innerDotRadius, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -4961,17 +4962,103 @@ function drawRadialWinnerLine(line, size) {
   ctx.stroke();
 }
 
-function drawWinnerLineHint() {
-  if (usesTriangleGridMode(game.state)) {
+function getTriangleWinningLineCells(state, start, owner, lineKind) {
+  if (!countsForOwnerAt(state, start, owner)) {
+    return [];
+  }
+
+  const backward = [];
+  let pos = stepTriangleLine(start, lineKind, false);
+  while (countsForOwnerAt(state, pos, owner)) {
+    backward.push(pos);
+    pos = stepTriangleLine(pos, lineKind, false);
+  }
+
+  const forward = [];
+  pos = stepTriangleLine(start, lineKind, true);
+  while (countsForOwnerAt(state, pos, owner)) {
+    forward.push(pos);
+    pos = stepTriangleLine(pos, lineKind, true);
+  }
+
+  return [...backward.reverse(), start, ...forward];
+}
+
+function findTriangleWinningLine(state, owner, preferredHex = null) {
+  const candidates = [];
+  if (preferredHex && countsForOwnerAt(state, preferredHex, owner)) {
+    candidates.push(preferredHex);
+  }
+  for (const [key, cell] of Object.entries(state.cells)) {
+    if (cellCountsForOwner(cell, owner)) {
+      const hex = parseKey(key);
+      if (!preferredHex || !equalHex(hex, preferredHex)) {
+        candidates.push(hex);
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    for (const lineKind of triangleLineKinds) {
+      const cells = getTriangleWinningLineCells(state, candidate, owner, lineKind);
+      if (cells.length >= WIN_LENGTH) {
+        return cells;
+      }
+    }
+  }
+
+  return [];
+}
+
+function drawStraightWinnerLineCells(cells, size) {
+  if (!Array.isArray(cells) || cells.length < 2) {
     return;
   }
 
+  const first = cells[0];
+  const last = cells[cells.length - 1];
+  const a = boardCellToPixel(first, size, game.state);
+  const b = boardCellToPixel(last, size, game.state);
+  const sa = worldToScreen(a.x, a.y);
+  const sb = worldToScreen(b.x, b.y);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(sa.x, sa.y);
+  ctx.lineTo(sb.x, sb.y);
+  ctx.stroke();
+}
+
+function drawWinnerLineHint() {
   if (!game.state.lastPlacement) {
-    return;
+    if (!usesTriangleGridMode(game.state) || !game.state.winner) {
+      return;
+    }
   }
   const size = currentHexSize();
   const last = game.state.lastPlacement;
-  const lastCell = getCellAt(game.state, last);
+  const lastCell = last ? getCellAt(game.state, last) : null;
+
+  if (usesTriangleGridMode(game.state)) {
+    const owners = lastCell ? getOwnersForCell(game.state, lastCell) : [];
+    if (game.state.winner && !owners.includes(game.state.winner)) {
+      owners.unshift(game.state.winner);
+    } else if (game.state.winner && owners.includes(game.state.winner)) {
+      owners.splice(owners.indexOf(game.state.winner), 1);
+      owners.unshift(game.state.winner);
+    }
+
+    for (const owner of owners) {
+      const cells = findTriangleWinningLine(game.state, owner, last);
+      if (cells.length >= WIN_LENGTH) {
+        drawStraightWinnerLineCells(cells, size);
+        return;
+      }
+    }
+    return;
+  }
+
   if (!lastCell) {
     return;
   }
@@ -5024,17 +5111,10 @@ function drawWinnerLineHint() {
         maxStep += 1;
       }
 
-      const a = boardCellToPixel({ q: last.q + dir.q * minStep, r: last.r + dir.r * minStep }, size, game.state);
-      const b = boardCellToPixel({ q: last.q + dir.q * maxStep, r: last.r + dir.r * maxStep }, size, game.state);
-      const sa = worldToScreen(a.x, a.y);
-      const sb = worldToScreen(b.x, b.y);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
-      ctx.lineWidth = 6;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(sa.x, sa.y);
-      ctx.lineTo(sb.x, sb.y);
-      ctx.stroke();
+      drawStraightWinnerLineCells([
+        { q: last.q + dir.q * minStep, r: last.r + dir.r * minStep },
+        { q: last.q + dir.q * maxStep, r: last.r + dir.r * maxStep }
+      ], size);
       return;
     }
   }
@@ -5056,8 +5136,8 @@ function renderNow() {
   drawMeteorPreview();
   drawOrbitPreview();
   drawKingDuckRadius();
-  drawWinnerLineHint();
   drawPieces();
+  drawWinnerLineHint();
 
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
   ui.coordText.textContent = `${getBoardCoordinateLabel(game.state)}: (${game.hoverHex.q}, ${game.hoverHex.r})`;
