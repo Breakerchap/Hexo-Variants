@@ -100,6 +100,7 @@ const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
+const BED_SIEGE_SPAWN_LIMIT = 18;
 const ARMORY_DEFAULT_CLASS = "vanguard";
 const ARMORY_REROLL_GOLD_COST = 2;
 const ARMORY_SHOP_SLOTS = 4;
@@ -455,6 +456,12 @@ const MODES = {
     name: "Armoury",
     summary: "Adds classes, currencies, rotating shops, inventory-based piece selection, and piece-specific tactical abilities.",
     hint: "Buy units with gold/arcana, switch active pieces, and combine class passives with board tactics.",
+    secret: true
+  },
+  bedSiege: {
+    name: "Bed Siege",
+    summary: "A secret base-rush mode: first stones become beds, enemy rushes can break them, and living beds generate wool reinforcements.",
+    hint: "Your first stone becomes your bed. Place next to an enemy bed to break it. Living beds spawn one nearby wool stone at the end of your turn.",
     secret: true
   },
   everythingBagel: {
@@ -1052,6 +1059,246 @@ function isEverythingBagelRedTapeHex(state, hex) {
   return getEverythingBagelZones(state).redTapeKeys.has(keyOf(hex.q, hex.r));
 }
 
+function createBedSiegeStateForGame(state) {
+  return {
+    beds: createPlayerMap(getPlayerCount(state), () => null),
+    spawns: createPlayerMap(getPlayerCount(state), () => 0)
+  };
+}
+
+function ensureBedSiegeState(state) {
+  if (!usesBedSiegeMode(state)) {
+    if (state) {
+      state.bedSiege = null;
+    }
+    return null;
+  }
+
+  if (!state.bedSiege || typeof state.bedSiege !== "object") {
+    state.bedSiege = createBedSiegeStateForGame(state);
+  }
+
+  const currentBeds = state.bedSiege.beds && typeof state.bedSiege.beds === "object"
+    ? state.bedSiege.beds
+    : {};
+  const currentSpawns = state.bedSiege.spawns && typeof state.bedSiege.spawns === "object"
+    ? state.bedSiege.spawns
+    : {};
+  state.bedSiege.beds = createPlayerMap(getPlayerCount(state), (owner) => {
+    const bed = currentBeds[owner];
+    if (!bed || typeof bed !== "object" || !bed.hex) {
+      return null;
+    }
+    const hex = usesRadialGridMode(state) ? normaliseRadialCell(bed.hex) : {
+      q: Math.trunc(Number(bed.hex.q) || 0),
+      r: Math.trunc(Number(bed.hex.r) || 0)
+    };
+    return {
+      hex,
+      alive: bed.alive !== false,
+      brokenBy: bed.brokenBy ? normalisePlayerNumber(bed.brokenBy, state) : null,
+      brokenTurn: Number.isInteger(bed.brokenTurn) ? bed.brokenTurn : null
+    };
+  });
+  state.bedSiege.spawns = createPlayerMap(getPlayerCount(state), (owner) => (
+    Math.max(0, Math.trunc(Number(currentSpawns[owner]) || 0))
+  ));
+  return state.bedSiege;
+}
+
+function appendStateLog(state, text) {
+  if (!state || !text) {
+    return;
+  }
+  if (state === game.state) {
+    pushLog(text);
+    return;
+  }
+  state.log = Array.isArray(state.log) ? state.log : [];
+  state.log.unshift(text);
+  state.log = state.log.slice(0, 26);
+}
+
+function getBedSiegeBed(state, owner) {
+  const bedSiege = ensureBedSiegeState(state);
+  if (!bedSiege) {
+    return null;
+  }
+  return bedSiege.beds[normalisePlayerNumber(owner, state)] || null;
+}
+
+function getBedSiegeBedOwnerAt(state, hex, aliveOnly = true) {
+  if (!usesBedSiegeMode(state)) {
+    return 0;
+  }
+  const bedSiege = ensureBedSiegeState(state);
+  for (const owner of getPlayerNumbers(state)) {
+    const bed = bedSiege.beds[owner];
+    if (!bed || !bed.hex || (aliveOnly && !bed.alive)) {
+      continue;
+    }
+    if (equalHex(bed.hex, hex)) {
+      return owner;
+    }
+  }
+  return 0;
+}
+
+function getBedSiegeSummary(state) {
+  if (!usesBedSiegeMode(state)) {
+    return "";
+  }
+  const bedSiege = ensureBedSiegeState(state);
+  return getPlayerNumbers(state).map((owner) => {
+    const bed = bedSiege.beds[owner];
+    if (!bed) {
+      return `P${owner}: no bed`;
+    }
+    return `P${owner}: ${bed.alive ? "bed" : "broken"}`;
+  }).join(" | ");
+}
+
+function breakBedSiegeBed(state, owner, breaker = null, sourceHex = null, options = {}) {
+  if (!usesBedSiegeMode(state)) {
+    return null;
+  }
+  const bedSiege = ensureBedSiegeState(state);
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const bed = bedSiege.beds[safeOwner];
+  if (!bed || !bed.alive) {
+    return null;
+  }
+
+  const safeBreaker = breaker && isValidPlayerNumber(breaker, state) ? normalisePlayerNumber(breaker, state) : null;
+  bed.alive = false;
+  bed.brokenBy = safeBreaker;
+  bed.brokenTurn = state.turnCount;
+  const bedCell = getCellAt(state, bed.hex);
+  if (bedCell && bedCell.owner === safeOwner) {
+    bedCell.bedSiegeBed = false;
+  }
+
+  const sourceText = sourceHex ? ` at (${sourceHex.q}, ${sourceHex.r})` : "";
+  const breakerText = safeBreaker ? ` by Player ${safeBreaker}` : "";
+  const message = `Bed Siege: Player ${safeOwner}'s bed broke${breakerText}${sourceText}.`;
+  if (options.log !== false) {
+    appendStateLog(state, message);
+  }
+  return message;
+}
+
+function handleBedSiegeStoneRemoved(state, hex, removedCell) {
+  if (!usesBedSiegeMode(state) || !removedCell || removedCell.kind !== "stone") {
+    return null;
+  }
+  const bedOwner = getBedSiegeBedOwnerAt(state, hex, true);
+  if (bedOwner) {
+    return breakBedSiegeBed(state, bedOwner, null, hex);
+  }
+  return null;
+}
+
+function applyBedSiegePlacementEffects(state, placedHex, owner) {
+  if (!usesBedSiegeMode(state)) {
+    return [];
+  }
+  const bedSiege = ensureBedSiegeState(state);
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const messages = [];
+  let ownBed = bedSiege.beds[safeOwner];
+
+  if (!ownBed) {
+    ownBed = {
+      hex: { ...placedHex },
+      alive: true,
+      brokenBy: null,
+      brokenTurn: null
+    };
+    bedSiege.beds[safeOwner] = ownBed;
+    const bedCell = getCellAt(state, placedHex);
+    if (bedCell && bedCell.owner === safeOwner) {
+      bedCell.bedSiegeBed = true;
+    }
+    messages.push(`Player ${safeOwner}'s bed is set.`);
+  }
+
+  for (const targetOwner of getPlayerNumbers(state)) {
+    if (targetOwner === safeOwner) {
+      continue;
+    }
+    const bed = bedSiege.beds[targetOwner];
+    if (!bed?.alive) {
+      continue;
+    }
+    if (getAdjacentsForMode(state, bed.hex).some((candidate) => equalHex(candidate, placedHex))) {
+      const message = breakBedSiegeBed(state, targetOwner, safeOwner, placedHex, { log: false });
+      if (message) {
+        messages.push(message.replace(/^Bed Siege: /, ""));
+      }
+    }
+  }
+
+  return messages;
+}
+
+function getBedSiegeSpawnTarget(state, owner) {
+  const bed = getBedSiegeBed(state, owner);
+  if (!bed?.alive) {
+    return null;
+  }
+  const candidates = uniqueSupportedHexes(state, [
+    ...getAdjacentsForMode(state, bed.hex),
+    ...getAdjacentsForMode(state, bed.hex).flatMap((hex) => getAdjacentsForMode(state, hex))
+  ]).filter((hex) => !equalHex(hex, bed.hex));
+
+  return candidates
+    .filter((hex) => isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex))
+    .sort((a, b) => (
+      getDistanceForMode(state, a, bed.hex) - getDistanceForMode(state, b, bed.hex)
+      || getDistanceForMode(state, a) - getDistanceForMode(state, b)
+      || a.q - b.q
+      || a.r - b.r
+    ))[0] || null;
+}
+
+function resolveBedSiegeTurnEnd(state, owner) {
+  if (!usesBedSiegeMode(state)) {
+    return null;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const bed = getBedSiegeBed(state, safeOwner);
+  if (!bed) {
+    return null;
+  }
+  const bedCell = getCellAt(state, bed.hex);
+  if (bed.alive && (!bedCell || bedCell.owner !== safeOwner)) {
+    return breakBedSiegeBed(state, safeOwner, null, bed.hex);
+  }
+  if (!bed.alive) {
+    return null;
+  }
+  if (getOwnerStoneEntriesSortedByAge(state, safeOwner).length >= BED_SIEGE_SPAWN_LIMIT) {
+    return null;
+  }
+  const target = getBedSiegeSpawnTarget(state, safeOwner);
+  if (!target) {
+    return null;
+  }
+  const extras = usesArmoryMode(state)
+    ? { bedSiegeWool: true, pieceType: "militia" }
+    : { bedSiegeWool: true };
+  if (!addEffectStone(state, target, safeOwner, "stone", extras)) {
+    return null;
+  }
+  const bedSiege = ensureBedSiegeState(state);
+  bedSiege.spawns[safeOwner] += 1;
+  const capResolution = enforceStoneCapAfterPlacement(state, safeOwner, { interactiveEgyptian: false });
+  const overflowText = capResolution.overflow > 0 ? ` Overflow ${capResolution.overflow}.` : "";
+  const message = `Bed Siege: Player ${safeOwner}'s bed generated wool at (${target.q}, ${target.r}).${overflowText}`;
+  appendStateLog(state, message);
+  return message;
+}
+
 function getLineAxesForMode(state) {
   if (usesOctagonGridMode(state)) {
     return octagonLineAxes;
@@ -1596,6 +1843,10 @@ function usesPanicBirdMode(state) {
   return hasMode(state, "kingDuck");
 }
 
+function usesBedSiegeMode(state) {
+  return Boolean(state && hasMode(state, "bedSiege"));
+}
+
 function getBirdMoveKinds(state) {
   return BIRD_KINDS.filter((birdKind) => hasMode(state, birdKind));
 }
@@ -1690,10 +1941,14 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     log: ["Game started."],
     accountingEvents: [],
     clock: createClockState(timerConfig, playerCount),
-    armory: null
+    armory: null,
+    bedSiege: null
   };
   if (usesArmoryMode(state)) {
     state.armory = createArmoryStateForGame(state);
+  }
+  if (usesBedSiegeMode(state)) {
+    state.bedSiege = createBedSiegeStateForGame(state);
   }
   return state;
 }
@@ -2504,6 +2759,16 @@ function replaceTrackedHex(state, fromHex, toHex) {
       state.lastPlacedByPlayer[owner] = { ...toHex };
     }
   }
+
+  if (usesBedSiegeMode(state)) {
+    const bedSiege = ensureBedSiegeState(state);
+    for (const owner of getPlayerNumbers(state)) {
+      const bed = bedSiege.beds[owner];
+      if (bed?.alive && equalHex(bed.hex, fromHex)) {
+        bed.hex = { ...toHex };
+      }
+    }
+  }
 }
 
 function transformTrackedHexes(state, transform) {
@@ -2514,6 +2779,16 @@ function transformTrackedHexes(state, transform) {
   for (const owner of getPlayerNumbers(state)) {
     if (state.lastPlacedByPlayer[owner]) {
       state.lastPlacedByPlayer[owner] = transform(state.lastPlacedByPlayer[owner]);
+    }
+  }
+
+  if (usesBedSiegeMode(state)) {
+    const bedSiege = ensureBedSiegeState(state);
+    for (const owner of getPlayerNumbers(state)) {
+      const bed = bedSiege.beds[owner];
+      if (bed?.hex) {
+        bed.hex = transform(bed.hex);
+      }
     }
   }
 }
@@ -2981,7 +3256,9 @@ function placeStone(state, hex, owner, kind = "stone", extras = {}) {
 }
 
 function removeStone(state, hex) {
+  const removedCell = getCellAt(state, hex);
   delete state.cells[keyOf(hex.q, hex.r)];
+  handleBedSiegeStoneRemoved(state, hex, removedCell);
 }
 
 function addEffectStone(state, hex, owner, kind = "stone", extras = {}) {
@@ -4365,6 +4642,7 @@ function endTurn(state) {
   resolveMeteorAccounting(state);
   resolveEverythingBagel(state, previousPlayer);
   resolveArmoryTurnEnd(state);
+  resolveBedSiegeTurnEnd(state, previousPlayer);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
@@ -4420,6 +4698,7 @@ function placeTurnTile(state, hex, owner) {
   });
 
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
+  const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
@@ -4431,6 +4710,7 @@ function placeTurnTile(state, hex, owner) {
   const extraMessages = [
     usesArmoryMode(state) ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
     armoryAbilityMessage,
+    ...bedSiegeMessages,
     ...bagelMessages
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
@@ -4828,6 +5108,9 @@ function updateStatus() {
     const selectedPiece = getArmorySelectedPiece(state, owner);
     const pieceDef = getArmoryPieceDef(selectedPiece);
     ui.subturnText.textContent += ` | ${armory.currencies[owner].gold}g/${armory.currencies[owner].arcana}a | ${pieceDef.name}`;
+  }
+  if (usesBedSiegeMode(state)) {
+    ui.subturnText.textContent += ` | ${getBedSiegeSummary(state)}`;
   }
 
   updateClockUI();
@@ -5951,7 +6234,29 @@ function drawPieces() {
     ctx.arc(screen.x, screen.y, innerDotRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    if (usesArmoryMode(game.state)) {
+    const bedOwner = getBedSiegeBedOwnerAt(game.state, hex, true);
+    if (bedOwner) {
+      drawBoardShape(
+        screen.x,
+        screen.y,
+        size * 0.48,
+        "rgba(255, 255, 255, 0.18)",
+        "rgba(255, 255, 255, 0.78)",
+        1.7,
+        hex
+      );
+      ctx.fillStyle = "rgba(236, 242, 255, 0.96)";
+      ctx.font = `${Math.max(9, Math.min(15, size * 0.46))}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("B", screen.x, screen.y + 0.5);
+    } else if (usesBedSiegeMode(game.state) && cell.bedSiegeWool) {
+      ctx.fillStyle = "rgba(236, 242, 255, 0.84)";
+      ctx.font = `${Math.max(8, Math.min(13, size * 0.38))}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("W", screen.x, screen.y + 0.5);
+    } else if (usesArmoryMode(game.state)) {
       const pieceType = getArmoryPieceType(cell);
       const pieceDef = getArmoryPieceDef(pieceType);
       ctx.fillStyle = "rgba(236, 242, 255, 0.92)";
