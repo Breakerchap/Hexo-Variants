@@ -58,7 +58,8 @@ const ui = {
   onlineStatusText: document.getElementById("onlineStatusText"),
   onlineRoomText: document.getElementById("onlineRoomText"),
   onlineRoleText: document.getElementById("onlineRoleText"),
-  toggleMenuBtn: document.getElementById("toggleMenuBtn")
+  toggleMenuBtn: document.getElementById("toggleMenuBtn"),
+  secretModesBtn: document.getElementById("secretModesBtn")
 };
 
 const SQRT3 = Math.sqrt(3);
@@ -85,6 +86,30 @@ const DEFAULT_EGYPTIAN_STONE_CAP = 12;
 const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
+const BAGEL_RECEIPT_STONE_LIMIT = 120;
+const ARMORY_PIECE_TYPES = ["militia", "lancer", "bastion", "oracle", "alchemist"];
+const ARMORY_PIECE_DEFS = {
+  militia: {
+    name: "Militia",
+    summary: "standard stone"
+  },
+  lancer: {
+    name: "Lancer",
+    summary: "pushes the nearest adjacent enemy away"
+  },
+  bastion: {
+    name: "Bastion",
+    summary: "adds a defensive ring at turn end"
+  },
+  oracle: {
+    name: "Oracle",
+    summary: "adds a small clock bonus"
+  },
+  alchemist: {
+    name: "Alchemist",
+    summary: "upgrades an adjacent friendly militia"
+  }
+};
 const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
   const angle = Math.PI / 180 * (60 * i - 30);
   return {
@@ -312,6 +337,12 @@ const MODES = {
     summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
     hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
   },
+  donut3d: {
+    name: "3D Donut",
+    summary: "A secret radial board with a fake 3D torus glow. Connect 6 around the donut rings or through the spokes.",
+    hint: "Board becomes a donut-shaped radial grid. The rules use rings and spokes, with a 3D torus preview behind the board.",
+    secret: true
+  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -341,6 +372,18 @@ const MODES = {
     name: "Meteor",
     summary: "Every 3 full turns, all occupied spaces tied for farthest distance from the origin are deleted.",
     hint: "Every 3 full turns, all occupied spaces farthest from the center are deleted."
+  },
+  armory: {
+    name: "Armoury",
+    summary: "Secret tactical pieces cycle through your placements: lancers push, bastions reinforce, oracles buy clock time, and alchemists upgrade militia.",
+    hint: "Armoury mode: each placement deploys the next piece in your rotation. Watch the status line for the active piece and its effect.",
+    secret: true
+  },
+  everythingBagel: {
+    name: "Everything Bagel",
+    summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, coupons print receipts, toll booths bribe clocks, and paperwork mutates the board.",
+    hint: "Still connect 6, technically. Red tape blocks placement, portals teleport, coupons spawn receipt stones, and end-turn paperwork may copy, move, or swap stones.",
+    secret: true
   }
 };
 
@@ -384,7 +427,8 @@ const triangleLineKinds = [
 
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
-const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
+const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid", "donut3d"];
+const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
 
 function keyOf(q, r) {
   return `${q},${r}`;
@@ -852,6 +896,84 @@ function getAdjacentsForMode(state, hex) {
   return neighbours(hex);
 }
 
+function positiveMod(value, modulus) {
+  return ((value % modulus) + modulus) % modulus;
+}
+
+function rotateAxial(hex, steps) {
+  const normalisedSteps = positiveMod(Math.trunc(Number(steps) || 0), 6);
+  let q = Math.trunc(Number(hex?.q) || 0);
+  let r = Math.trunc(Number(hex?.r) || 0);
+  for (let i = 0; i < normalisedSteps; i += 1) {
+    const s = -q - r;
+    q = -r;
+    r = -s;
+  }
+  return { q, r };
+}
+
+function hasEverythingBagelMode(state) {
+  return Boolean(state && hasMode(state, "everythingBagel"));
+}
+
+function uniqueSupportedHexes(state, hexes) {
+  const byKey = new Map();
+  for (const hex of hexes) {
+    if (!hex || !Number.isFinite(hex.q) || !Number.isFinite(hex.r)) {
+      continue;
+    }
+    const normalised = { q: Math.trunc(hex.q), r: Math.trunc(hex.r) };
+    if (!isCellSupportedForMode(state, normalised)) {
+      continue;
+    }
+    byKey.set(keyOf(normalised.q, normalised.r), normalised);
+  }
+  return Array.from(byKey.values());
+}
+
+function getEverythingBagelZones(state) {
+  const phase = Math.max(0, Math.trunc(Number(state?.turnCount) || 0));
+  const portalSeeds = [
+    [rotateAxial({ q: 4, r: -1 }, phase), rotateAxial({ q: -2, r: 5 }, phase + 2)],
+    [rotateAxial({ q: -5, r: 2 }, phase + 1), rotateAxial({ q: 3, r: -6 }, phase + 4)]
+  ];
+  const portalPairs = portalSeeds
+    .map(([a, b], index) => ({ index, a, b }))
+    .filter((pair) => isCellSupportedForMode(state, pair.a) && isCellSupportedForMode(state, pair.b));
+  const redCenter = rotateAxial({ q: 2 + (phase % 4), r: -4 }, phase + 1);
+  const redTape = uniqueSupportedHexes(state, [
+    redCenter,
+    ...getAdjacentsForMode(state, redCenter).slice(0, 4)
+  ]);
+  const tollBooths = uniqueSupportedHexes(state, [
+    rotateAxial({ q: 1, r: -3 }, phase + 2),
+    rotateAxial({ q: -4, r: 3 }, phase + 5),
+    rotateAxial({ q: 5, r: -5 }, phase + 3)
+  ]);
+  const coupons = uniqueSupportedHexes(state, [
+    rotateAxial({ q: 0, r: 4 }, phase),
+    rotateAxial({ q: -3, r: -1 }, phase + 3)
+  ]);
+
+  return {
+    phase,
+    portalPairs,
+    redTape,
+    redTapeKeys: new Set(redTape.map((hex) => keyOf(hex.q, hex.r))),
+    tollBooths,
+    tollBoothKeys: new Set(tollBooths.map((hex) => keyOf(hex.q, hex.r))),
+    coupons,
+    couponKeys: new Set(coupons.map((hex) => keyOf(hex.q, hex.r)))
+  };
+}
+
+function isEverythingBagelRedTapeHex(state, hex) {
+  if (!hasEverythingBagelMode(state)) {
+    return false;
+  }
+  return getEverythingBagelZones(state).redTapeKeys.has(keyOf(hex.q, hex.r));
+}
+
 function getLineAxesForMode(state) {
   if (usesOctagonGridMode(state)) {
     return octagonLineAxes;
@@ -1112,6 +1234,7 @@ const game = {
   previewModeKeys: [],
   modeUiSignature: "",
   renderScheduled: false,
+  secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
   turnOrder: "random",
@@ -1185,6 +1308,28 @@ function refreshEgyptianCapControls(modeKeys) {
     return;
   }
   ui.egyptianCapControls.hidden = !modeUsesEgyptianCap(modeKeys);
+}
+
+function refreshSecretModeVisibility() {
+  const selected = new Set(getSelectedModeKeys());
+  for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
+    const isSecret = SECRET_MODE_KEYS.includes(button.dataset.mode);
+    if (!isSecret) {
+      continue;
+    }
+    button.hidden = !game.secretModesUnlocked && !selected.has(button.dataset.mode);
+  }
+  if (ui.secretModesBtn) {
+    ui.secretModesBtn.setAttribute("aria-pressed", game.secretModesUnlocked ? "true" : "false");
+  }
+}
+
+function setSecretModesUnlocked(unlocked) {
+  game.secretModesUnlocked = Boolean(unlocked);
+  refreshSecretModeVisibility();
+  if (game.secretModesUnlocked) {
+    pushLog("Secret modes unlocked.");
+  }
 }
 
 function modeKeySignature(modeKeys) {
@@ -1270,6 +1415,9 @@ function getGridMode(state) {
   if (!state || !Array.isArray(state.modeKeys)) {
     return "hex";
   }
+  if (state.modeKeys.includes("donut3d")) {
+    return "donut";
+  }
   if (state.modeKeys.includes("radialGrid")) {
     return "radial";
   }
@@ -1298,7 +1446,12 @@ function usesSquareGridMode(state) {
 }
 
 function usesRadialGridMode(state) {
-  return getGridMode(state) === "radial";
+  const gridMode = getGridMode(state);
+  return gridMode === "radial" || gridMode === "donut";
+}
+
+function usesDonut3dMode(state) {
+  return getGridMode(state) === "donut";
 }
 
 function getBoardSpaceLabel(state) {
@@ -1306,7 +1459,7 @@ function getBoardSpaceLabel(state) {
     return "triangle";
   }
   if (usesRadialGridMode(state)) {
-    return "radial cell";
+    return usesDonut3dMode(state) ? "donut cell" : "radial cell";
   }
   if (usesOctagonGridMode(state)) {
     return "tile";
@@ -1322,7 +1475,7 @@ function getBoardCoordinateLabel(state) {
     return "Triangle";
   }
   if (usesRadialGridMode(state)) {
-    return "Radial";
+    return usesDonut3dMode(state) ? "Donut" : "Radial";
   }
   if (usesOctagonGridMode(state)) {
     return "Octagon";
@@ -1418,6 +1571,7 @@ function setSelectedModeKeys(modeKeys) {
   }
   game.previewModeKeys = [...active];
   setModeUI(game.previewModeKeys);
+  refreshSecretModeVisibility();
 }
 
 function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap) {
@@ -2543,6 +2697,9 @@ function isHexBlockedBySpecials(state, hex) {
   if (state.panicZones[keyOf(hex.q, hex.r)]) {
     return true;
   }
+  if (isEverythingBagelRedTapeHex(state, hex)) {
+    return true;
+  }
   if (getBirdEchoCopyAt(state, hex)) {
     return true;
   }
@@ -2731,6 +2888,35 @@ function placeStone(state, hex, owner, kind = "stone") {
 
 function removeStone(state, hex) {
   delete state.cells[keyOf(hex.q, hex.r)];
+}
+
+function addEffectStone(state, hex, owner, kind = "stone", extras = {}) {
+  if (!isHexOpen(state, hex) || isEverythingBagelRedTapeHex(state, hex)) {
+    return false;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  state.moveSerial += 1;
+  state.cells[keyOf(hex.q, hex.r)] = {
+    owner: safeOwner,
+    kind,
+    serial: state.moveSerial,
+    ...extras
+  };
+  return true;
+}
+
+function moveStonePreservingSerial(state, fromHex, toHex) {
+  if (!isCellSupportedForMode(state, toHex) || isOccupied(state, toHex) || isEverythingBagelRedTapeHex(state, toHex)) {
+    return false;
+  }
+  const cell = getCellAt(state, fromHex);
+  if (!cell || cell.kind !== "stone") {
+    return false;
+  }
+  removeStone(state, fromHex);
+  state.cells[keyOf(toHex.q, toHex.r)] = { ...cell };
+  replaceTrackedHex(state, fromHex, toHex);
+  return true;
 }
 
 function moveBird(state, hex, birdMoveKind = "duck") {
@@ -3185,6 +3371,242 @@ function resolveMeteorAccounting(state) {
   pushLog(line);
 }
 
+function isOpenForEverythingBagelEffect(state, hex) {
+  return isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex);
+}
+
+function getPortalExitForHex(zones, hex) {
+  const key = keyOf(hex.q, hex.r);
+  for (const pair of zones.portalPairs) {
+    if (keyOf(pair.a.q, pair.a.r) === key) {
+      return pair.b;
+    }
+    if (keyOf(pair.b.q, pair.b.r) === key) {
+      return pair.a;
+    }
+  }
+  return null;
+}
+
+function applyEverythingBagelPlacementEffects(state, placedHex, owner) {
+  if (!hasEverythingBagelMode(state)) {
+    return [];
+  }
+  const messages = [];
+  const zones = getEverythingBagelZones(state);
+  let currentHex = { ...placedHex };
+  const portalExit = getPortalExitForHex(zones, currentHex);
+
+  if (portalExit && moveStonePreservingSerial(state, currentHex, portalExit)) {
+    messages.push(`Everything Bagel portal fired: (${currentHex.q}, ${currentHex.r}) became (${portalExit.q}, ${portalExit.r}).`);
+    currentHex = { ...portalExit };
+  }
+
+  if (zones.tollBoothKeys.has(keyOf(currentHex.q, currentHex.r))) {
+    ensureClockState(state);
+    if (state.clock.enabled) {
+      state.clock.remaining[owner] += 7;
+      messages.push(`Toll booth validated Player ${owner}'s parking: +7 seconds.`);
+    } else {
+      messages.push("Toll booth inspected the stone and found the timer was off duty.");
+    }
+  }
+
+  if (zones.couponKeys.has(keyOf(currentHex.q, currentHex.r)) && Object.keys(state.cells).length < BAGEL_RECEIPT_STONE_LIMIT) {
+    const receiptTarget = rotateAxial({ q: currentHex.q + owner, r: currentHex.r - 1 }, zones.phase + owner + 1);
+    if (isOpenForEverythingBagelEffect(state, receiptTarget) && addEffectStone(state, receiptTarget, owner, "stone", { bagelReceipt: true })) {
+      messages.push(`Coupon printer made a Player ${owner} receipt stone at (${receiptTarget.q}, ${receiptTarget.r}).`);
+    } else {
+      messages.push("Coupon printer jammed. This is legally considered gameplay.");
+    }
+  }
+
+  return messages;
+}
+
+function getOpenStepTowardOriginForMode(state, hex) {
+  const currentDistance = getDistanceForMode(state, hex);
+  return getAdjacentsForMode(state, hex)
+    .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+    .sort((a, b) => getDistanceForMode(state, a) - getDistanceForMode(state, b))
+    .find((candidate) => getDistanceForMode(state, candidate) < currentDistance) || null;
+}
+
+function resolveBagelAuditorCopy(state, owner, messages) {
+  if (Object.keys(state.cells).length >= BAGEL_RECEIPT_STONE_LIMIT) {
+    return;
+  }
+  const entries = getOwnerStoneEntriesSortedByAge(state, owner);
+  const newest = entries[entries.length - 1];
+  if (!newest) {
+    return;
+  }
+  const target = getMirrorCellForMode(state, rotateAxial(newest.hex, state.turnCount + owner));
+  if (isOpenForEverythingBagelEffect(state, target) && addEffectStone(state, target, owner, "stone", { bagelReceipt: true })) {
+    messages.push(`Auditor copied Player ${owner}'s newest stone to (${target.q}, ${target.r}).`);
+  }
+}
+
+function resolveBagelGravityComplaint(state, messages) {
+  if (state.turnCount % 3 !== 0) {
+    return;
+  }
+  for (const owner of getPlayerNumbers(state)) {
+    const oldest = getOwnerStoneEntriesSortedByAge(state, owner)[0];
+    if (!oldest) {
+      continue;
+    }
+    const target = getOpenStepTowardOriginForMode(state, oldest.hex);
+    if (target && moveStonePreservingSerial(state, oldest.hex, target)) {
+      messages.push(`Gravity shuffled Player ${owner}'s oldest stone to (${target.q}, ${target.r}).`);
+    }
+  }
+}
+
+function resolveBagelOwnerSwap(state, messages) {
+  if (state.turnCount % 4 !== 0) {
+    return;
+  }
+  const entries = Object.entries(state.cells)
+    .map(([key, cell]) => ({ hex: parseKey(key), cell }))
+    .filter((entry) => entry.cell.kind === "stone")
+    .sort((a, b) => (
+      getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
+      || a.cell.serial - b.cell.serial
+    ));
+
+  for (const entry of entries) {
+    const mirror = getMirrorCellForMode(state, entry.hex);
+    const mirrorCell = getCellAt(state, mirror);
+    if (!mirrorCell || mirrorCell.kind !== "stone" || entry.cell.owner === mirrorCell.owner) {
+      continue;
+    }
+    const originalOwner = entry.cell.owner;
+    entry.cell.owner = mirrorCell.owner;
+    mirrorCell.owner = originalOwner;
+    messages.push(`Tax paperwork swapped ownership between (${entry.hex.q}, ${entry.hex.r}) and (${mirror.q}, ${mirror.r}).`);
+    return;
+  }
+}
+
+function resolveBagelRedTapeEvictions(state, messages) {
+  const zones = getEverythingBagelZones(state);
+  for (const hex of zones.redTape) {
+    const cell = getCellAt(state, hex);
+    if (!cell || cell.kind !== "stone") {
+      continue;
+    }
+    const escape = getAdjacentsForMode(state, hex)
+      .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+      .sort((a, b) => getDistanceForMode(state, a) - getDistanceForMode(state, b))[0];
+    if (escape && moveStonePreservingSerial(state, hex, escape)) {
+      messages.push(`Red tape evicted a stone from (${hex.q}, ${hex.r}) to (${escape.q}, ${escape.r}).`);
+    }
+  }
+}
+
+function resolveEverythingBagel(state, previousPlayer) {
+  if (!hasEverythingBagelMode(state)) {
+    return;
+  }
+  const messages = [];
+  resolveBagelAuditorCopy(state, previousPlayer, messages);
+  resolveBagelGravityComplaint(state, messages);
+  resolveBagelOwnerSwap(state, messages);
+  resolveBagelRedTapeEvictions(state, messages);
+  rebuildPanicZones(state);
+  pushLog(messages.length > 0
+    ? `Everything Bagel: ${messages.join(" ")}`
+    : "Everything Bagel committee met, argued about fonts, and changed nothing.");
+}
+
+function usesArmoryMode(state) {
+  return Boolean(state && hasMode(state, "armory"));
+}
+
+function getArmoryPieceType(cell) {
+  const pieceType = String(cell?.pieceType || "militia");
+  return ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
+}
+
+function getArmoryPieceDef(pieceType) {
+  return ARMORY_PIECE_DEFS[ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia"];
+}
+
+function getArmoryPlacementIndex(state, owner) {
+  return getOwnerStoneEntriesSortedByAge(state, owner).filter((entry) => entry.cell.armoryPiece).length;
+}
+
+function getNextArmoryPieceType(state, owner) {
+  return ARMORY_PIECE_TYPES[getArmoryPlacementIndex(state, owner) % ARMORY_PIECE_TYPES.length];
+}
+
+function moveEnemyAwayFrom(state, sourceHex, enemyHex, owner) {
+  const enemyCell = getCellAt(state, enemyHex);
+  if (!enemyCell || enemyCell.kind !== "stone" || enemyCell.owner === owner) {
+    return null;
+  }
+  const target = {
+    q: enemyHex.q + (enemyHex.q - sourceHex.q),
+    r: enemyHex.r + (enemyHex.r - sourceHex.r)
+  };
+  return moveStonePreservingSerial(state, enemyHex, target) ? target : null;
+}
+
+function applyArmoryPlacementAbility(state, hex, owner, pieceType) {
+  if (!usesArmoryMode(state)) {
+    return [];
+  }
+  const messages = [];
+  if (pieceType === "lancer") {
+    const enemy = getAdjacentsForMode(state, hex).find((candidate) => {
+      const cell = getCellAt(state, candidate);
+      return cell && cell.kind === "stone" && cell.owner !== owner;
+    });
+    const target = enemy ? moveEnemyAwayFrom(state, hex, enemy, owner) : null;
+    if (target) {
+      messages.push(`Lancer pushed a stone to (${target.q}, ${target.r}).`);
+    }
+  } else if (pieceType === "oracle") {
+    ensureClockState(state);
+    if (state.clock.enabled) {
+      state.clock.remaining[owner] += 5;
+      messages.push(`Oracle added 5 seconds for Player ${owner}.`);
+    }
+  } else if (pieceType === "alchemist") {
+    const friendly = getAdjacentsForMode(state, hex).find((candidate) => {
+      const cell = getCellAt(state, candidate);
+      return cell && cell.kind === "stone" && cell.owner === owner && getArmoryPieceType(cell) === "militia";
+    });
+    if (friendly) {
+      const cell = getCellAt(state, friendly);
+      cell.pieceType = "bastion";
+      cell.armoryPiece = true;
+      messages.push(`Alchemist upgraded (${friendly.q}, ${friendly.r}) to Bastion.`);
+    }
+  }
+  return messages;
+}
+
+function resolveArmoryTurnEnd(state) {
+  if (!usesArmoryMode(state)) {
+    return;
+  }
+  const messages = [];
+  const entries = Object.entries(state.cells)
+    .map(([key, cell]) => ({ hex: parseKey(key), cell }))
+    .filter((entry) => entry.cell.kind === "stone" && getArmoryPieceType(entry.cell) === "bastion");
+  for (const entry of entries.slice(0, 4)) {
+    const target = getAdjacentsForMode(state, entry.hex).find((candidate) => isHexOpen(state, candidate));
+    if (target && addEffectStone(state, target, entry.cell.owner, "stone", { pieceType: "militia", armoryPiece: true })) {
+      messages.push(`Bastion reinforced Player ${entry.cell.owner} at (${target.q}, ${target.r}).`);
+    }
+  }
+  if (messages.length > 0) {
+    pushLog(`Armoury: ${messages.join(" ")}`);
+  }
+}
+
 function checkForWinner(state) {
   const winner = auditWholeBoardForWinner(state);
   if (winner && !state.winner) {
@@ -3207,6 +3629,8 @@ function endTurn(state) {
   resolveEchoes(state);
   resolveOrbit(state);
   resolveMeteorAccounting(state);
+  resolveEverythingBagel(state, previousPlayer);
+  resolveArmoryTurnEnd(state);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
@@ -3254,10 +3678,21 @@ function placeTurnTile(state, hex, owner) {
     return null;
   }
 
+  const armoryPieceType = usesArmoryMode(state) ? getNextArmoryPieceType(state, owner) : null;
   placeStone(state, hex, owner, "stone");
+  if (armoryPieceType) {
+    const placedCell = getCellAt(state, state.lastPlacement);
+    placedCell.pieceType = armoryPieceType;
+    placedCell.armoryPiece = true;
+  }
   const capResolution = enforceStoneCapAfterPlacement(state, owner, {
     interactiveEgyptian: hasMode(state, "egyptian") && owner === state.turnPlayer
   });
+
+  const armoryMessages = armoryPieceType
+    ? applyArmoryPlacementAbility(state, state.lastPlacement, owner, armoryPieceType)
+    : [];
+  const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
@@ -3265,15 +3700,22 @@ function placeTurnTile(state, hex, owner) {
     source: state.lastPlacement
   });
 
+  const extraMessages = [
+    armoryPieceType ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
+    ...armoryMessages,
+    ...bagelMessages
+  ].filter(Boolean);
+  const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
+
   if (capResolution.needsChoice) {
     return {
-      log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}). Egyptian: choose ${state.egyptianRemoval?.remaining || 1} stone${(state.egyptianRemoval?.remaining || 1) === 1 ? "" : "s"} to remove (not the stone you just placed).`,
+      log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix} Egyptian: choose ${state.egyptianRemoval?.remaining || 1} stone${(state.egyptianRemoval?.remaining || 1) === 1 ? "" : "s"} to remove (not the stone you just placed).`,
       needsEgyptianChoice: true
     };
   }
 
   return {
-    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`,
+    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix}`,
     needsEgyptianChoice: false
   };
 }
@@ -3425,6 +3867,10 @@ function updateStatus() {
     ui.subturnText.textContent = getBirdActionPrompt(state.currentBirdMoveKind);
   } else {
     ui.subturnText.textContent = `${state.movesLeftInTurn} placement${state.movesLeftInTurn === 1 ? "" : "s"} left this turn`;
+    if (usesArmoryMode(state)) {
+      const pieceType = getNextArmoryPieceType(state, state.turnPlayer);
+      ui.subturnText.textContent += ` | Armoury: ${getArmoryPieceDef(pieceType).name} (${getArmoryPieceDef(pieceType).summary})`;
+    }
   }
 
   updateClockUI();
@@ -4113,6 +4559,64 @@ function drawOriginIndicator() {
   ctx.restore();
 }
 
+function drawDonut3dBackdrop() {
+  if (!usesDonut3dMode(game.state)) {
+    return;
+  }
+  const origin = worldToScreen(0, 0);
+  const size = currentHexSize();
+  ctx.save();
+  ctx.translate(origin.x, origin.y);
+  ctx.rotate(-0.08);
+  for (let i = 0; i < 7; i += 1) {
+    const radius = size * (4.8 + (i * 0.62));
+    ctx.beginPath();
+    ctx.ellipse(0, 0, radius * 1.5, radius * 0.54, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = i % 2 === 0 ? "rgba(109, 198, 255, 0.10)" : "rgba(255, 215, 94, 0.09)";
+    ctx.lineWidth = Math.max(1, size * 0.035);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size * 8.6, size * 3.2, 0, Math.PI * 0.07, Math.PI * 0.93);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+  ctx.lineWidth = Math.max(1.5, size * 0.055);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawEverythingBagelOverlay() {
+  if (!hasEverythingBagelMode(game.state)) {
+    return;
+  }
+  const size = currentHexSize();
+  const zones = getEverythingBagelZones(game.state);
+  const overlayEntries = [
+    ...zones.redTape.map((hex) => ({ hex, fill: "rgba(255, 74, 93, 0.18)", stroke: "rgba(255, 74, 93, 0.72)", label: "RT" })),
+    ...zones.tollBooths.map((hex) => ({ hex, fill: "rgba(118, 227, 168, 0.13)", stroke: "rgba(118, 227, 168, 0.56)", label: "+7" })),
+    ...zones.coupons.map((hex) => ({ hex, fill: "rgba(255, 215, 94, 0.13)", stroke: "rgba(255, 215, 94, 0.62)", label: "CP" }))
+  ];
+  for (const pair of zones.portalPairs) {
+    overlayEntries.push({ hex: pair.a, fill: "rgba(165, 107, 255, 0.13)", stroke: "rgba(165, 107, 255, 0.64)", label: "P" });
+    overlayEntries.push({ hex: pair.b, fill: "rgba(165, 107, 255, 0.13)", stroke: "rgba(165, 107, 255, 0.64)", label: "P" });
+  }
+
+  ctx.save();
+  ctx.font = `${Math.max(8, Math.min(13, size * 0.42))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const entry of overlayEntries) {
+    const world = boardCellToPixel(entry.hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > canvas.clientWidth + size * 2 || screen.y > canvas.clientHeight + size * 2) {
+      continue;
+    }
+    drawBoardShape(screen.x, screen.y, size * 0.95, entry.fill, entry.stroke, 1.8, entry.hex);
+    ctx.fillStyle = "rgba(236, 242, 255, 0.82)";
+    ctx.fillText(entry.label, screen.x, screen.y);
+  }
+  ctx.restore();
+}
+
 function drawEchoTargets() {
   if (!hasMode(game.state, "echo")) {
     return;
@@ -4509,6 +5013,15 @@ function drawPieces() {
     const innerDotRadius = size * (usesTriangleGridMode(game.state) ? 0.18 : 0.28);
     ctx.arc(screen.x, screen.y, innerDotRadius, 0, Math.PI * 2);
     ctx.fill();
+
+    if (usesArmoryMode(game.state) && cell.armoryPiece) {
+      const pieceType = getArmoryPieceType(cell);
+      ctx.fillStyle = "rgba(236, 242, 255, 0.92)";
+      ctx.font = `${Math.max(8, Math.min(13, size * 0.42))}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(getArmoryPieceDef(pieceType).name.slice(0, 1), screen.x, screen.y);
+    }
   }
 
   if (hasEgyptianRemovalPhase(game.state) && !game.state.winner) {
@@ -4857,7 +5370,9 @@ function renderNow() {
   const h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
 
+  drawDonut3dBackdrop();
   drawGrid();
+  drawEverythingBagelOverlay();
   drawOriginIndicator();
   drawEchoTargets();
   drawHoverEchoPreview();
@@ -4921,6 +5436,10 @@ function fillModePicker() {
     button.dataset.mode = key;
     button.textContent = mode.name;
     button.setAttribute("aria-pressed", "false");
+    if (mode.secret) {
+      button.classList.add("secretModeToggle");
+      button.hidden = true;
+    }
     button.addEventListener("click", () => {
       if (!canUseAdminControls()) {
         return;
@@ -4944,6 +5463,7 @@ function fillModePicker() {
     });
     ui.modePicker.appendChild(button);
   }
+  refreshSecretModeVisibility();
 }
 
 canvas.addEventListener("mousemove", (event) => {
@@ -5248,6 +5768,9 @@ ui.egyptianCapInput?.addEventListener("input", refreshEgyptianCapSummaryFromInpu
 ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
+});
+ui.secretModesBtn?.addEventListener("click", () => {
+  setSecretModesUnlocked(!game.secretModesUnlocked);
 });
 
 ui.onlineCreateBtn.addEventListener("click", () => {

@@ -425,6 +425,16 @@ select:focus-visible,
   color: var(--text);
 }
 
+.secretModeToggle {
+  background: linear-gradient(180deg, rgba(255, 215, 94, 0.13), rgba(165, 107, 255, 0.08));
+  border-color: rgba(255, 215, 94, 0.22);
+}
+
+.secretModeToggle.active {
+  background: linear-gradient(180deg, rgba(255, 215, 94, 0.22), rgba(165, 107, 255, 0.12));
+  border-color: rgba(255, 215, 94, 0.38);
+}
+
 .turnBig {
   font-size: 1.45rem;
   font-weight: 700;
