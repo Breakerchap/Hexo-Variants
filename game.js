@@ -21,6 +21,19 @@ const ui = {
   egyptianCapControls: document.getElementById("egyptianCapControls"),
   egyptianCapInput: document.getElementById("egyptianCapInput"),
   egyptianCapSummaryText: document.getElementById("egyptianCapSummaryText"),
+  armoryControls: document.getElementById("armoryControls"),
+  armoryClassP1Select: document.getElementById("armoryClassP1Select"),
+  armoryClassP2Select: document.getElementById("armoryClassP2Select"),
+  armoryClassP3Select: document.getElementById("armoryClassP3Select"),
+  armoryClassP4Select: document.getElementById("armoryClassP4Select"),
+  armoryClassP3Wrap: document.getElementById("armoryClassP3Wrap"),
+  armoryClassP4Wrap: document.getElementById("armoryClassP4Wrap"),
+  armorySummaryText: document.getElementById("armorySummaryText"),
+  armoryCurrencyText: document.getElementById("armoryCurrencyText"),
+  armoryActiveClassText: document.getElementById("armoryActiveClassText"),
+  armoryPieceSelect: document.getElementById("armoryPieceSelect"),
+  armoryShopOffers: document.getElementById("armoryShopOffers"),
+  armoryRerollBtn: document.getElementById("armoryRerollBtn"),
   log: document.getElementById("log"),
   overlayTitle: document.getElementById("overlayTitle"),
   overlayHint: document.getElementById("overlayHint"),
@@ -87,27 +100,98 @@ const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
-const ARMORY_PIECE_TYPES = ["militia", "lancer", "bastion", "oracle", "alchemist"];
+const ARMORY_DEFAULT_CLASS = "vanguard";
+const ARMORY_REROLL_GOLD_COST = 2;
+const ARMORY_SHOP_SLOTS = 4;
+const ARMORY_MAX_END_TURN_SPAWNS = 4;
+const ARMORY_CLASS_DEFS = {
+  vanguard: {
+    name: "Vanguard",
+    startGold: 8,
+    startArcana: 1,
+    incomeGold: 3,
+    incomeArcana: 1,
+    preferredPiece: "bastion",
+    summary: "Defensive economy: better bastions and sturdier frontline growth."
+  },
+  arcanist: {
+    name: "Arcanist",
+    startGold: 6,
+    startArcana: 3,
+    incomeGold: 2,
+    incomeArcana: 2,
+    preferredPiece: "sage",
+    summary: "Spell economy: stronger arcana flow and upgraded summons."
+  },
+  saboteur: {
+    name: "Saboteur",
+    startGold: 7,
+    startArcana: 2,
+    incomeGold: 2,
+    incomeArcana: 1,
+    preferredPiece: "assassin",
+    summary: "Aggressive economy: earns extra gold from enemy losses."
+  }
+};
+const ARMORY_PIECE_ORDER = [
+  "militia",
+  "lancer",
+  "sage",
+  "bastion",
+  "assassin",
+  "oracle",
+  "alchemist"
+];
+const ARMORY_SHOP_POOL = ARMORY_PIECE_ORDER.filter((pieceType) => pieceType !== "militia");
 const ARMORY_PIECE_DEFS = {
   militia: {
     name: "Militia",
-    summary: "standard stone"
+    symbol: "\u25CB",
+    goldCost: 0,
+    arcanaCost: 0,
+    description: "Baseline unit with infinite stock."
   },
   lancer: {
     name: "Lancer",
-    summary: "pushes the nearest adjacent enemy away"
+    symbol: "\u2694",
+    goldCost: 3,
+    arcanaCost: 0,
+    description: "On placement, pierces and removes one adjacent enemy stone."
+  },
+  sage: {
+    name: "Sage",
+    symbol: "S",
+    goldCost: 2,
+    arcanaCost: 2,
+    description: "At turn end, helps spawn nearby reinforcements."
   },
   bastion: {
     name: "Bastion",
-    summary: "adds a defensive ring at turn end"
+    symbol: "B",
+    goldCost: 5,
+    arcanaCost: 1,
+    description: "Projects shields and grants defensive economy bonuses."
+  },
+  assassin: {
+    name: "Assassin",
+    symbol: "A",
+    goldCost: 4,
+    arcanaCost: 2,
+    description: "On placement, steals control of one adjacent enemy stone."
   },
   oracle: {
     name: "Oracle",
-    summary: "adds a small clock bonus"
+    symbol: "O",
+    goldCost: 3,
+    arcanaCost: 3,
+    description: "Generates arcana each cycle and sharpens your shop flow."
   },
   alchemist: {
     name: "Alchemist",
-    summary: "upgrades an adjacent friendly militia"
+    symbol: "X",
+    goldCost: 4,
+    arcanaCost: 3,
+    description: "Upgrades nearby militia into advanced pieces."
   }
 };
 const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
@@ -337,12 +421,6 @@ const MODES = {
     summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
     hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
   },
-  donut3d: {
-    name: "3D Donut",
-    summary: "A secret radial board with a fake 3D torus glow. Connect 6 around the donut rings or through the spokes.",
-    hint: "Board becomes a donut-shaped radial grid. The rules use rings and spokes, with a 3D torus preview behind the board.",
-    secret: true
-  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -375,8 +453,8 @@ const MODES = {
   },
   armory: {
     name: "Armoury",
-    summary: "Secret tactical pieces cycle through your placements: lancers push, bastions reinforce, oracles buy clock time, and alchemists upgrade militia.",
-    hint: "Armoury mode: each placement deploys the next piece in your rotation. Watch the status line for the active piece and its effect.",
+    summary: "Adds classes, currencies, rotating shops, inventory-based piece selection, and piece-specific tactical abilities.",
+    hint: "Buy units with gold/arcana, switch active pieces, and combine class passives with board tactics.",
     secret: true
   },
   everythingBagel: {
@@ -427,7 +505,7 @@ const triangleLineKinds = [
 
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
-const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid", "donut3d"];
+const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
 const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
 
 function keyOf(q, r) {
@@ -1310,6 +1388,13 @@ function refreshEgyptianCapControls(modeKeys) {
   ui.egyptianCapControls.hidden = !modeUsesEgyptianCap(modeKeys);
 }
 
+function refreshArmoryControls(modeKeys) {
+  if (!ui.armoryControls) {
+    return;
+  }
+  ui.armoryControls.hidden = !normaliseModeKeys(modeKeys).includes("armory");
+}
+
 function refreshSecretModeVisibility() {
   const selected = new Set(getSelectedModeKeys());
   for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
@@ -1415,9 +1500,6 @@ function getGridMode(state) {
   if (!state || !Array.isArray(state.modeKeys)) {
     return "hex";
   }
-  if (state.modeKeys.includes("donut3d")) {
-    return "donut";
-  }
   if (state.modeKeys.includes("radialGrid")) {
     return "radial";
   }
@@ -1446,12 +1528,7 @@ function usesSquareGridMode(state) {
 }
 
 function usesRadialGridMode(state) {
-  const gridMode = getGridMode(state);
-  return gridMode === "radial" || gridMode === "donut";
-}
-
-function usesDonut3dMode(state) {
-  return getGridMode(state) === "donut";
+  return getGridMode(state) === "radial";
 }
 
 function getBoardSpaceLabel(state) {
@@ -1459,7 +1536,7 @@ function getBoardSpaceLabel(state) {
     return "triangle";
   }
   if (usesRadialGridMode(state)) {
-    return usesDonut3dMode(state) ? "donut cell" : "radial cell";
+    return "radial cell";
   }
   if (usesOctagonGridMode(state)) {
     return "tile";
@@ -1475,7 +1552,7 @@ function getBoardCoordinateLabel(state) {
     return "Triangle";
   }
   if (usesRadialGridMode(state)) {
-    return usesDonut3dMode(state) ? "Donut" : "Radial";
+    return "Radial";
   }
   if (usesOctagonGridMode(state)) {
     return "Octagon";
@@ -1577,7 +1654,7 @@ function setSelectedModeKeys(modeKeys) {
 function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap) {
   const activeModeKeys = normaliseModeKeys(modeKeys);
   const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
-  return {
+  const state = {
     modeKeys: activeModeKeys,
     playerCount,
     egyptianStoneCap: normaliseEgyptianStoneCap(egyptianStoneCap),
@@ -1612,8 +1689,13 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     moveSerial: 0,
     log: ["Game started."],
     accountingEvents: [],
-    clock: createClockState(timerConfig, playerCount)
+    clock: createClockState(timerConfig, playerCount),
+    armory: null
   };
+  if (usesArmoryMode(state)) {
+    state.armory = createArmoryStateForGame(state);
+  }
+  return state;
 }
 
 function setModeUI(modeKeys) {
@@ -1624,6 +1706,7 @@ function setModeUI(modeKeys) {
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
   refreshEgyptianCapControls(modeKeys);
+  refreshArmoryControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
@@ -1973,6 +2056,15 @@ function updateOnlineControls() {
   }
   if (ui.egyptianCapInput) {
     ui.egyptianCapInput.disabled = inRoom && !admin;
+  }
+  for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
+    const select = getArmoryClassSelectForPlayer(player);
+    if (select) {
+      select.disabled = (inRoom && !admin) || Boolean(game.state?.openingMoveDone);
+    }
+  }
+  if (ui.armoryRerollBtn) {
+    ui.armoryRerollBtn.disabled = inRoom && !canActForCurrentTurn();
   }
   for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
     button.disabled = inRoom && !admin;
@@ -2870,13 +2962,15 @@ function canSelectEgyptianRemovalHex(state, hex) {
   return true;
 }
 
-function placeStone(state, hex, owner, kind = "stone") {
+function placeStone(state, hex, owner, kind = "stone", extras = {}) {
   const safeOwner = normalisePlayerNumber(owner, state);
+  const extraFields = typeof extras === "string" ? { pieceType: extras } : { ...(extras || {}) };
   state.moveSerial += 1;
   state.cells[keyOf(hex.q, hex.r)] = {
     owner: safeOwner,
     kind,
-    serial: state.moveSerial
+    serial: state.moveSerial,
+    ...extraFields
   };
   state.lastPlacement = { ...hex };
   if (!state.lastPlacedByPlayer || typeof state.lastPlacedByPlayer !== "object") {
@@ -3259,9 +3353,12 @@ function resolveEchoes(state) {
       pushLog(`Echo at (${target.q}, ${target.r}) could not appear.`);
       continue;
     }
-    placeStone(state, target, echo.owner, "stone");
+    const echoPieceType = echo.pieceType || "militia";
+    placeStone(state, target, echo.owner, "stone", usesArmoryMode(state) ? { pieceType: echoPieceType } : {});
     const capResolution = enforceStoneCapAfterPlacement(state, echo.owner, { interactiveEgyptian: false });
-    pushLog(`Echo placed Player ${echo.owner} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`);
+    pushLog(usesArmoryMode(state)
+      ? `Echo deployed ${getArmoryPieceDef(echoPieceType).name} for Player ${echo.owner} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`
+      : `Echo placed Player ${echo.owner} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).`);
     if (capResolution.overflow > 0) {
       pushLog(`Egyptian cap exceeded for Player ${echo.owner}; no stone was removed automatically.`);
     }
@@ -3524,87 +3621,724 @@ function usesArmoryMode(state) {
   return Boolean(state && hasMode(state, "armory"));
 }
 
+function getArmoryClassSelectForPlayer(player) {
+  return ui[`armoryClassP${player}Select`] || null;
+}
+
+function getArmoryClassWrapForPlayer(player) {
+  return ui[`armoryClassP${player}Wrap`] || null;
+}
+
+function normaliseArmoryClassKey(value) {
+  const key = String(value || "").trim();
+  return ARMORY_CLASS_DEFS[key] ? key : ARMORY_DEFAULT_CLASS;
+}
+
+function getArmoryClassSelectionsFromInputs(playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  const selections = {};
+  for (const player of getPlayerNumbers(playerCount)) {
+    const select = getArmoryClassSelectForPlayer(player);
+    const selected = normaliseArmoryClassKey(select?.value);
+    selections[player] = selected;
+    if (select) {
+      select.value = selected;
+    }
+  }
+  return selections;
+}
+
+function createArmoryRng(seed) {
+  let t = (Math.trunc(Number(seed) || 0) >>> 0);
+  return () => {
+    t += 0x6D2B79F5;
+    let v = Math.imul(t ^ (t >>> 15), 1 | t);
+    v ^= v + Math.imul(v ^ (v >>> 7), 61 | v);
+    return ((v ^ (v >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function getArmoryPieceType(cell) {
   const pieceType = String(cell?.pieceType || "militia");
   return ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
 }
 
 function getArmoryPieceDef(pieceType) {
-  return ARMORY_PIECE_DEFS[ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia"];
+  const safeType = ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
+  return ARMORY_PIECE_DEFS[safeType];
 }
 
-function getArmoryPlacementIndex(state, owner) {
-  return getOwnerStoneEntriesSortedByAge(state, owner).filter((entry) => entry.cell.armoryPiece).length;
+function createArmoryInventory() {
+  const inventory = {};
+  for (const pieceType of ARMORY_PIECE_ORDER) {
+    inventory[pieceType] = pieceType === "militia" ? 9999 : 0;
+  }
+  return inventory;
 }
 
-function getNextArmoryPieceType(state, owner) {
-  return ARMORY_PIECE_TYPES[getArmoryPlacementIndex(state, owner) % ARMORY_PIECE_TYPES.length];
+function getArmoryShopSeed(state, armory, owner) {
+  const wallet = armory?.currencies?.[owner] || { gold: 0, arcana: 0 };
+  return (
+    ((state.turnCount + 1) * 131)
+    + ((state.round + 1) * 47)
+    + ((state.moveSerial + 11) * 13)
+    + ((armory?.rerolls?.[owner] || 0) * 97)
+    + ((wallet.gold || 0) * 7)
+    + ((wallet.arcana || 0) * 11)
+    + (owner * 53)
+  );
 }
 
-function moveEnemyAwayFrom(state, sourceHex, enemyHex, owner) {
-  const enemyCell = getCellAt(state, enemyHex);
-  if (!enemyCell || enemyCell.kind !== "stone" || enemyCell.owner === owner) {
+function getArmoryOfferWeights(state, armory, owner) {
+  const classKey = normaliseArmoryClassKey(armory?.classes?.[owner]);
+  const weights = Object.fromEntries(ARMORY_SHOP_POOL.map((pieceType) => [pieceType, 1]));
+  const classDef = ARMORY_CLASS_DEFS[classKey];
+  weights[classDef.preferredPiece] = (weights[classDef.preferredPiece] || 1) + 2.5;
+
+  if (classKey === "arcanist") {
+    weights.oracle += 1;
+    weights.sage += 0.8;
+  } else if (classKey === "vanguard") {
+    weights.bastion += 1.2;
+    weights.lancer += 0.6;
+  } else if (classKey === "saboteur") {
+    weights.assassin += 1.6;
+    weights.lancer += 0.8;
+  }
+
+  for (const cell of Object.values(state.cells)) {
+    if (!cell || cell.kind !== "stone" || cell.owner !== owner) {
+      continue;
+    }
+    const pieceType = getArmoryPieceType(cell);
+    if (weights[pieceType] != null) {
+      weights[pieceType] += 0.14;
+    }
+  }
+
+  const wallet = armory?.currencies?.[owner] || { gold: 0, arcana: 0 };
+  if ((wallet.arcana || 0) >= 4) {
+    weights.oracle += 0.8;
+    weights.alchemist += 0.6;
+  }
+  if ((wallet.gold || 0) >= 8) {
+    weights.bastion += 0.5;
+    weights.assassin += 0.35;
+  }
+  return weights;
+}
+
+function drawArmoryWeightedOffer(weights, available, rng) {
+  if (!available.length) {
     return null;
   }
-  const target = {
-    q: enemyHex.q + (enemyHex.q - sourceHex.q),
-    r: enemyHex.r + (enemyHex.r - sourceHex.r)
+  let total = 0;
+  for (const pieceType of available) {
+    total += Math.max(0.05, Number(weights[pieceType]) || 0);
+  }
+  let pick = rng() * total;
+  for (const pieceType of available) {
+    pick -= Math.max(0.05, Number(weights[pieceType]) || 0);
+    if (pick <= 0) {
+      return pieceType;
+    }
+  }
+  return available[available.length - 1];
+}
+
+function generateArmoryShopOffers(state, armory, owner) {
+  const available = ARMORY_SHOP_POOL.slice();
+  const weights = getArmoryOfferWeights(state, armory, owner);
+  const rng = createArmoryRng(getArmoryShopSeed(state, armory, owner));
+  const offers = [];
+  const slots = Math.max(1, ARMORY_SHOP_SLOTS);
+  while (offers.length < slots && available.length > 0) {
+    const next = drawArmoryWeightedOffer(weights, available, rng);
+    if (!next) {
+      break;
+    }
+    offers.push(next);
+    const index = available.indexOf(next);
+    if (index >= 0) {
+      available.splice(index, 1);
+    }
+  }
+
+  while (offers.length < slots && ARMORY_SHOP_POOL.length > 0) {
+    const fallback = ARMORY_SHOP_POOL[Math.floor(rng() * ARMORY_SHOP_POOL.length)];
+    if (!offers.includes(fallback)) {
+      offers.push(fallback);
+    } else {
+      const missing = ARMORY_SHOP_POOL.find((pieceType) => !offers.includes(pieceType));
+      if (missing) {
+        offers.push(missing);
+      } else {
+        break;
+      }
+    }
+  }
+  return offers;
+}
+
+function createArmoryStateForGame(state, classes = null) {
+  const players = getPlayerNumbers(state);
+  const selectedClasses = classes || getArmoryClassSelectionsFromInputs(getPlayerCount(state));
+  const armory = {
+    classes: {},
+    currencies: {},
+    inventory: {},
+    selectedPiece: {},
+    rerolls: {},
+    shopOffers: {},
+    removedEnemyByOwner: {},
+    lastReport: null
   };
-  return moveStonePreservingSerial(state, enemyHex, target) ? target : null;
+
+  const starterPiece = {
+    vanguard: "bastion",
+    arcanist: "sage",
+    saboteur: "assassin"
+  };
+
+  for (const owner of players) {
+    const classKey = normaliseArmoryClassKey(selectedClasses[owner]);
+    const classDef = ARMORY_CLASS_DEFS[classKey];
+    armory.classes[owner] = classKey;
+    armory.currencies[owner] = {
+      gold: classDef.startGold,
+      arcana: classDef.startArcana
+    };
+    armory.inventory[owner] = createArmoryInventory();
+    armory.selectedPiece[owner] = "militia";
+    armory.rerolls[owner] = 0;
+    armory.shopOffers[owner] = [];
+    armory.removedEnemyByOwner[owner] = 0;
+    const starter = starterPiece[classKey];
+    if (starter && armory.inventory[owner][starter] != null) {
+      armory.inventory[owner][starter] += 1;
+    }
+  }
+
+  for (const owner of players) {
+    armory.shopOffers[owner] = generateArmoryShopOffers(state, armory, owner);
+  }
+  return armory;
+}
+
+function ensureArmoryState(state) {
+  if (!usesArmoryMode(state)) {
+    if (state) {
+      state.armory = null;
+    }
+    return null;
+  }
+
+  if (!state.armory || typeof state.armory !== "object") {
+    state.armory = createArmoryStateForGame(state);
+  }
+
+  const armory = state.armory;
+  const players = getPlayerNumbers(state);
+  if (!armory.classes || typeof armory.classes !== "object") armory.classes = {};
+  if (!armory.currencies || typeof armory.currencies !== "object") armory.currencies = {};
+  if (!armory.inventory || typeof armory.inventory !== "object") armory.inventory = {};
+  if (!armory.selectedPiece || typeof armory.selectedPiece !== "object") armory.selectedPiece = {};
+  if (!armory.rerolls || typeof armory.rerolls !== "object") armory.rerolls = {};
+  if (!armory.shopOffers || typeof armory.shopOffers !== "object") armory.shopOffers = {};
+  if (!armory.removedEnemyByOwner || typeof armory.removedEnemyByOwner !== "object") armory.removedEnemyByOwner = {};
+
+  for (const owner of players) {
+    armory.classes[owner] = normaliseArmoryClassKey(armory.classes[owner]);
+    const classDef = ARMORY_CLASS_DEFS[armory.classes[owner]];
+
+    if (!armory.currencies[owner]) {
+      armory.currencies[owner] = { gold: classDef.startGold, arcana: classDef.startArcana };
+    }
+    armory.currencies[owner].gold = Math.max(0, Math.round(Number(armory.currencies[owner].gold) || 0));
+    armory.currencies[owner].arcana = Math.max(0, Math.round(Number(armory.currencies[owner].arcana) || 0));
+
+    if (!armory.inventory[owner] || typeof armory.inventory[owner] !== "object") {
+      armory.inventory[owner] = createArmoryInventory();
+    }
+    for (const pieceType of ARMORY_PIECE_ORDER) {
+      if (!Number.isFinite(Number(armory.inventory[owner][pieceType]))) {
+        armory.inventory[owner][pieceType] = pieceType === "militia" ? 9999 : 0;
+      }
+      armory.inventory[owner][pieceType] = pieceType === "militia"
+        ? 9999
+        : Math.max(0, Math.round(Number(armory.inventory[owner][pieceType]) || 0));
+    }
+
+    const selected = String(armory.selectedPiece[owner] || "militia");
+    const safeSelected = ARMORY_PIECE_DEFS[selected] ? selected : "militia";
+    armory.selectedPiece[owner] = (
+      safeSelected !== "militia"
+      && armory.inventory[owner][safeSelected] <= 0
+    ) ? "militia" : safeSelected;
+
+    armory.rerolls[owner] = Math.max(0, Math.round(Number(armory.rerolls[owner]) || 0));
+    armory.removedEnemyByOwner[owner] = Math.max(0, Math.round(Number(armory.removedEnemyByOwner[owner]) || 0));
+
+    if (!Array.isArray(armory.shopOffers[owner]) || armory.shopOffers[owner].length === 0) {
+      armory.shopOffers[owner] = generateArmoryShopOffers(state, armory, owner);
+    } else {
+      armory.shopOffers[owner] = armory.shopOffers[owner]
+        .map((pieceType) => String(pieceType))
+        .filter((pieceType) => ARMORY_SHOP_POOL.includes(pieceType))
+        .slice(0, ARMORY_SHOP_SLOTS);
+      while (armory.shopOffers[owner].length < ARMORY_SHOP_SLOTS) {
+        const missing = ARMORY_SHOP_POOL.find((pieceType) => !armory.shopOffers[owner].includes(pieceType));
+        if (!missing) {
+          break;
+        }
+        armory.shopOffers[owner].push(missing);
+      }
+    }
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(armory, "lastReport")) {
+    armory.lastReport = null;
+  }
+  return armory;
+}
+
+function getArmoryPieceCost(state, owner, pieceType) {
+  const safePiece = ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
+  const pieceDef = ARMORY_PIECE_DEFS[safePiece];
+  let gold = pieceDef.goldCost;
+  let arcana = pieceDef.arcanaCost;
+
+  if (!usesArmoryMode(state)) {
+    return { gold, arcana };
+  }
+
+  const armory = ensureArmoryState(state);
+  const classKey = normaliseArmoryClassKey(armory?.classes?.[owner]);
+  if (classKey === "vanguard" && safePiece === "bastion") {
+    gold -= 1;
+  } else if (classKey === "arcanist" && (safePiece === "sage" || safePiece === "oracle")) {
+    arcana -= 1;
+  } else if (classKey === "saboteur" && safePiece === "assassin") {
+    gold -= 1;
+  }
+
+  if ((armory?.rerolls?.[owner] || 0) >= 4 && (safePiece === "oracle" || safePiece === "alchemist")) {
+    gold += 1;
+  }
+
+  return {
+    gold: Math.max(0, gold),
+    arcana: Math.max(0, arcana)
+  };
+}
+
+function canAffordArmoryPiece(state, owner, pieceType) {
+  if (!usesArmoryMode(state)) {
+    return false;
+  }
+  const armory = ensureArmoryState(state);
+  const wallet = armory.currencies[owner] || { gold: 0, arcana: 0 };
+  const cost = getArmoryPieceCost(state, owner, pieceType);
+  return wallet.gold >= cost.gold && wallet.arcana >= cost.arcana;
+}
+
+function spendArmoryCurrency(state, owner, cost) {
+  const armory = ensureArmoryState(state);
+  const wallet = armory.currencies[owner];
+  wallet.gold = Math.max(0, wallet.gold - Math.max(0, Math.round(Number(cost?.gold) || 0)));
+  wallet.arcana = Math.max(0, wallet.arcana - Math.max(0, Math.round(Number(cost?.arcana) || 0)));
+}
+
+function gainArmoryCurrency(state, owner, gain) {
+  const armory = ensureArmoryState(state);
+  const wallet = armory.currencies[owner];
+  wallet.gold += Math.max(0, Math.round(Number(gain?.gold) || 0));
+  wallet.arcana += Math.max(0, Math.round(Number(gain?.arcana) || 0));
+}
+
+function refreshArmoryShopForOwner(state, owner) {
+  if (!usesArmoryMode(state)) {
+    return;
+  }
+  const armory = ensureArmoryState(state);
+  armory.shopOffers[owner] = generateArmoryShopOffers(state, armory, owner);
+}
+
+function getAdjacentEnemyStoneEntries(state, hex, owner) {
+  return getAdjacentsForMode(state, hex)
+    .map((target) => ({ target, cell: getCellAt(state, target) }))
+    .filter((entry) => entry.cell && entry.cell.kind === "stone" && entry.cell.owner !== owner)
+    .sort((a, b) => (
+      (a.cell.serial - b.cell.serial)
+      || (a.target.q - b.target.q)
+      || (a.target.r - b.target.r)
+    ));
+}
+
+function recordArmoryEnemyLoss(state, owner, count = 1) {
+  if (!usesArmoryMode(state)) {
+    return;
+  }
+  const armory = ensureArmoryState(state);
+  armory.removedEnemyByOwner[owner] = (armory.removedEnemyByOwner[owner] || 0)
+    + Math.max(0, Math.round(Number(count) || 0));
+}
+
+function resolveArmorySelectedPieceForPlacement(state, owner) {
+  if (!usesArmoryMode(state)) {
+    return "militia";
+  }
+  const armory = ensureArmoryState(state);
+  const selected = ARMORY_PIECE_DEFS[armory.selectedPiece[owner]] ? armory.selectedPiece[owner] : "militia";
+  if (selected === "militia") {
+    return "militia";
+  }
+  if ((armory.inventory[owner][selected] || 0) <= 0) {
+    armory.selectedPiece[owner] = "militia";
+    return "militia";
+  }
+  armory.inventory[owner][selected] -= 1;
+  if (armory.inventory[owner][selected] <= 0) {
+    armory.selectedPiece[owner] = "militia";
+  }
+  return selected;
+}
+
+function getArmoryUpgradePieceType(state, owner, sourceHex, turnTag = 0) {
+  const options = ARMORY_SHOP_POOL.slice();
+  const armory = ensureArmoryState(state);
+  const classKey = normaliseArmoryClassKey(armory.classes[owner]);
+  if (classKey === "vanguard") {
+    options.push("bastion");
+  } else if (classKey === "arcanist") {
+    options.push("sage", "oracle");
+  } else if (classKey === "saboteur") {
+    options.push("assassin");
+  }
+  const seed = (
+    ((sourceHex.q + 37) * 97)
+    + ((sourceHex.r + 29) * 53)
+    + ((state.turnCount + 1) * 41)
+    + ((state.moveSerial + 1) * 17)
+    + (owner * 101)
+    + turnTag
+  );
+  const rng = createArmoryRng(seed);
+  return options[Math.floor(rng() * options.length)];
 }
 
 function applyArmoryPlacementAbility(state, hex, owner, pieceType) {
   if (!usesArmoryMode(state)) {
-    return [];
+    return null;
   }
-  const messages = [];
+
+  const armory = ensureArmoryState(state);
+  const results = [];
+  if (pieceType === "militia" || !ARMORY_PIECE_DEFS[pieceType]) {
+    return null;
+  }
+
   if (pieceType === "lancer") {
-    const enemy = getAdjacentsForMode(state, hex).find((candidate) => {
-      const cell = getCellAt(state, candidate);
-      return cell && cell.kind === "stone" && cell.owner !== owner;
-    });
-    const target = enemy ? moveEnemyAwayFrom(state, hex, enemy, owner) : null;
-    if (target) {
-      messages.push(`Lancer pushed a stone to (${target.q}, ${target.r}).`);
+    const targets = getAdjacentEnemyStoneEntries(state, hex, owner);
+    if (targets.length > 0) {
+      const target = targets[0].target;
+      removeStone(state, target);
+      recordArmoryEnemyLoss(state, owner, 1);
+      results.push(`Lancer pierced (${target.q}, ${target.r}).`);
+    }
+  } else if (pieceType === "assassin") {
+    const targets = getAdjacentEnemyStoneEntries(state, hex, owner);
+    if (targets.length > 0) {
+      const target = targets[targets.length - 1].target;
+      const targetCell = getCellAt(state, target);
+      if (targetCell && targetCell.kind === "stone") {
+        targetCell.owner = owner;
+        recordArmoryEnemyLoss(state, owner, 1);
+        results.push(`Assassin captured (${target.q}, ${target.r}).`);
+      }
     }
   } else if (pieceType === "oracle") {
-    ensureClockState(state);
-    if (state.clock.enabled) {
-      state.clock.remaining[owner] += 5;
-      messages.push(`Oracle added 5 seconds for Player ${owner}.`);
-    }
+    const bonusArcana = normaliseArmoryClassKey(armory.classes[owner]) === "arcanist" ? 2 : 1;
+    gainArmoryCurrency(state, owner, { arcana: bonusArcana });
+    results.push(`Oracle generated +${bonusArcana} arcana.`);
   } else if (pieceType === "alchemist") {
-    const friendly = getAdjacentsForMode(state, hex).find((candidate) => {
-      const cell = getCellAt(state, candidate);
-      return cell && cell.kind === "stone" && cell.owner === owner && getArmoryPieceType(cell) === "militia";
-    });
-    if (friendly) {
-      const cell = getCellAt(state, friendly);
-      cell.pieceType = "bastion";
-      cell.armoryPiece = true;
-      messages.push(`Alchemist upgraded (${friendly.q}, ${friendly.r}) to Bastion.`);
+    const friends = getAdjacentsForMode(state, hex)
+      .map((target) => ({ target, cell: getCellAt(state, target) }))
+      .filter((entry) => entry.cell && entry.cell.kind === "stone" && entry.cell.owner === owner && getArmoryPieceType(entry.cell) === "militia")
+      .sort((a, b) => (
+        (a.cell.serial - b.cell.serial)
+        || (a.target.q - b.target.q)
+        || (a.target.r - b.target.r)
+      ));
+    if (friends.length > 0) {
+      const target = friends[0];
+      target.cell.pieceType = getArmoryUpgradePieceType(state, owner, target.target, 7);
+      results.push(`Alchemist upgraded (${target.target.q}, ${target.target.r}) to ${getArmoryPieceDef(target.cell.pieceType).name}.`);
+    } else {
+      gainArmoryCurrency(state, owner, { arcana: 1 });
+      results.push("Alchemist distilled +1 arcana.");
+    }
+  } else if (pieceType === "bastion") {
+    gainArmoryCurrency(state, owner, { gold: 1 });
+    results.push("Bastion secured +1 gold.");
+  } else if (pieceType === "sage") {
+    gainArmoryCurrency(state, owner, { arcana: 1 });
+    results.push("Sage focused +1 arcana.");
+  }
+
+  return results.length > 0 ? results.join(" ") : null;
+}
+
+function spawnArmoryStoneWithoutTracking(state, hex, owner, pieceType = "militia") {
+  const safePieceType = ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
+  addEffectStone(state, hex, owner, "stone", { pieceType: safePieceType });
+}
+
+function buildArmoryShieldCharges(state) {
+  const charges = new Map();
+  if (!usesArmoryMode(state)) {
+    return charges;
+  }
+  const armory = ensureArmoryState(state);
+  for (const [key, cell] of Object.entries(state.cells)) {
+    if (!cell || cell.kind !== "stone" || getArmoryPieceType(cell) !== "bastion") {
+      continue;
+    }
+    const fromHex = parseKey(key);
+    const owner = normalisePlayerNumber(cell.owner, state);
+    const classKey = normaliseArmoryClassKey(armory.classes[owner]);
+    const shieldStrength = classKey === "vanguard" ? 2 : 1;
+    const targets = [fromHex, ...getAdjacentsForMode(state, fromHex)];
+    for (const target of targets) {
+      const targetCell = getCellAt(state, target);
+      if (!targetCell || targetCell.kind !== "stone" || targetCell.owner !== owner) {
+        continue;
+      }
+      const targetKey = keyOf(target.q, target.r);
+      charges.set(targetKey, (charges.get(targetKey) || 0) + shieldStrength);
     }
   }
-  return messages;
+  return charges;
+}
+
+function tryConsumeArmoryShield(charges, hex) {
+  const key = keyOf(hex.q, hex.r);
+  const amount = charges.get(key) || 0;
+  if (amount <= 0) {
+    return false;
+  }
+  charges.set(key, amount - 1);
+  return true;
+}
+
+function countArmoryPiecesForOwner(state, owner, pieceType) {
+  let count = 0;
+  for (const cell of Object.values(state.cells)) {
+    if (!cell || cell.kind !== "stone" || cell.owner !== owner) {
+      continue;
+    }
+    if (getArmoryPieceType(cell) === pieceType) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function getArmorySpawnTypeFromSage(state, owner, sourceHex, turnTag = 0) {
+  const armory = ensureArmoryState(state);
+  const classKey = normaliseArmoryClassKey(armory.classes[owner]);
+  if (classKey !== "arcanist") {
+    return "militia";
+  }
+  const seed = Math.abs(
+    (sourceHex.q * 43)
+    + (sourceHex.r * 71)
+    + ((state.turnCount + 1) * 29)
+    + ((state.moveSerial + 1) * 17)
+    + (owner * 101)
+    + turnTag
+  );
+  return (seed % 4 === 0) ? "lancer" : "militia";
 }
 
 function resolveArmoryTurnEnd(state) {
   if (!usesArmoryMode(state)) {
-    return;
+    return null;
   }
-  const messages = [];
+
+  const armory = ensureArmoryState(state);
+  const players = getPlayerNumbers(state);
+  for (const owner of players) {
+    armory.removedEnemyByOwner[owner] = 0;
+  }
+  const shieldCharges = buildArmoryShieldCharges(state);
+  const summary = {
+    removed: 0,
+    blockedByShield: 0,
+    flips: 0,
+    spawns: 0,
+    upgrades: 0,
+    income: createPlayerMap(getPlayerCount(state), () => ({ gold: 0, arcana: 0 })),
+    capOverflow: 0
+  };
+
   const entries = Object.entries(state.cells)
-    .map(([key, cell]) => ({ hex: parseKey(key), cell }))
-    .filter((entry) => entry.cell.kind === "stone" && getArmoryPieceType(entry.cell) === "bastion");
-  for (const entry of entries.slice(0, 4)) {
-    const target = getAdjacentsForMode(state, entry.hex).find((candidate) => isHexOpen(state, candidate));
-    if (target && addEffectStone(state, target, entry.cell.owner, "stone", { pieceType: "militia", armoryPiece: true })) {
-      messages.push(`Bastion reinforced Player ${entry.cell.owner} at (${target.q}, ${target.r}).`);
+    .map(([key, cell]) => ({ key, cell, hex: parseKey(key) }))
+    .filter((entry) => entry.cell && entry.cell.kind === "stone")
+    .sort((a, b) => (
+      (a.cell.serial - b.cell.serial)
+      || (a.hex.q - b.hex.q)
+      || (a.hex.r - b.hex.r)
+    ));
+
+  for (const entry of entries) {
+    const cell = getCellAt(state, entry.hex);
+    if (!cell || cell.kind !== "stone") {
+      continue;
+    }
+    const owner = normalisePlayerNumber(cell.owner, state);
+    const classKey = normaliseArmoryClassKey(armory.classes[owner]);
+    const pieceType = getArmoryPieceType(cell);
+
+    if (pieceType === "sage") {
+      if (summary.spawns >= ARMORY_MAX_END_TURN_SPAWNS) {
+        continue;
+      }
+      const targets = getAdjacentsForMode(state, entry.hex)
+        .filter((target) => isHexOpen(state, target))
+        .sort((a, b) => (
+          getDistanceForMode(state, a) - getDistanceForMode(state, b)
+          || a.q - b.q
+          || a.r - b.r
+        ));
+      if (targets.length > 0) {
+        const spawnHex = targets[0];
+        const spawnType = getArmorySpawnTypeFromSage(state, owner, entry.hex, summary.spawns);
+        spawnArmoryStoneWithoutTracking(state, spawnHex, owner, spawnType);
+        summary.spawns += 1;
+      }
+      continue;
+    }
+
+    if (pieceType === "bastion") {
+      const friendlyAdjacent = getAdjacentsForMode(state, entry.hex)
+        .map((target) => getCellAt(state, target))
+        .filter((targetCell) => targetCell && targetCell.kind === "stone" && targetCell.owner === owner)
+        .length;
+      if (friendlyAdjacent >= 2) {
+        const bonusGold = classKey === "vanguard" ? 2 : 1;
+        gainArmoryCurrency(state, owner, { gold: bonusGold });
+        summary.income[owner].gold += bonusGold;
+      }
+      continue;
+    }
+
+    if (pieceType === "oracle") {
+      const bonusArcana = classKey === "arcanist" ? 2 : 1;
+      gainArmoryCurrency(state, owner, { arcana: bonusArcana });
+      summary.income[owner].arcana += bonusArcana;
+      continue;
+    }
+
+    if (pieceType === "lancer") {
+      if (armory.currencies[owner].arcana <= 0) {
+        continue;
+      }
+      const targets = getAdjacentEnemyStoneEntries(state, entry.hex, owner);
+      if (targets.length === 0) {
+        continue;
+      }
+      const target = targets[0].target;
+      if (tryConsumeArmoryShield(shieldCharges, target)) {
+        summary.blockedByShield += 1;
+        continue;
+      }
+      spendArmoryCurrency(state, owner, { arcana: 1 });
+      removeStone(state, target);
+      summary.removed += 1;
+      recordArmoryEnemyLoss(state, owner, 1);
+      continue;
+    }
+
+    if (pieceType === "assassin") {
+      const targets = getAdjacentEnemyStoneEntries(state, entry.hex, owner);
+      if (targets.length === 0) {
+        continue;
+      }
+      const target = targets[targets.length - 1].target;
+      if (tryConsumeArmoryShield(shieldCharges, target)) {
+        summary.blockedByShield += 1;
+        continue;
+      }
+      const targetCell = getCellAt(state, target);
+      const enemyOwner = targetCell ? normalisePlayerNumber(targetCell.owner, state) : 0;
+      if (targetCell && targetCell.kind === "stone" && enemyOwner !== owner) {
+        targetCell.owner = owner;
+        summary.flips += 1;
+        recordArmoryEnemyLoss(state, owner, 1);
+        if (enemyOwner && armory.currencies[enemyOwner]?.gold > 0) {
+          armory.currencies[enemyOwner].gold -= 1;
+          armory.currencies[owner].gold += 1;
+          summary.income[owner].gold += 1;
+        }
+      }
+      continue;
+    }
+
+    if (pieceType === "alchemist") {
+      if (armory.currencies[owner].arcana < 2) {
+        continue;
+      }
+      const friendMilitia = getAdjacentsForMode(state, entry.hex)
+        .map((target) => ({ target, cell: getCellAt(state, target) }))
+        .filter((entryCell) => entryCell.cell && entryCell.cell.kind === "stone" && entryCell.cell.owner === owner && getArmoryPieceType(entryCell.cell) === "militia")
+        .sort((a, b) => (
+          (a.cell.serial - b.cell.serial)
+          || (a.target.q - b.target.q)
+          || (a.target.r - b.target.r)
+        ));
+      if (friendMilitia.length > 0) {
+        const target = friendMilitia[0];
+        spendArmoryCurrency(state, owner, { arcana: 2 });
+        target.cell.pieceType = getArmoryUpgradePieceType(state, owner, target.target, summary.upgrades + 5);
+        summary.upgrades += 1;
+      }
     }
   }
-  if (messages.length > 0) {
-    pushLog(`Armoury: ${messages.join(" ")}`);
+
+  for (const owner of players) {
+    const classKey = normaliseArmoryClassKey(armory.classes[owner]);
+    const classDef = ARMORY_CLASS_DEFS[classKey];
+    const baseIncome = {
+      gold: classDef.incomeGold,
+      arcana: classDef.incomeArcana
+    };
+    if (classKey === "saboteur") {
+      baseIncome.gold += armory.removedEnemyByOwner[owner];
+    } else if (classKey === "vanguard") {
+      baseIncome.gold += Math.floor(countArmoryPiecesForOwner(state, owner, "bastion") / 2);
+    } else if (classKey === "arcanist") {
+      baseIncome.arcana += Math.floor(countArmoryPiecesForOwner(state, owner, "oracle") / 2);
+    }
+    gainArmoryCurrency(state, owner, baseIncome);
+    summary.income[owner].gold += baseIncome.gold;
+    summary.income[owner].arcana += baseIncome.arcana;
+
+    refreshArmoryShopForOwner(state, owner);
+    if (armory.selectedPiece[owner] !== "militia" && armory.inventory[owner][armory.selectedPiece[owner]] <= 0) {
+      armory.selectedPiece[owner] = "militia";
+    }
   }
+
+  for (const owner of players) {
+    const capResolution = enforceStoneCapAfterPlacement(state, owner, { interactiveEgyptian: false });
+    summary.capOverflow += capResolution.overflow || 0;
+  }
+
+  armory.lastReport = summary;
+  const line = `Armoury cycle: removed ${summary.removed}, blocked ${summary.blockedByShield}, flipped ${summary.flips}, spawned ${summary.spawns}, upgraded ${summary.upgrades}, overflow ${summary.capOverflow}.`;
+  state.accountingEvents.push(line);
+  pushLog(line);
+  return summary;
 }
 
 function checkForWinner(state) {
@@ -3678,31 +4412,25 @@ function placeTurnTile(state, hex, owner) {
     return null;
   }
 
-  const armoryPieceType = usesArmoryMode(state) ? getNextArmoryPieceType(state, owner) : null;
-  placeStone(state, hex, owner, "stone");
-  if (armoryPieceType) {
-    const placedCell = getCellAt(state, state.lastPlacement);
-    placedCell.pieceType = armoryPieceType;
-    placedCell.armoryPiece = true;
-  }
+  const armoryPieceType = resolveArmorySelectedPieceForPlacement(state, owner);
+  placeStone(state, hex, owner, "stone", usesArmoryMode(state) ? { pieceType: armoryPieceType } : {});
+  const armoryAbilityMessage = applyArmoryPlacementAbility(state, state.lastPlacement, owner, armoryPieceType);
   const capResolution = enforceStoneCapAfterPlacement(state, owner, {
     interactiveEgyptian: hasMode(state, "egyptian") && owner === state.turnPlayer
   });
 
-  const armoryMessages = armoryPieceType
-    ? applyArmoryPlacementAbility(state, state.lastPlacement, owner, armoryPieceType)
-    : [];
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
     owner,
-    source: state.lastPlacement
+    source: state.lastPlacement,
+    pieceType: armoryPieceType
   });
 
   const extraMessages = [
-    armoryPieceType ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
-    ...armoryMessages,
+    usesArmoryMode(state) ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
+    armoryAbilityMessage,
     ...bagelMessages
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
@@ -3840,6 +4568,231 @@ function clickPlacement(hex) {
   broadcastOnlineState();
 }
 
+function canUseArmoryControls(state = game.state) {
+  if (!state || !usesArmoryMode(state) || state.winner) {
+    return false;
+  }
+  if (isBrowsingHistory()) {
+    return false;
+  }
+  if (!canActForCurrentTurn()) {
+    return false;
+  }
+  if (hasEgyptianRemovalPhase(state) || state.duckPhase) {
+    return false;
+  }
+  return true;
+}
+
+function getArmoryInventoryCount(state, owner, pieceType) {
+  if (!usesArmoryMode(state)) {
+    return pieceType === "militia" ? 9999 : 0;
+  }
+  const armory = ensureArmoryState(state);
+  return pieceType === "militia"
+    ? 9999
+    : Math.max(0, Math.round(Number(armory.inventory?.[owner]?.[pieceType]) || 0));
+}
+
+function getArmorySelectedPiece(state, owner) {
+  if (!usesArmoryMode(state)) {
+    return "militia";
+  }
+  const armory = ensureArmoryState(state);
+  const selected = String(armory.selectedPiece?.[owner] || "militia");
+  return ARMORY_PIECE_DEFS[selected] ? selected : "militia";
+}
+
+function refreshArmoryClassInputsFromState() {
+  const state = game.state;
+  const playerCount = state ? getPlayerCount(state) : getPlayerCountFromModeKeys(getSelectedModeKeys());
+  const inputSelections = getArmoryClassSelectionsFromInputs(playerCount);
+  for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
+    const select = getArmoryClassSelectForPlayer(player);
+    const wrap = getArmoryClassWrapForPlayer(player);
+    if (wrap) {
+      wrap.hidden = player > playerCount;
+    }
+    if (!select) {
+      continue;
+    }
+    if (!state || !usesArmoryMode(state)) {
+      select.value = inputSelections[player] || ARMORY_DEFAULT_CLASS;
+      continue;
+    }
+    const armory = ensureArmoryState(state);
+    select.value = normaliseArmoryClassKey(armory.classes[player]);
+  }
+}
+
+function selectArmoryPieceForCurrentPlayer(pieceType) {
+  const state = game.state;
+  if (!canUseArmoryControls(state)) {
+    return;
+  }
+  const owner = state.turnPlayer;
+  const safePiece = ARMORY_PIECE_DEFS[pieceType] ? pieceType : "militia";
+  if (safePiece !== "militia" && getArmoryInventoryCount(state, owner, safePiece) <= 0) {
+    return;
+  }
+  saveHistory();
+  const armory = ensureArmoryState(state);
+  armory.selectedPiece[owner] = safePiece;
+  pushLog(`Player ${owner} selected ${getArmoryPieceDef(safePiece).name}.`);
+  updateStatus();
+  render();
+  broadcastOnlineState();
+}
+
+function buyArmoryOfferForCurrentPlayer(slotIndex) {
+  const state = game.state;
+  if (!canUseArmoryControls(state)) {
+    return;
+  }
+  const owner = state.turnPlayer;
+  const armory = ensureArmoryState(state);
+  const offers = armory.shopOffers[owner] || [];
+  const index = Math.max(0, Math.min(offers.length - 1, Math.trunc(Number(slotIndex) || 0)));
+  const pieceType = offers[index];
+  if (!ARMORY_SHOP_POOL.includes(pieceType)) {
+    return;
+  }
+  if (!canAffordArmoryPiece(state, owner, pieceType)) {
+    return;
+  }
+
+  saveHistory();
+  const cost = getArmoryPieceCost(state, owner, pieceType);
+  spendArmoryCurrency(state, owner, cost);
+  armory.inventory[owner][pieceType] += 1;
+  armory.selectedPiece[owner] = pieceType;
+  armory.shopOffers[owner] = generateArmoryShopOffers(state, armory, owner);
+  pushLog(`Player ${owner} bought ${getArmoryPieceDef(pieceType).name} for ${cost.gold}g/${cost.arcana}a.`);
+  updateStatus();
+  render();
+  broadcastOnlineState();
+}
+
+function rerollArmoryShopForCurrentPlayer() {
+  const state = game.state;
+  if (!canUseArmoryControls(state)) {
+    return;
+  }
+  const owner = state.turnPlayer;
+  const armory = ensureArmoryState(state);
+  const wallet = armory.currencies[owner];
+  if (wallet.gold < ARMORY_REROLL_GOLD_COST) {
+    return;
+  }
+
+  saveHistory();
+  wallet.gold -= ARMORY_REROLL_GOLD_COST;
+  armory.rerolls[owner] += 1;
+  refreshArmoryShopForOwner(state, owner);
+  pushLog(`Player ${owner} rerolled the shop (-${ARMORY_REROLL_GOLD_COST}g).`);
+  updateStatus();
+  render();
+  broadcastOnlineState();
+}
+
+function formatArmoryPlayerSummary(armory, player) {
+  return `P${player} ${ARMORY_CLASS_DEFS[armory.classes[player]].name}`;
+}
+
+function formatArmoryWalletSummary(armory, player) {
+  const wallet = armory.currencies[player];
+  return `P${player} ${wallet.gold}g/${wallet.arcana}a`;
+}
+
+function renderArmoryPanel() {
+  if (!ui.armoryControls) {
+    return;
+  }
+  const state = game.state;
+  if (!state || !usesArmoryMode(state)) {
+    ui.armoryControls.hidden = true;
+    refreshArmoryClassInputsFromState();
+    return;
+  }
+  ui.armoryControls.hidden = false;
+  const armory = ensureArmoryState(state);
+  const activeOwner = state.turnPlayer;
+  const canControl = canUseArmoryControls(state);
+  const players = getPlayerNumbers(state);
+
+  refreshArmoryClassInputsFromState();
+  for (const player of players) {
+    const select = getArmoryClassSelectForPlayer(player);
+    if (select) {
+      select.disabled = !canUseAdminControls() || state.openingMoveDone;
+    }
+  }
+
+  if (ui.armorySummaryText) {
+    ui.armorySummaryText.textContent = players.map((player) => formatArmoryPlayerSummary(armory, player)).join(" | ");
+  }
+  if (ui.armoryCurrencyText) {
+    ui.armoryCurrencyText.textContent = players.map((player) => formatArmoryWalletSummary(armory, player)).join(" | ");
+  }
+  if (ui.armoryActiveClassText) {
+    const selectedPiece = getArmorySelectedPiece(state, activeOwner);
+    ui.armoryActiveClassText.textContent = `Active: Player ${activeOwner} ${ARMORY_CLASS_DEFS[armory.classes[activeOwner]].name} | Piece: ${getArmoryPieceDef(selectedPiece).name}`;
+  }
+
+  if (ui.armoryPieceSelect) {
+    ui.armoryPieceSelect.innerHTML = "";
+    for (const pieceType of ARMORY_PIECE_ORDER) {
+      const count = getArmoryInventoryCount(state, activeOwner, pieceType);
+      if (pieceType !== "militia" && count <= 0) {
+        continue;
+      }
+      const pieceDef = getArmoryPieceDef(pieceType);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "modeToggle";
+      if (getArmorySelectedPiece(state, activeOwner) === pieceType) {
+        button.classList.add("active");
+      }
+      const countText = pieceType === "militia" ? "inf" : String(count);
+      button.textContent = `${pieceDef.symbol} ${pieceDef.name} (${countText})`;
+      button.disabled = !canControl;
+      button.title = pieceDef.description;
+      button.addEventListener("click", () => {
+        selectArmoryPieceForCurrentPlayer(pieceType);
+      });
+      ui.armoryPieceSelect.appendChild(button);
+    }
+  }
+
+  if (ui.armoryShopOffers) {
+    ui.armoryShopOffers.innerHTML = "";
+    const offers = armory.shopOffers[activeOwner] || [];
+    for (let i = 0; i < offers.length; i += 1) {
+      const pieceType = offers[i];
+      const pieceDef = getArmoryPieceDef(pieceType);
+      const cost = getArmoryPieceCost(state, activeOwner, pieceType);
+      const owned = getArmoryInventoryCount(state, activeOwner, pieceType);
+      const canBuy = canControl && canAffordArmoryPiece(state, activeOwner, pieceType);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `modeToggle${canBuy ? " active" : ""}`;
+      button.textContent = `${pieceDef.symbol} ${pieceDef.name} ${cost.gold}g/${cost.arcana}a | ${owned}`;
+      button.disabled = !canBuy;
+      button.title = pieceDef.description;
+      button.addEventListener("click", () => {
+        buyArmoryOfferForCurrentPlayer(i);
+      });
+      ui.armoryShopOffers.appendChild(button);
+    }
+  }
+
+  if (ui.armoryRerollBtn) {
+    const rerollEnabled = canControl && armory.currencies[activeOwner].gold >= ARMORY_REROLL_GOLD_COST;
+    ui.armoryRerollBtn.disabled = !rerollEnabled;
+    ui.armoryRerollBtn.textContent = `Reroll Shop (-${ARMORY_REROLL_GOLD_COST}g)`;
+  }
+}
+
 function updateStatus() {
   const state = game.state;
   ensureClockState(state);
@@ -3867,16 +4820,21 @@ function updateStatus() {
     ui.subturnText.textContent = getBirdActionPrompt(state.currentBirdMoveKind);
   } else {
     ui.subturnText.textContent = `${state.movesLeftInTurn} placement${state.movesLeftInTurn === 1 ? "" : "s"} left this turn`;
-    if (usesArmoryMode(state)) {
-      const pieceType = getNextArmoryPieceType(state, state.turnPlayer);
-      ui.subturnText.textContent += ` | Armoury: ${getArmoryPieceDef(pieceType).name} (${getArmoryPieceDef(pieceType).summary})`;
-    }
+  }
+
+  if (usesArmoryMode(state)) {
+    const armory = ensureArmoryState(state);
+    const owner = state.turnPlayer;
+    const selectedPiece = getArmorySelectedPiece(state, owner);
+    const pieceDef = getArmoryPieceDef(selectedPiece);
+    ui.subturnText.textContent += ` | ${armory.currencies[owner].gold}g/${armory.currencies[owner].arcana}a | ${pieceDef.name}`;
   }
 
   updateClockUI();
   updateTurnOrderSummary(getPlayerCount(state));
   renderLog();
   updateOnlineStatusUI();
+  renderArmoryPanel();
 }
 
 function resizeCanvas() {
@@ -4559,29 +5517,8 @@ function drawOriginIndicator() {
   ctx.restore();
 }
 
-function drawDonut3dBackdrop() {
-  if (!usesDonut3dMode(game.state)) {
-    return;
-  }
-  const origin = worldToScreen(0, 0);
-  const size = currentHexSize();
-  ctx.save();
-  ctx.translate(origin.x, origin.y);
-  ctx.rotate(-0.08);
-  for (let i = 0; i < 7; i += 1) {
-    const radius = size * (4.8 + (i * 0.62));
-    ctx.beginPath();
-    ctx.ellipse(0, 0, radius * 1.5, radius * 0.54, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = i % 2 === 0 ? "rgba(109, 198, 255, 0.10)" : "rgba(255, 215, 94, 0.09)";
-    ctx.lineWidth = Math.max(1, size * 0.035);
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.ellipse(0, 0, size * 8.6, size * 3.2, 0, Math.PI * 0.07, Math.PI * 0.93);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
-  ctx.lineWidth = Math.max(1.5, size * 0.055);
-  ctx.stroke();
-  ctx.restore();
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, Number(value) || 0));
 }
 
 function drawEverythingBagelOverlay() {
@@ -5014,13 +5951,14 @@ function drawPieces() {
     ctx.arc(screen.x, screen.y, innerDotRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    if (usesArmoryMode(game.state) && cell.armoryPiece) {
+    if (usesArmoryMode(game.state)) {
       const pieceType = getArmoryPieceType(cell);
+      const pieceDef = getArmoryPieceDef(pieceType);
       ctx.fillStyle = "rgba(236, 242, 255, 0.92)";
       ctx.font = `${Math.max(8, Math.min(13, size * 0.42))}px Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(getArmoryPieceDef(pieceType).name.slice(0, 1), screen.x, screen.y);
+      ctx.fillText(pieceDef.symbol, screen.x, screen.y);
     }
   }
 
@@ -5370,7 +6308,6 @@ function renderNow() {
   const h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
 
-  drawDonut3dBackdrop();
   drawGrid();
   drawEverythingBagelOverlay();
   drawOriginIndicator();
@@ -5769,6 +6706,20 @@ ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
 });
+for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
+  getArmoryClassSelectForPlayer(player)?.addEventListener("change", () => {
+    const state = game.state;
+    if (state && usesArmoryMode(state) && !state.openingMoveDone && canUseAdminControls()) {
+      const armory = ensureArmoryState(state);
+      armory.classes[player] = normaliseArmoryClassKey(getArmoryClassSelectForPlayer(player)?.value);
+      armory.shopOffers[player] = generateArmoryShopOffers(state, armory, player);
+    }
+    renderArmoryPanel();
+  });
+}
+ui.armoryRerollBtn?.addEventListener("click", () => {
+  rerollArmoryShopForCurrentPlayer();
+});
 ui.secretModesBtn?.addEventListener("click", () => {
   setSecretModesUnlocked(!game.secretModesUnlocked);
 });
@@ -5796,6 +6747,7 @@ ui.appRoot.addEventListener("transitionend", (event) => {
 fillModePicker();
 setTimerInputs(game.timerConfig);
 setEgyptianCapInput(game.egyptianStoneCap);
+getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
 setOptionsMenuCollapsed(false);
 setSelectedModeKeys([]);

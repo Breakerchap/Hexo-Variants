@@ -85,6 +85,52 @@
         </div>
       </section>
 
+      <section id="armoryControls" class="section" hidden>
+        <div class="small sectionHeading">Armoury Console</div>
+        <div class="armoryClassGrid">
+          <label class="small armoryClassField" for="armoryClassP1Select">
+            Player 1 Class
+            <select id="armoryClassP1Select" aria-label="Player 1 armoury class">
+              <option value="vanguard">Vanguard</option>
+              <option value="arcanist">Arcanist</option>
+              <option value="saboteur">Saboteur</option>
+            </select>
+          </label>
+          <label class="small armoryClassField" for="armoryClassP2Select">
+            Player 2 Class
+            <select id="armoryClassP2Select" aria-label="Player 2 armoury class">
+              <option value="arcanist">Arcanist</option>
+              <option value="vanguard">Vanguard</option>
+              <option value="saboteur">Saboteur</option>
+            </select>
+          </label>
+          <label id="armoryClassP3Wrap" class="small armoryClassField" for="armoryClassP3Select" hidden>
+            Player 3 Class
+            <select id="armoryClassP3Select" aria-label="Player 3 armoury class">
+              <option value="saboteur">Saboteur</option>
+              <option value="vanguard">Vanguard</option>
+              <option value="arcanist">Arcanist</option>
+            </select>
+          </label>
+          <label id="armoryClassP4Wrap" class="small armoryClassField" for="armoryClassP4Select" hidden>
+            Player 4 Class
+            <select id="armoryClassP4Select" aria-label="Player 4 armoury class">
+              <option value="vanguard">Vanguard</option>
+              <option value="arcanist">Arcanist</option>
+              <option value="saboteur">Saboteur</option>
+            </select>
+          </label>
+        </div>
+        <div id="armorySummaryText" class="small armoryPanelLine">P1 Vanguard | P2 Arcanist</div>
+        <div id="armoryCurrencyText" class="small armoryPanelLine">P1 0g/0a | P2 0g/0a</div>
+        <div id="armoryActiveClassText" class="small armoryPanelLine">Active: Player 1 | Piece: Militia</div>
+        <div class="small armorySubheading">Piece Inventory</div>
+        <div id="armoryPieceSelect" class="modePickerGrid"></div>
+        <div class="small armorySubheading">Shop Offers</div>
+        <div id="armoryShopOffers" class="modePickerGrid"></div>
+        <button id="armoryRerollBtn" type="button" class="secondaryButton">Reroll Shop (-2g)</button>
+      </section>
+
       <section class="section">
         <div class="small sectionHeading">Online</div>
         <div class="controls">
@@ -147,7 +193,7 @@
         <div class="siteFooterText">
           <span>By Remy E.</span>
           <a href="https://github.com/Breakerchap/hex-tic-tac-toe" target="_blank" rel="noopener noreferrer">GitHub</a>
-          <a href="./LICENSE">MIT License</a>
+          <a href="./LICENSE">License</a>
         </div>
         <button id="secretModesBtn" class="secretModesButton" type="button" aria-label="Enable secret modes" title="Secret modes"></button>
       </footer>
