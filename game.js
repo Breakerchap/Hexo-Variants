@@ -346,6 +346,107 @@ const BED_SIEGE_BLOCK_STYLES = {
     text: "#f1ecff"
   }
 };
+const FACTORY_RESEARCH_TO_WIN = 52;
+const FACTORY_CORE_BASE_INTEGRITY = 30;
+const FACTORY_REMOTE_STRIKE_RANGE = 6;
+const FACTORY_RESOURCE_TYPES = ["raw", "plates", "chroma", "circuits", "payload", "power", "research"];
+const FACTORY_STARTING_RESOURCES = {
+  raw: 10,
+  plates: 4,
+  chroma: 0,
+  circuits: 0,
+  payload: 0,
+  power: 0,
+  research: 0
+};
+const FACTORY_MODULE_ORDER = ["belt", "cutter", "painter", "assembler", "lab", "launcher"];
+const FACTORY_MODULE_UPGRADES = {
+  belt: "cutter",
+  cutter: "painter",
+  painter: "assembler",
+  assembler: "lab",
+  lab: "launcher"
+};
+const FACTORY_MODULE_DEFS = {
+  core: {
+    name: "Core",
+    symbol: "H",
+    fill: "rgba(236, 242, 255, 0.20)",
+    cost: {}
+  },
+  belt: {
+    name: "Conveyor",
+    symbol: ">",
+    fill: "rgba(169, 186, 214, 0.30)",
+    cost: { raw: 1 }
+  },
+  miner: {
+    name: "Extractor",
+    symbol: "M",
+    fill: "rgba(255, 215, 94, 0.24)",
+    cost: { raw: 2, plates: 1 }
+  },
+  cutter: {
+    name: "Cutter",
+    symbol: "C",
+    fill: "rgba(109, 198, 255, 0.22)",
+    cost: { raw: 2, plates: 1 }
+  },
+  painter: {
+    name: "Painter",
+    symbol: "P",
+    fill: "rgba(255, 140, 140, 0.22)",
+    cost: { plates: 2, chroma: 1 }
+  },
+  assembler: {
+    name: "Assembler",
+    symbol: "A",
+    fill: "rgba(118, 227, 168, 0.20)",
+    cost: { plates: 3, circuits: 1 }
+  },
+  lab: {
+    name: "Lab",
+    symbol: "L",
+    fill: "rgba(200, 165, 255, 0.22)",
+    cost: { plates: 4, circuits: 2, payload: 1 }
+  },
+  launcher: {
+    name: "Launcher",
+    symbol: "X",
+    fill: "rgba(255, 179, 92, 0.24)",
+    cost: { plates: 5, circuits: 3, power: 1 }
+  }
+};
+const FACTORY_DEPOSIT_DEFS = {
+  ore: {
+    name: "Ore",
+    symbol: "O",
+    fill: "rgba(161, 183, 210, 0.13)",
+    stroke: "rgba(202, 218, 238, 0.55)",
+    yield: { raw: 3 }
+  },
+  pigment: {
+    name: "Pigment",
+    symbol: "D",
+    fill: "rgba(255, 140, 140, 0.13)",
+    stroke: "rgba(255, 140, 140, 0.60)",
+    yield: { chroma: 2 }
+  },
+  crystal: {
+    name: "Crystal",
+    symbol: "P",
+    fill: "rgba(200, 165, 255, 0.14)",
+    stroke: "rgba(200, 165, 255, 0.62)",
+    yield: { power: 1 }
+  },
+  scrap: {
+    name: "Scrap",
+    symbol: "S",
+    fill: "rgba(118, 227, 168, 0.12)",
+    stroke: "rgba(118, 227, 168, 0.58)",
+    yield: { raw: 1, plates: 1 }
+  }
+};
 const HEX_VERTEX_UNIT = Array.from({ length: 6 }, (_, i) => {
   const angle = Math.PI / 180 * (60 * i - 30);
   return {
@@ -613,6 +714,12 @@ const MODES = {
     name: "Bed Siege",
     summary: "Minecraft-style bed rush: islands start with beds and generators, resources buy blocks, tools, and mobility, and breaking every rival bed wins.",
     hint: "Bridge from your island, collect generator resources, shop for defenses and tools, then break exposed enemy beds. Lines do not win in Bed Siege.",
+    secret: true
+  },
+  factoryFoundry: {
+    name: "Foundry War",
+    summary: "Secret factory duel: expand connected production lines, mine deposits, upgrade modules into processors and launchers, then win by research throughput or by destroying rival cores. Only player-count modes combine with it.",
+    hint: "Build from your core. Empty deposits become extractors, empty connected spaces become conveyors, own modules upgrade, and enemy factories can be sabotaged. Deliver 52 research or knock out rival cores.",
     secret: true
   },
   everythingBagel: {
@@ -2312,6 +2419,13 @@ function normaliseModeKeys(modeKeys) {
       requested.delete(key);
     }
   }
+  if (requested.has("factoryFoundry")) {
+    for (const key of Array.from(requested)) {
+      if (key !== "factoryFoundry" && key !== "threePlayer" && key !== "fourPlayer") {
+        requested.delete(key);
+      }
+    }
+  }
   const ordered = [];
   for (const key of Object.keys(MODES)) {
     if (requested.has(key)) {
@@ -2436,6 +2550,20 @@ function getNextPlayerNumber(state, player = state?.turnPlayer) {
 }
 
 function getNextTurnPlayerNumber(state, player = state?.turnPlayer) {
+  if (usesFactoryMode(state)) {
+    const aliveOwners = getFactoryAliveOwners(state);
+    if (aliveOwners.length <= 1) {
+      return aliveOwners[0] || getNextPlayerNumber(state, player);
+    }
+    let candidate = getNextPlayerNumber(state, player);
+    for (let attempts = 0; attempts < getPlayerCount(state); attempts += 1) {
+      if (aliveOwners.includes(candidate)) {
+        return candidate;
+      }
+      candidate = getNextPlayerNumber(state, candidate);
+    }
+    return aliveOwners[0];
+  }
   if (!usesBedSiegeMode(state)) {
     return getNextPlayerNumber(state, player);
   }
@@ -2569,6 +2697,10 @@ function usesBedSiegeMode(state) {
   return Boolean(state && hasMode(state, "bedSiege"));
 }
 
+function usesFactoryMode(state) {
+  return Boolean(state && hasMode(state, "factoryFoundry"));
+}
+
 function getBirdMoveKinds(state) {
   return BIRD_KINDS.filter((birdKind) => hasMode(state, birdKind));
 }
@@ -2664,7 +2796,8 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     accountingEvents: [],
     clock: createClockState(timerConfig, playerCount),
     armory: null,
-    bedSiege: null
+    bedSiege: null,
+    factory: null
   };
   if (usesArmoryMode(state)) {
     state.armory = createArmoryStateForGame(state);
@@ -2675,6 +2808,13 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     state.movesLeftInTurn = 2;
     state.openingMoveDone = true;
     state.log[0] = "Bed Siege started: bridge, shop, defend your bed, and break enemy beds.";
+  }
+  if (usesFactoryMode(state)) {
+    state.factory = createFactoryStateForGame(state);
+    placeFactoryCoreCells(state);
+    state.movesLeftInTurn = 2;
+    state.openingMoveDone = true;
+    state.log[0] = "Foundry War started: build production lines, ship research, and crack rival cores.";
   }
   return state;
 }
@@ -3839,6 +3979,9 @@ function isLegalPlacement(state, hex) {
   }
   if (usesBedSiegeMode(state)) {
     return isLegalBedSiegePlacement(state, hex, state.turnPlayer);
+  }
+  if (usesFactoryMode(state)) {
+    return isLegalFactoryPlacement(state, hex, state.turnPlayer);
   }
   if (!isLegalByBaseRules(state, hex, { allowOccupied: false })) {
     return false;
@@ -5349,10 +5492,14 @@ function resolveArmoryTurnEnd(state) {
 }
 
 function checkForWinner(state) {
-  const winner = usesBedSiegeMode(state) ? getBedSiegeWinner(state) : auditWholeBoardForWinner(state);
+  const winner = usesFactoryMode(state)
+    ? getFactoryWinner(state)
+    : (usesBedSiegeMode(state) ? getBedSiegeWinner(state) : auditWholeBoardForWinner(state));
   if (winner && !state.winner) {
     state.winner = winner;
-    pushLog(usesBedSiegeMode(state) ? `Player ${winner} wins Bed Siege.` : `Player ${winner} wins.`);
+    pushLog(usesFactoryMode(state)
+      ? `Player ${winner} wins Foundry War.`
+      : (usesBedSiegeMode(state) ? `Player ${winner} wins Bed Siege.` : `Player ${winner} wins.`));
   }
   return winner;
 }
@@ -5373,6 +5520,7 @@ function endTurn(state) {
   resolveEverythingBagel(state, previousPlayer);
   resolveArmoryTurnEnd(state);
   resolveBedSiegeTurnEnd(state, previousPlayer);
+  resolveFactoryTurnEnd(state, previousPlayer);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
@@ -5637,6 +5785,779 @@ function handleBedSiegeBoardClick(hex) {
   handleBedSiegeBuildAction(state, hex, owner);
 }
 
+function createFactoryResourceWallet(seed = {}) {
+  const wallet = {};
+  for (const resource of FACTORY_RESOURCE_TYPES) {
+    wallet[resource] = Math.max(0, Math.round(Number(seed?.[resource]) || 0));
+  }
+  return wallet;
+}
+
+function getFactoryModuleDef(moduleType) {
+  return FACTORY_MODULE_DEFS[moduleType] || FACTORY_MODULE_DEFS.belt;
+}
+
+function getFactoryDepositDef(depositType) {
+  return FACTORY_DEPOSIT_DEFS[depositType] || FACTORY_DEPOSIT_DEFS.ore;
+}
+
+function getFactoryHomeHexForOwner(state, owner) {
+  const playerCount = getPlayerCount(state);
+  const layouts = {
+    2: {
+      1: { q: -7, r: 0 },
+      2: { q: 7, r: 0 }
+    },
+    3: {
+      1: { q: -7, r: 0 },
+      2: { q: 7, r: -7 },
+      3: { q: 0, r: 7 }
+    },
+    4: {
+      1: { q: -8, r: 0 },
+      2: { q: 8, r: 0 },
+      3: { q: 0, r: 8 },
+      4: { q: 0, r: -8 }
+    }
+  };
+  return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
+}
+
+function getFactoryDepositDefinitions(state) {
+  const deposits = [];
+  const localDeposits = [
+    { offset: { q: 1, r: 0 }, type: "ore" },
+    { offset: { q: 0, r: 1 }, type: "ore" },
+    { offset: { q: 1, r: -1 }, type: "pigment" },
+    { offset: { q: -1, r: 1 }, type: "crystal" },
+    { offset: { q: -1, r: 0 }, type: "scrap" }
+  ];
+
+  for (const owner of getPlayerNumbers(state)) {
+    const home = getFactoryHomeHexForOwner(state, owner);
+    for (const deposit of localDeposits) {
+      const hex = addHex(home, deposit.offset);
+      deposits.push({
+        id: `p${owner}-${deposit.type}-${hex.q}-${hex.r}`,
+        owner,
+        type: deposit.type,
+        hex
+      });
+    }
+  }
+
+  const neutralDeposits = [
+    { hex: { q: 0, r: 0 }, type: "crystal" },
+    { hex: { q: 2, r: -2 }, type: "pigment" },
+    { hex: { q: -2, r: 2 }, type: "pigment" },
+    { hex: { q: 3, r: 0 }, type: "ore" },
+    { hex: { q: -3, r: 0 }, type: "ore" },
+    { hex: { q: 0, r: 3 }, type: "scrap" },
+    { hex: { q: 0, r: -3 }, type: "scrap" },
+    { hex: { q: 4, r: -4 }, type: "crystal" },
+    { hex: { q: -4, r: 4 }, type: "crystal" }
+  ];
+  for (const deposit of neutralDeposits) {
+    deposits.push({
+      id: `neutral-${deposit.type}-${deposit.hex.q}-${deposit.hex.r}`,
+      owner: 0,
+      type: deposit.type,
+      hex: { ...deposit.hex }
+    });
+  }
+
+  const seen = new Set();
+  return deposits.filter((deposit) => {
+    const key = keyOf(deposit.hex.q, deposit.hex.r);
+    if (seen.has(key) || !isCellSupportedForMode(state, deposit.hex)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function getFactoryDepositAt(state, hex) {
+  if (!usesFactoryMode(state)) {
+    return null;
+  }
+  return getFactoryDepositDefinitions(state).find((deposit) => equalHex(deposit.hex, hex)) || null;
+}
+
+function createFactoryStateForGame(state) {
+  return {
+    cores: createPlayerMap(getPlayerCount(state), (owner) => ({
+      hex: getFactoryHomeHexForOwner(state, owner),
+      alive: true,
+      level: 1,
+      integrity: FACTORY_CORE_BASE_INTEGRITY,
+      maxIntegrity: FACTORY_CORE_BASE_INTEGRITY,
+      eliminatedBy: null
+    })),
+    resources: createPlayerMap(getPlayerCount(state), () => createFactoryResourceWallet(FACTORY_STARTING_RESOURCES)),
+    lastReport: createPlayerMap(getPlayerCount(state), () => null)
+  };
+}
+
+function isFactoryCell(cell) {
+  return Boolean(cell && cell.kind === "stone" && FACTORY_MODULE_DEFS[cell.factoryType]);
+}
+
+function getFactoryCellType(cell) {
+  return isFactoryCell(cell) ? cell.factoryType : "";
+}
+
+function placeFactoryCoreCells(state) {
+  if (!usesFactoryMode(state)) {
+    return;
+  }
+  const factory = state.factory;
+  for (const owner of getPlayerNumbers(state)) {
+    const core = factory?.cores?.[owner];
+    if (!core?.hex) {
+      continue;
+    }
+    const key = keyOf(core.hex.q, core.hex.r);
+    const existing = state.cells[key];
+    if (existing && existing.kind === "stone" && existing.owner === owner) {
+      existing.factoryType = "core";
+      existing.factoryCore = true;
+      existing.factoryBrokenCore = core.alive === false;
+      continue;
+    }
+    state.moveSerial += 1;
+    state.cells[key] = {
+      owner,
+      kind: "stone",
+      serial: state.moveSerial,
+      factoryType: "core",
+      factoryCore: true,
+      factoryBrokenCore: core.alive === false
+    };
+  }
+}
+
+function ensureFactoryState(state) {
+  if (!usesFactoryMode(state)) {
+    if (state) {
+      state.factory = null;
+    }
+    return null;
+  }
+
+  if (!state.factory || typeof state.factory !== "object") {
+    state.factory = createFactoryStateForGame(state);
+    placeFactoryCoreCells(state);
+    return state.factory;
+  }
+
+  const currentCores = state.factory.cores && typeof state.factory.cores === "object" ? state.factory.cores : {};
+  const currentResources = state.factory.resources && typeof state.factory.resources === "object" ? state.factory.resources : {};
+  const currentReports = state.factory.lastReport && typeof state.factory.lastReport === "object" ? state.factory.lastReport : {};
+  state.factory.cores = createPlayerMap(getPlayerCount(state), (owner) => {
+    const fallback = getFactoryHomeHexForOwner(state, owner);
+    const core = currentCores[owner] || {};
+    const rawHex = core.hex || fallback;
+    const maxIntegrity = Math.max(FACTORY_CORE_BASE_INTEGRITY, Math.round(Number(core.maxIntegrity) || FACTORY_CORE_BASE_INTEGRITY));
+    const parsedIntegrity = Number(core.integrity);
+    const integrity = Math.max(
+      0,
+      Math.min(maxIntegrity, Math.round(Number.isFinite(parsedIntegrity) ? parsedIntegrity : maxIntegrity))
+    );
+    const parsedQ = Number(rawHex.q);
+    const parsedR = Number(rawHex.r);
+    return {
+      hex: {
+        q: Math.trunc(Number.isFinite(parsedQ) ? parsedQ : fallback.q),
+        r: Math.trunc(Number.isFinite(parsedR) ? parsedR : fallback.r)
+      },
+      alive: core.alive !== false && integrity > 0,
+      level: Math.max(1, Math.min(4, Math.round(Number(core.level) || 1))),
+      integrity,
+      maxIntegrity,
+      eliminatedBy: core.eliminatedBy && isValidPlayerNumber(core.eliminatedBy, state)
+        ? normalisePlayerNumber(core.eliminatedBy, state)
+        : null
+    };
+  });
+  state.factory.resources = createPlayerMap(getPlayerCount(state), (owner) => (
+    createFactoryResourceWallet({ ...FACTORY_STARTING_RESOURCES, ...(currentResources[owner] || {}) })
+  ));
+  state.factory.lastReport = createPlayerMap(getPlayerCount(state), (owner) => currentReports[owner] || null);
+  placeFactoryCoreCells(state);
+  return state.factory;
+}
+
+function getFactoryCore(state, owner) {
+  const factory = ensureFactoryState(state);
+  return factory?.cores?.[normalisePlayerNumber(owner, state)] || null;
+}
+
+function getFactoryAliveOwners(state) {
+  const factory = ensureFactoryState(state);
+  if (!factory) {
+    return [];
+  }
+  return getPlayerNumbers(state).filter((owner) => factory.cores[owner]?.alive);
+}
+
+function canFactoryPlayerAct(state, owner) {
+  return Boolean(getFactoryCore(state, owner)?.alive);
+}
+
+function getFactoryCoreOwnerAt(state, hex) {
+  if (!usesFactoryMode(state)) {
+    return 0;
+  }
+  const factory = ensureFactoryState(state);
+  for (const owner of getPlayerNumbers(state)) {
+    const core = factory.cores[owner];
+    if (core?.hex && equalHex(core.hex, hex)) {
+      return owner;
+    }
+  }
+  return 0;
+}
+
+function getFactoryWinner(state) {
+  if (!usesFactoryMode(state)) {
+    return 0;
+  }
+  const factory = ensureFactoryState(state);
+  const aliveOwners = getFactoryAliveOwners(state);
+  const researchWinner = aliveOwners
+    .filter((owner) => factory.resources[owner].research >= FACTORY_RESEARCH_TO_WIN)
+    .sort((a, b) => (
+      factory.resources[b].research - factory.resources[a].research
+      || factory.cores[b].integrity - factory.cores[a].integrity
+      || a - b
+    ))[0] || 0;
+  if (researchWinner) {
+    return researchWinner;
+  }
+  if (aliveOwners.length === 1) {
+    return aliveOwners[0];
+  }
+  return 0;
+}
+
+function getFactoryConnectedKeySet(state, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const core = getFactoryCore(state, safeOwner);
+  const connected = new Set();
+  if (!core?.alive) {
+    return connected;
+  }
+
+  const startKey = keyOf(core.hex.q, core.hex.r);
+  const startCell = state.cells[startKey];
+  if (!isFactoryCell(startCell) || startCell.owner !== safeOwner) {
+    return connected;
+  }
+
+  const queue = [core.hex];
+  connected.add(startKey);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const next of getAdjacentsForMode(state, current)) {
+      const nextKey = keyOf(next.q, next.r);
+      if (connected.has(nextKey)) {
+        continue;
+      }
+      const cell = state.cells[nextKey];
+      if (!isFactoryCell(cell) || cell.owner !== safeOwner) {
+        continue;
+      }
+      connected.add(nextKey);
+      queue.push(next);
+    }
+  }
+  return connected;
+}
+
+function getFactoryConnectedEntries(state, owner) {
+  const connected = getFactoryConnectedKeySet(state, owner);
+  return Array.from(connected).map((key) => ({
+    key,
+    hex: parseKey(key),
+    cell: state.cells[key]
+  }));
+}
+
+function getFactoryNearestConnectedAnchor(state, owner, hex, maxRange = 1) {
+  return getFactoryConnectedEntries(state, owner)
+    .filter((entry) => getDistanceForMode(state, entry.hex, hex) <= maxRange)
+    .sort((a, b) => (
+      getDistanceForMode(state, a.hex, hex) - getDistanceForMode(state, b.hex, hex)
+      || getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
+      || a.hex.q - b.hex.q
+      || a.hex.r - b.hex.r
+    ))[0] || null;
+}
+
+function getFactoryActiveModuleEntries(state, owner, moduleType = "") {
+  return getFactoryConnectedEntries(state, owner)
+    .filter((entry) => isFactoryCell(entry.cell) && (!moduleType || entry.cell.factoryType === moduleType));
+}
+
+function getFactoryReachableLauncher(state, owner, hex) {
+  return getFactoryActiveModuleEntries(state, owner, "launcher")
+    .filter((entry) => getDistanceForMode(state, entry.hex, hex) <= FACTORY_REMOTE_STRIKE_RANGE)
+    .sort((a, b) => (
+      getDistanceForMode(state, a.hex, hex) - getDistanceForMode(state, b.hex, hex)
+      || a.hex.q - b.hex.q
+      || a.hex.r - b.hex.r
+    ))[0] || null;
+}
+
+function getFactoryWallet(state, owner) {
+  const factory = ensureFactoryState(state);
+  return factory.resources[normalisePlayerNumber(owner, state)];
+}
+
+function canAffordFactoryCost(state, owner, cost = {}) {
+  const wallet = getFactoryWallet(state, owner);
+  return Object.entries(cost).every(([resource, amount]) => wallet[resource] >= Math.max(0, Number(amount) || 0));
+}
+
+function spendFactoryResources(state, owner, cost = {}) {
+  const wallet = getFactoryWallet(state, owner);
+  if (!canAffordFactoryCost(state, owner, cost)) {
+    return false;
+  }
+  for (const [resource, amount] of Object.entries(cost)) {
+    wallet[resource] -= Math.max(0, Number(amount) || 0);
+  }
+  return true;
+}
+
+function gainFactoryResources(state, owner, gain = {}) {
+  const wallet = getFactoryWallet(state, owner);
+  for (const [resource, amount] of Object.entries(gain)) {
+    if (!FACTORY_RESOURCE_TYPES.includes(resource)) {
+      continue;
+    }
+    wallet[resource] += Math.max(0, Math.round(Number(amount) || 0));
+  }
+}
+
+function formatFactoryCost(cost = {}) {
+  const entries = Object.entries(cost).filter(([, amount]) => Number(amount) > 0);
+  if (entries.length === 0) {
+    return "free";
+  }
+  return entries.map(([resource, amount]) => `${amount}${resource[0]}`).join("/");
+}
+
+function formatFactoryWallet(state, owner) {
+  const wallet = getFactoryWallet(state, owner);
+  return `${wallet.raw}r/${wallet.plates}p/${wallet.chroma}d/${wallet.circuits}c/${wallet.payload}u/${wallet.power}e`;
+}
+
+function getFactoryScoreSummary(state) {
+  const factory = ensureFactoryState(state);
+  return getPlayerNumbers(state).map((owner) => {
+    const core = factory.cores[owner];
+    const wallet = factory.resources[owner];
+    return `P${owner} ${wallet.research}/${FACTORY_RESEARCH_TO_WIN} ${core.alive ? `${core.integrity}hp` : "out"}`;
+  }).join(" | ");
+}
+
+function getFactoryPlayerSummary(state, owner) {
+  const core = getFactoryCore(state, owner);
+  const wallet = getFactoryWallet(state, owner);
+  const coreText = core?.alive ? `Core ${core.integrity}/${core.maxIntegrity}` : "Core offline";
+  return `${coreText} | ${formatFactoryWallet(state, owner)} | Research ${wallet.research}/${FACTORY_RESEARCH_TO_WIN}`;
+}
+
+function getFactoryBuildModuleForHex(state, hex) {
+  return getFactoryDepositAt(state, hex) ? "miner" : "belt";
+}
+
+function isFactoryBuildableHex(state, hex, owner = state.turnPlayer) {
+  if (!usesFactoryMode(state) || !canFactoryPlayerAct(state, owner)) {
+    return false;
+  }
+  if (!isCellSupportedForMode(state, hex) || isOccupied(state, hex) || isHexBlockedBySpecials(state, hex)) {
+    return false;
+  }
+  if (!getFactoryNearestConnectedAnchor(state, owner, hex, 1)) {
+    return false;
+  }
+  const moduleType = getFactoryBuildModuleForHex(state, hex);
+  return canAffordFactoryCost(state, owner, getFactoryModuleDef(moduleType).cost);
+}
+
+function isLegalFactoryPlacement(state, hex, owner = state.turnPlayer) {
+  return isFactoryBuildableHex(state, hex, owner);
+}
+
+function placeFactoryModule(state, hex, owner, moduleType, extras = {}) {
+  const moduleDef = getFactoryModuleDef(moduleType);
+  placeStone(state, hex, owner, "stone", {
+    factoryType: moduleType,
+    factoryLevel: Math.max(1, Math.round(Number(extras.level) || 1)),
+    factoryDepositType: extras.depositType || null,
+    factoryHp: moduleType === "core" ? FACTORY_CORE_BASE_INTEGRITY : 1,
+    factorySymbol: moduleDef.symbol
+  });
+}
+
+function getFactoryMinerUpgradeCost(level) {
+  return {
+    plates: level * 2,
+    circuits: Math.max(0, level - 1),
+    power: level >= 2 ? 1 : 0
+  };
+}
+
+function getFactoryCoreUpgradeCost(core) {
+  const level = Math.max(1, Math.round(Number(core?.level) || 1));
+  return {
+    plates: level * 5,
+    circuits: level * 2,
+    research: level * 3
+  };
+}
+
+function damageFactoryCore(state, targetOwner, amount, attacker = null, sourceText = "") {
+  const factory = ensureFactoryState(state);
+  const safeTarget = normalisePlayerNumber(targetOwner, state);
+  const core = factory.cores[safeTarget];
+  if (!core || !core.alive) {
+    return `Player ${safeTarget}'s core is already offline.`;
+  }
+  const damage = Math.max(1, Math.round(Number(amount) || 1));
+  core.integrity = Math.max(0, core.integrity - damage);
+  const source = sourceText ? ` ${sourceText}` : "";
+  if (core.integrity > 0) {
+    return `Player ${safeTarget}'s core took ${damage} damage${source} (${core.integrity}/${core.maxIntegrity}).`;
+  }
+
+  core.alive = false;
+  core.eliminatedBy = attacker && isValidPlayerNumber(attacker, state) ? normalisePlayerNumber(attacker, state) : null;
+  const coreCell = getCellAt(state, core.hex);
+  if (coreCell && coreCell.owner === safeTarget) {
+    coreCell.factoryBrokenCore = true;
+  }
+  return `Player ${safeTarget}'s core went offline${attacker ? ` after Player ${attacker}'s attack` : ""}.`;
+}
+
+function getFactoryLauncherTargetOwner(state, attacker) {
+  const safeAttacker = normalisePlayerNumber(attacker, state);
+  const factory = ensureFactoryState(state);
+  return getFactoryAliveOwners(state)
+    .filter((owner) => owner !== safeAttacker)
+    .sort((a, b) => (
+      factory.resources[b].research - factory.resources[a].research
+      || factory.cores[a].integrity - factory.cores[b].integrity
+      || a - b
+    ))[0] || 0;
+}
+
+function finishFactoryAction(state, logText) {
+  pushLog(logText);
+  if (checkForWinner(state)) {
+    updateStatus();
+    syncClockTickerFromState();
+    render();
+    broadcastOnlineState();
+    return;
+  }
+
+  finishSubmove(state);
+  updateStatus();
+  syncClockTickerFromState();
+  render();
+  broadcastOnlineState();
+}
+
+function showFactoryNotice(text) {
+  if (!text) {
+    return;
+  }
+  pushLog(`Foundry War: ${text}`);
+  updateStatus();
+  render();
+  broadcastOnlineState();
+}
+
+function handleFactoryBuildAction(state, hex, owner) {
+  if (!isCellSupportedForMode(state, hex) || isOccupied(state, hex) || isHexBlockedBySpecials(state, hex)) {
+    return;
+  }
+  if (!getFactoryNearestConnectedAnchor(state, owner, hex, 1)) {
+    return;
+  }
+  const deposit = getFactoryDepositAt(state, hex);
+  const moduleType = deposit ? "miner" : "belt";
+  const moduleDef = getFactoryModuleDef(moduleType);
+  if (!canAffordFactoryCost(state, owner, moduleDef.cost)) {
+    showFactoryNotice(`${moduleDef.name} needs ${formatFactoryCost(moduleDef.cost)}.`);
+    return;
+  }
+
+  saveHistory();
+  spendFactoryResources(state, owner, moduleDef.cost);
+  placeFactoryModule(state, hex, owner, moduleType, {
+    depositType: deposit?.type || null
+  });
+  const depositText = deposit ? ` on ${getFactoryDepositDef(deposit.type).name}` : "";
+  finishFactoryAction(state, `Player ${owner} built ${moduleDef.name}${depositText} at (${hex.q}, ${hex.r}).`);
+}
+
+function handleFactoryOwnCellAction(state, hex, owner, cell) {
+  const moduleType = getFactoryCellType(cell);
+  if (moduleType === "core") {
+    const core = getFactoryCore(state, owner);
+    if (!core?.alive) {
+      return;
+    }
+    if (core.integrity < core.maxIntegrity) {
+      const repairCost = { plates: 3, circuits: 1 };
+      if (!canAffordFactoryCost(state, owner, repairCost)) {
+        showFactoryNotice(`Core repair needs ${formatFactoryCost(repairCost)}.`);
+        return;
+      }
+      saveHistory();
+      spendFactoryResources(state, owner, repairCost);
+      core.integrity = Math.min(core.maxIntegrity, core.integrity + 8 + core.level * 2);
+      finishFactoryAction(state, `Player ${owner} repaired their core to ${core.integrity}/${core.maxIntegrity}.`);
+      return;
+    }
+
+    if (core.level >= 4) {
+      showFactoryNotice("Core is already at maximum tier.");
+      return;
+    }
+    const upgradeCost = getFactoryCoreUpgradeCost(core);
+    if (!canAffordFactoryCost(state, owner, upgradeCost)) {
+      showFactoryNotice(`Core tier ${core.level + 1} needs ${formatFactoryCost(upgradeCost)}.`);
+      return;
+    }
+    saveHistory();
+    spendFactoryResources(state, owner, upgradeCost);
+    core.level += 1;
+    core.maxIntegrity += 8;
+    core.integrity = core.maxIntegrity;
+    cell.serial = ++state.moveSerial;
+    finishFactoryAction(state, `Player ${owner} upgraded their core to tier ${core.level}.`);
+    return;
+  }
+
+  if (moduleType === "miner") {
+    const currentLevel = Math.max(1, Math.round(Number(cell.factoryLevel) || 1));
+    if (currentLevel >= 3) {
+      showFactoryNotice("Extractor is already overclocked.");
+      return;
+    }
+    const upgradeCost = getFactoryMinerUpgradeCost(currentLevel);
+    if (!canAffordFactoryCost(state, owner, upgradeCost)) {
+      showFactoryNotice(`Extractor overclock needs ${formatFactoryCost(upgradeCost)}.`);
+      return;
+    }
+    saveHistory();
+    spendFactoryResources(state, owner, upgradeCost);
+    cell.factoryLevel = currentLevel + 1;
+    cell.serial = ++state.moveSerial;
+    finishFactoryAction(state, `Player ${owner} overclocked an Extractor to tier ${cell.factoryLevel}.`);
+    return;
+  }
+
+  const nextModuleType = FACTORY_MODULE_UPGRADES[moduleType];
+  if (!nextModuleType) {
+    showFactoryNotice(`${getFactoryModuleDef(moduleType).name} is already the end of that line.`);
+    return;
+  }
+  const nextDef = getFactoryModuleDef(nextModuleType);
+  if (!canAffordFactoryCost(state, owner, nextDef.cost)) {
+    showFactoryNotice(`${nextDef.name} upgrade needs ${formatFactoryCost(nextDef.cost)}.`);
+    return;
+  }
+  saveHistory();
+  spendFactoryResources(state, owner, nextDef.cost);
+  cell.factoryType = nextModuleType;
+  cell.factoryLevel = 1;
+  cell.factorySymbol = nextDef.symbol;
+  cell.serial = ++state.moveSerial;
+  finishFactoryAction(state, `Player ${owner} upgraded ${getFactoryModuleDef(moduleType).name} into ${nextDef.name}.`);
+}
+
+function handleFactoryEnemyAction(state, hex, owner, targetCell) {
+  if (!targetCell || !isFactoryCell(targetCell) || targetCell.owner === owner) {
+    return;
+  }
+  const targetOwner = normalisePlayerNumber(targetCell.owner, state);
+  const adjacentAnchor = getFactoryNearestConnectedAnchor(state, owner, hex, 1);
+  const launcher = adjacentAnchor ? null : getFactoryReachableLauncher(state, owner, hex);
+  if (!adjacentAnchor && !launcher) {
+    return;
+  }
+
+  const targetIsCore = getFactoryCellType(targetCell) === "core";
+  const attackCost = launcher
+    ? { payload: 2, power: 1 }
+    : { circuits: 1, payload: targetIsCore ? 2 : 1 };
+  if (!canAffordFactoryCost(state, owner, attackCost)) {
+    showFactoryNotice(`Sabotage needs ${formatFactoryCost(attackCost)}.`);
+    return;
+  }
+
+  saveHistory();
+  spendFactoryResources(state, owner, attackCost);
+  if (targetIsCore) {
+    const damage = launcher ? 5 : 6;
+    const message = damageFactoryCore(
+      state,
+      targetOwner,
+      damage,
+      owner,
+      launcher ? "from a launcher strike" : "from adjacent sabotage"
+    );
+    finishFactoryAction(state, `Player ${owner} attacked Player ${targetOwner}'s core. ${message}`);
+    return;
+  }
+
+  const moduleName = getFactoryModuleDef(getFactoryCellType(targetCell)).name;
+  removeStone(state, hex);
+  gainFactoryResources(state, owner, launcher ? { raw: 1 } : { raw: 1, plates: 1 });
+  finishFactoryAction(state, `Player ${owner} dismantled Player ${targetOwner}'s ${moduleName} at (${hex.q}, ${hex.r}).`);
+}
+
+function handleFactoryBoardClick(hex) {
+  const state = game.state;
+  const owner = state.turnPlayer;
+  ensureFactoryState(state);
+  if (!canFactoryPlayerAct(state, owner)) {
+    return;
+  }
+  if (!isCellSupportedForMode(state, hex)) {
+    return;
+  }
+
+  const targetCell = getCellAt(state, hex);
+  if (targetCell) {
+    if (targetCell.owner === owner) {
+      handleFactoryOwnCellAction(state, hex, owner, targetCell);
+      return;
+    }
+    handleFactoryEnemyAction(state, hex, owner, targetCell);
+    return;
+  }
+  handleFactoryBuildAction(state, hex, owner);
+}
+
+function consumeFactoryRecipe(wallet, inputs, outputs, maxOps) {
+  const cappedOps = Math.max(0, Math.round(Number(maxOps) || 0));
+  let ops = cappedOps;
+  for (const [resource, amount] of Object.entries(inputs)) {
+    const safeAmount = Math.max(1, Number(amount) || 1);
+    ops = Math.min(ops, Math.floor((wallet[resource] || 0) / safeAmount));
+  }
+  if (ops <= 0) {
+    return 0;
+  }
+  for (const [resource, amount] of Object.entries(inputs)) {
+    wallet[resource] -= ops * Math.max(0, Number(amount) || 0);
+  }
+  for (const [resource, amount] of Object.entries(outputs)) {
+    wallet[resource] += ops * Math.max(0, Number(amount) || 0);
+  }
+  return ops;
+}
+
+function getFactoryModuleCounts(entries) {
+  const counts = {};
+  for (const moduleType of Object.keys(FACTORY_MODULE_DEFS)) {
+    counts[moduleType] = 0;
+  }
+  for (const entry of entries) {
+    const moduleType = getFactoryCellType(entry.cell);
+    if (moduleType) {
+      counts[moduleType] = (counts[moduleType] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function resolveFactoryTurnEnd(state, owner) {
+  if (!usesFactoryMode(state)) {
+    return null;
+  }
+  const factory = ensureFactoryState(state);
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const core = factory.cores[safeOwner];
+  if (!core?.alive) {
+    return null;
+  }
+
+  const connectedEntries = getFactoryConnectedEntries(state, safeOwner);
+  const activeEntries = connectedEntries.filter((entry) => getFactoryCellType(entry.cell) !== "core");
+  const counts = getFactoryModuleCounts(activeEntries);
+  const wallet = factory.resources[safeOwner];
+  const ownedFactoryCells = Object.values(state.cells).filter((cell) => isFactoryCell(cell) && cell.owner === safeOwner);
+  const inactiveCount = Math.max(0, ownedFactoryCells.length - connectedEntries.length);
+  const throughput = 2 + (counts.belt || 0) + Math.max(0, core.level - 1) * 2;
+  const report = {
+    mined: {},
+    cut: 0,
+    painted: 0,
+    assembled: 0,
+    researched: 0,
+    launched: 0,
+    damage: 0,
+    inactive: inactiveCount
+  };
+
+  wallet.raw += 1 + core.level;
+  report.mined.raw = (report.mined.raw || 0) + 1 + core.level;
+
+  for (const entry of activeEntries) {
+    if (getFactoryCellType(entry.cell) !== "miner") {
+      continue;
+    }
+    const deposit = getFactoryDepositAt(state, entry.hex) || { type: entry.cell.factoryDepositType || "ore" };
+    const depositDef = getFactoryDepositDef(deposit.type);
+    const level = Math.max(1, Math.round(Number(entry.cell.factoryLevel) || 1));
+    for (const [resource, amount] of Object.entries(depositDef.yield)) {
+      const gained = Math.max(0, Math.round(Number(amount) || 0)) * level;
+      wallet[resource] += gained;
+      report.mined[resource] = (report.mined[resource] || 0) + gained;
+    }
+  }
+
+  report.cut = consumeFactoryRecipe(wallet, { raw: 2 }, { plates: 3 }, Math.min(counts.cutter || 0, throughput));
+  report.painted = consumeFactoryRecipe(wallet, { plates: 1, chroma: 1 }, { circuits: 1 }, Math.min(counts.painter || 0, throughput));
+  report.assembled = consumeFactoryRecipe(wallet, { plates: 2, circuits: 1 }, { payload: 2 }, Math.min(counts.assembler || 0, throughput));
+  report.researched = consumeFactoryRecipe(wallet, { payload: 1, power: 1 }, { research: 3 }, Math.min(counts.lab || 0, throughput));
+
+  const launchOps = Math.min(counts.launcher || 0, throughput);
+  for (let i = 0; i < launchOps; i += 1) {
+    if (wallet.payload < 1 || wallet.power < 1) {
+      break;
+    }
+    const targetOwner = getFactoryLauncherTargetOwner(state, safeOwner);
+    if (!targetOwner) {
+      break;
+    }
+    wallet.payload -= 1;
+    wallet.power -= 1;
+    report.launched += 1;
+    report.damage += 3;
+    damageFactoryCore(state, targetOwner, 3, safeOwner, "from automated launch traffic");
+  }
+
+  factory.lastReport[safeOwner] = report;
+  const minedText = Object.entries(report.mined)
+    .filter(([, amount]) => amount > 0)
+    .map(([resource, amount]) => `+${amount}${resource[0]}`)
+    .join(" ");
+  const launchText = report.launched > 0 ? `, launched ${report.launched} for ${report.damage} damage` : "";
+  const inactiveText = report.inactive > 0 ? `, ${report.inactive} disconnected` : "";
+  pushLog(`Player ${safeOwner} factory tick: ${minedText || "no mining"}, cut ${report.cut}, paint ${report.painted}, assemble ${report.assembled}, research ${report.researched}${launchText}${inactiveText}.`);
+  return report;
+}
+
 function clickPlacement(hex) {
   const state = game.state;
   if (isBrowsingHistory()) {
@@ -5720,6 +6641,11 @@ function clickPlacement(hex) {
     syncClockTickerFromState();
     render();
     broadcastOnlineState();
+    return;
+  }
+
+  if (usesFactoryMode(state)) {
+    handleFactoryBoardClick(hex);
     return;
   }
 
@@ -6158,6 +7084,14 @@ function updateStatus() {
     const itemDef = getBedSiegeItemDef(getBedSiegeSelectedItem(state, owner));
     const wallet = bedSiege.resources[owner];
     ui.subturnText.textContent += ` | ${wallet.iron}i/${wallet.gold}g/${wallet.diamond}d/${wallet.emerald}e | ${itemDef.name} | ${getBedSiegeSummary(state)}`;
+  }
+  if (usesFactoryMode(state)) {
+    ensureFactoryState(state);
+    if (state.winner) {
+      ui.subturnText.textContent = `Foundry War complete | ${getFactoryScoreSummary(state)}`;
+    } else if (!isBrowsingHistory()) {
+      ui.subturnText.textContent = `${state.movesLeftInTurn} factory action${state.movesLeftInTurn === 1 ? "" : "s"} left | ${getFactoryPlayerSummary(state, state.turnPlayer)} | ${getFactoryScoreSummary(state)}`;
+    }
   }
 
   updateClockUI();
@@ -6816,6 +7750,9 @@ function drawGrid() {
 }
 
 function drawOriginIndicator() {
+  if (usesFactoryMode(game.state)) {
+    return;
+  }
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -6850,6 +7787,69 @@ function drawOriginIndicator() {
 
 function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
+}
+
+function drawFactoryOverlay() {
+  if (!usesFactoryMode(game.state)) {
+    return;
+  }
+  const size = currentHexSize();
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const deposits = getFactoryDepositDefinitions(game.state);
+
+  ctx.save();
+  for (const deposit of deposits) {
+    const depositDef = getFactoryDepositDef(deposit.type);
+    const world = boardCellToPixel(deposit.hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
+      continue;
+    }
+    drawBoardShape(
+      screen.x,
+      screen.y,
+      size * 0.94,
+      depositDef.fill,
+      depositDef.stroke,
+      1.7,
+      deposit.hex
+    );
+    ctx.fillStyle = "rgba(236, 242, 255, 0.78)";
+    ctx.font = `${Math.max(8, Math.min(13, size * 0.38))}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(depositDef.symbol, screen.x, screen.y);
+  }
+
+  for (const owner of getPlayerNumbers(game.state)) {
+    const connected = getFactoryConnectedKeySet(game.state, owner);
+    const style = getPlayerStyle(owner);
+    ctx.strokeStyle = style.echoStroke;
+    ctx.lineWidth = Math.max(1.2, size * 0.08);
+    ctx.lineCap = "round";
+    for (const key of connected) {
+      const from = parseKey(key);
+      const fromWorld = boardCellToPixel(from, size, game.state);
+      const fromScreen = worldToScreen(fromWorld.x, fromWorld.y);
+      if (!isOnScreenWithMargin(fromScreen, size * 2, w, h)) {
+        continue;
+      }
+      for (const next of getAdjacentsForMode(game.state, from)) {
+        const nextKey = keyOf(next.q, next.r);
+        if (!connected.has(nextKey) || nextKey <= key) {
+          continue;
+        }
+        const nextWorld = boardCellToPixel(next, size, game.state);
+        const nextScreen = worldToScreen(nextWorld.x, nextWorld.y);
+        ctx.beginPath();
+        ctx.moveTo(fromScreen.x, fromScreen.y);
+        ctx.lineTo(nextScreen.x, nextScreen.y);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function drawBedSiegeOverlay() {
@@ -6947,6 +7947,62 @@ function drawEverythingBagelOverlay() {
     drawBoardShape(screen.x, screen.y, size * 0.95, entry.fill, entry.stroke, 1.8, entry.hex);
     ctx.fillStyle = "rgba(236, 242, 255, 0.82)";
     ctx.fillText(entry.label, screen.x, screen.y);
+  }
+  ctx.restore();
+}
+
+function drawFactoryPiece(hex, cell, screen, size, connected) {
+  const moduleType = getFactoryCellType(cell);
+  const moduleDef = getFactoryModuleDef(moduleType);
+  const ownerStyle = getPlayerStyle(cell.owner);
+  const coreOwner = moduleType === "core" ? getFactoryCoreOwnerAt(game.state, hex) : 0;
+  const core = coreOwner ? getFactoryCore(game.state, coreOwner) : null;
+  const brokenCore = moduleType === "core" && core && !core.alive;
+
+  ctx.save();
+  ctx.globalAlpha = connected || moduleType === "core" ? 1 : 0.48;
+  const outerFill = brokenCore ? "rgba(255, 74, 93, 0.18)" : ownerStyle.fill;
+  const innerFill = brokenCore ? "rgba(80, 26, 38, 0.72)" : (moduleType === "core" ? ownerStyle.hex : moduleDef.fill);
+  drawBoardShape(
+    screen.x,
+    screen.y,
+    size * 0.86,
+    outerFill,
+    ownerStyle.strongStroke,
+    moduleType === "core" ? 2.4 : 1.7,
+    hex
+  );
+  drawBoardShape(
+    screen.x,
+    screen.y,
+    size * (moduleType === "core" ? 0.56 : 0.50),
+    innerFill,
+    "rgba(255, 255, 255, 0.52)",
+    1.2,
+    hex
+  );
+
+  ctx.fillStyle = brokenCore ? "rgba(255, 231, 189, 0.95)" : "rgba(236, 242, 255, 0.95)";
+  ctx.font = `${Math.max(9, Math.min(15, size * 0.44))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(brokenCore ? "!" : moduleDef.symbol, screen.x, screen.y - (moduleType === "core" ? size * 0.07 : 0));
+
+  if (moduleType === "miner") {
+    const level = Math.max(1, Math.round(Number(cell.factoryLevel) || 1));
+    const depositType = cell.factoryDepositType || getFactoryDepositAt(game.state, hex)?.type || "ore";
+    const depositDef = getFactoryDepositDef(depositType);
+    ctx.fillStyle = "rgba(6, 12, 23, 0.78)";
+    ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
+    ctx.fillText(`${depositDef.symbol}${level}`, screen.x, screen.y + size * 0.32);
+  } else if (moduleType === "core" && core) {
+    ctx.fillStyle = "rgba(6, 12, 23, 0.76)";
+    ctx.font = `${Math.max(7, Math.min(10, size * 0.27))}px Inter, system-ui, sans-serif`;
+    ctx.fillText(`${core.integrity}/${core.maxIntegrity}`, screen.x, screen.y + size * 0.30);
+  } else if (!connected) {
+    ctx.fillStyle = "rgba(236, 242, 255, 0.76)";
+    ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
+    ctx.fillText("OFF", screen.x, screen.y + size * 0.31);
   }
   ctx.restore();
 }
@@ -7308,12 +8364,33 @@ function drawPieces() {
   const recentSerials = getRecentSerials(game.state.cells);
   const recentSerialSet = new Set(recentSerials);
   const newestSerial = recentSerials[0];
+  const factoryConnectedByOwner = usesFactoryMode(game.state)
+    ? createPlayerMap(getPlayerCount(game.state), (owner) => getFactoryConnectedKeySet(game.state, owner))
+    : null;
 
   for (const [key, cell] of Object.entries(game.state.cells)) {
     const hex = parseKey(key);
     const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
+      continue;
+    }
+
+    if (usesFactoryMode(game.state) && isFactoryCell(cell)) {
+      const connected = Boolean(factoryConnectedByOwner?.[cell.owner]?.has(key));
+      if (recentSerialSet.has(cell.serial)) {
+        const ownerStyle = getPlayerStyle(cell.owner);
+        drawBoardShape(
+          screen.x,
+          screen.y,
+          size * (cell.serial === newestSerial ? 0.99 : 0.92),
+          "rgba(255, 255, 255, 0.04)",
+          ownerStyle.strongStroke,
+          cell.serial === newestSerial ? 3 : 2,
+          hex
+        );
+      }
+      drawFactoryPiece(hex, cell, screen, size, connected);
       continue;
     }
 
@@ -7660,7 +8737,7 @@ function drawStraightWinnerLineCells(cells, size) {
 }
 
 function drawWinnerLineHint() {
-  if (usesBedSiegeMode(game.state)) {
+  if (usesBedSiegeMode(game.state) || usesFactoryMode(game.state)) {
     return;
   }
   if (!game.state.lastPlacement) {
@@ -7762,6 +8839,7 @@ function renderNow() {
   ctx.clearRect(0, 0, w, h);
 
   drawGrid();
+  drawFactoryOverlay();
   drawBedSiegeOverlay();
   drawEverythingBagelOverlay();
   drawOriginIndicator();
