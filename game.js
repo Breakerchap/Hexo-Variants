@@ -5,6 +5,7 @@ const timerHelpers = window.HexTicTacToeTimer || {};
 
 const ui = {
   appRoot: document.getElementById("appRoot"),
+  boardWrap: document.querySelector(".boardWrap"),
   modePicker: document.getElementById("modePicker"),
   newGameBtn: document.getElementById("newGameBtn"),
   historyBackBtn: document.getElementById("historyBackBtn"),
@@ -6120,6 +6121,11 @@ function updateStatus() {
   const displayPlayer = state.winner || state.turnPlayer;
   ui.turnBig.textContent = state.winner ? `Player ${state.winner} wins` : `Player ${state.turnPlayer}`;
   ui.turnBig.className = `turnBig playerP${normalisePlayerNumber(displayPlayer, getPlayerCount(state))}`;
+  if (ui.boardWrap) {
+    const turnPlayer = normalisePlayerNumber(displayPlayer, getPlayerCount(state));
+    ui.boardWrap.classList.remove("turnP1", "turnP2", "turnP3", "turnP4");
+    ui.boardWrap.classList.add(`turnP${turnPlayer}`);
+  }
   ui.roundText.textContent = String(state.round);
   ui.movesLeftText.textContent = String(state.movesLeftInTurn);
   ui.duckPhaseText.textContent = state.duckPhase ? "Yes" : "No";
