@@ -74,6 +74,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.
+- **Bed Siege**: a Bedwars-style secret mode with starting islands, beds, generators, shop resources, defensive blocks, tools, bridge eggs, pearls, and bed-break win conditions.
 
 ## Project Structure
 

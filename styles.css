@@ -219,6 +219,7 @@ body::after {
 .grid2 select,
 #armoryControls select,
 #armoryControls button,
+#bedSiegeControls button,
 .timerInputGroup input,
 .firstPlayerSelectWrap select,
 .modeToggle,
@@ -234,12 +235,14 @@ body::after {
   transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease;
 }
 
-#armoryControls {
+#armoryControls,
+#bedSiegeControls {
   display: grid;
   gap: 10px;
 }
 
-#armoryControls[hidden] {
+#armoryControls[hidden],
+#bedSiegeControls[hidden] {
   display: none;
 }
 
@@ -254,12 +257,14 @@ body::after {
   gap: 6px;
 }
 
-#armoryControls .small {
+#armoryControls .small,
+#bedSiegeControls .small {
   line-height: 1.35;
 }
 
 #armoryControls select,
-#armoryControls button {
+#armoryControls button,
+#bedSiegeControls button {
   min-height: 42px;
 }
 
@@ -813,6 +818,7 @@ canvas:focus-visible {
   .controls select,
   #armoryControls select,
   #armoryControls button,
+  #bedSiegeControls button,
   .timerInputGroup input,
   .firstPlayerSelectWrap select,
   .modeToggle,
