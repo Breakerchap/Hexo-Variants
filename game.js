@@ -205,8 +205,8 @@ const ARMORY_PIECE_DEFS = {
 };
 const BED_SIEGE_RESOURCE_TYPES = ["iron", "gold", "diamond", "emerald"];
 const BED_SIEGE_STARTING_RESOURCES = {
-  iron: 12,
-  gold: 4,
+  iron: 0,
+  gold: 0,
   diamond: 0,
   emerald: 0
 };
@@ -229,8 +229,8 @@ const BED_SIEGE_ITEM_DEFS = {
     name: "Wool",
     symbol: "W",
     category: "block",
-    bundle: 16,
-    startingCount: 16,
+    bundle: 4,
+    startingCount: 8,
     cost: { iron: 4 },
     blockType: "wool",
     description: "Cheap bridging and bed defense. Breakable by hand."
@@ -290,7 +290,7 @@ const BED_SIEGE_ITEM_DEFS = {
     bundle: 1,
     startingCount: 0,
     cost: { gold: 3, diamond: 1 },
-    description: "Breaks one enemy defense block from up to 5 spaces away."
+    description: "Blasts defense blocks in a radius-1 area from up to 5 spaces away."
   },
   shears: {
     name: "Shears",
@@ -300,7 +300,7 @@ const BED_SIEGE_ITEM_DEFS = {
     maxCount: 1,
     startingCount: 0,
     cost: { iron: 20 },
-    description: "Lets you tear through wool defenses."
+    description: "Permanent tool: breaking wool also clears adjacent enemy wool."
   },
   axe: {
     name: "Axe",
@@ -1880,6 +1880,66 @@ function payBedSiegeBreakCost(state, owner, targetCell) {
   if (getBedSiegeBlockType(targetCell) === "obsidian") {
     spendBedSiegeResources(state, owner, { diamond: 1 });
   }
+}
+
+function hexToRgb(hex) {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || ""));
+  if (!match) {
+    return { r: 239, g: 245, b: 255 };
+  }
+  return {
+    r: parseInt(match[1], 16),
+    g: parseInt(match[2], 16),
+    b: parseInt(match[3], 16)
+  };
+}
+
+function rgbaFromRgb(rgb, alpha = 1) {
+  return `rgba(${Math.round(rgb.r)}, ${Math.round(rgb.g)}, ${Math.round(rgb.b)}, ${Math.max(0, Math.min(1, alpha))})`;
+}
+
+function mixRgb(a, b, amount) {
+  const t = Math.max(0, Math.min(1, Number(amount) || 0));
+  return {
+    r: a.r + ((b.r - a.r) * t),
+    g: a.g + ((b.g - a.g) * t),
+    b: a.b + ((b.b - a.b) * t)
+  };
+}
+
+function getBedSiegePastelTeamFill(ownerStyle) {
+  return rgbaFromRgb(mixRgb(hexToRgb(ownerStyle?.hex), { r: 255, g: 255, b: 255 }, 0.5), 0.94);
+}
+
+function getBedSiegeFireballTargets(state, centerHex) {
+  return uniqueSupportedHexes(state, [
+    centerHex,
+    ...getAdjacentsForMode(state, centerHex)
+  ]).filter((hex) => {
+    const cell = getCellAt(state, hex);
+    return cell && isBedSiegeBlockCell(cell) && !isBedSiegeBedCell(cell);
+  });
+}
+
+function getBedSiegeShearTargets(state, owner, centerHex) {
+  const centerCell = getCellAt(state, centerHex);
+  if (!centerCell || getBedSiegeBlockType(centerCell) !== "wool") {
+    return [centerHex];
+  }
+  if (getBedSiegeInventoryCount(state, owner, "shears") <= 0) {
+    return [centerHex];
+  }
+  return uniqueSupportedHexes(state, [
+    centerHex,
+    ...getAdjacentsForMode(state, centerHex)
+  ]).filter((hex) => {
+    const cell = getCellAt(state, hex);
+    return cell
+      && cell.kind === "stone"
+      && cell.owner !== owner
+      && isBedSiegeBlockCell(cell)
+      && getBedSiegeBlockType(cell) === "wool";
+  });
 }
 
 function getBedSiegeGeneratorController(state, generatorHex) {
@@ -5516,10 +5576,20 @@ function handleBedSiegeAttackAction(state, hex, owner, targetCell) {
       showBedSiegeNotice("Fireballs cannot break beds.");
       return;
     }
+    if (!isBedSiegeBlockCell(targetCell)) {
+      showBedSiegeNotice("Fireballs only damage defense blocks.");
+      return;
+    }
+    const blastTargets = getBedSiegeFireballTargets(state, hex);
+    if (blastTargets.length <= 0) {
+      return;
+    }
     saveHistory();
     consumeBedSiegeInventoryItem(state, owner, "fireball", 1);
-    removeStone(state, hex);
-    finishBedSiegeBoardAction(state, `Player ${owner} fireballed Player ${targetOwner}'s block at (${hex.q}, ${hex.r}).`);
+    for (const target of blastTargets) {
+      removeStone(state, target);
+    }
+    finishBedSiegeBoardAction(state, `Player ${owner} fireballed (${hex.q}, ${hex.r}) and blasted ${blastTargets.length} block${blastTargets.length === 1 ? "" : "s"}.`);
     return;
   }
 
@@ -5534,11 +5604,17 @@ function handleBedSiegeAttackAction(state, hex, owner, targetCell) {
 
   saveHistory();
   payBedSiegeBreakCost(state, owner, targetCell);
-  removeStone(state, hex);
+  const shearTargets = isBedSiegeBlockCell(targetCell)
+    ? getBedSiegeShearTargets(state, owner, hex)
+    : [hex];
+  for (const target of shearTargets) {
+    removeStone(state, target);
+  }
   const blockName = isBedSiegeBlockCell(targetCell)
     ? getBedSiegeItemDef(getBedSiegeBlockType(targetCell)).name
     : "stone";
-  finishBedSiegeBoardAction(state, `Player ${owner} broke Player ${targetOwner}'s ${blockName} at (${hex.q}, ${hex.r}).`);
+  const shearText = shearTargets.length > 1 ? ` Shears cleared ${shearTargets.length - 1} extra wool.` : "";
+  finishBedSiegeBoardAction(state, `Player ${owner} broke Player ${targetOwner}'s ${blockName} at (${hex.q}, ${hex.r}).${shearText}`);
 }
 
 function handleBedSiegeBoardClick(hex) {
@@ -7241,8 +7317,8 @@ function drawPieces() {
       : null;
     const bedSiegeBlockStyle = bedSiegeBlockType ? BED_SIEGE_BLOCK_STYLES[bedSiegeBlockType] : null;
     const isTeamWool = bedSiegeBlockType === "wool";
-    const colour = isTeamWool ? ownerStyle.hex : (bedSiegeBlockStyle?.fill || ownerStyle.hex);
-    const blockStroke = isTeamWool ? ownerStyle.strongStroke : (bedSiegeBlockStyle?.stroke || "rgba(255,255,255,0.45)");
+    const colour = isTeamWool ? getBedSiegePastelTeamFill(ownerStyle) : (bedSiegeBlockStyle?.fill || ownerStyle.hex);
+    const blockStroke = bedSiegeBlockType ? ownerStyle.strongStroke : "rgba(255,255,255,0.45)";
     const blockText = isTeamWool ? "rgba(6, 12, 23, 0.72)" : bedSiegeBlockStyle?.text;
     if (recentSerialSet.has(cell.serial)) {
       const isNewest = cell.serial === newestSerial;
