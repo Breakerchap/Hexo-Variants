@@ -6071,57 +6071,22 @@ function getFactoryHomeHexForOwner(state, owner) {
   return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
 }
 
-function getFactoryLocalOreHexesForOwner(state, owner) {
-  const home = getFactoryHomeHexForOwner(state, owner);
-  const inwardIndex = dirs
-    .map((dir, index) => ({
-      dir,
-      index,
-      hex: addHex(home, dir)
-    }))
-    .filter((entry) => isCellSupportedForMode(state, entry.hex))
-    .sort((a, b) => (
-      getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
-      || a.hex.q - b.hex.q
-      || a.hex.r - b.hex.r
-    ))[0]?.index ?? 0;
-  const inward = dirs[inwardIndex];
-  const left = dirs[(inwardIndex + 1) % dirs.length];
-  const right = dirs[(inwardIndex + dirs.length - 1) % dirs.length];
-  return [
-    addHex(addHex(addHex(addHex(home, inward), inward), inward), left),
-    addHex(addHex(addHex(addHex(home, inward), inward), inward), right)
-  ];
-}
-
 function getFactoryDepositDefinitions(state) {
-  const deposits = [];
-
-  for (const owner of getPlayerNumbers(state)) {
-    for (const [index, hex] of getFactoryLocalOreHexesForOwner(state, owner).entries()) {
-      deposits.push({
-        id: `p${owner}-ore-${index + 1}-${hex.q}-${hex.r}`,
-        owner,
-        type: "ore",
-        hex
-      });
-    }
-  }
-
-  const neutralDeposits = [
+  const deposits = [
+    { hex: { q: -3, r: -2 }, type: "ore" },
+    { hex: { q: -5, r: 2 }, type: "ore" },
+    { hex: { q: 5, r: -2 }, type: "ore" },
+    { hex: { q: 3, r: 2 }, type: "ore" },
     { hex: { q: 0, r: 0 }, type: "flux" }
   ];
-  for (const deposit of neutralDeposits) {
-    deposits.push({
-      id: `neutral-${deposit.type}-${deposit.hex.q}-${deposit.hex.r}`,
-      owner: 0,
-      type: deposit.type,
-      hex: { ...deposit.hex }
-    });
-  }
 
   const seen = new Set();
-  return deposits.filter((deposit) => {
+  return deposits.map((deposit) => ({
+    id: `neutral-${deposit.type}-${deposit.hex.q}-${deposit.hex.r}`,
+    owner: 0,
+    type: deposit.type,
+    hex: { ...deposit.hex }
+  })).filter((deposit) => {
     const key = keyOf(deposit.hex.q, deposit.hex.r);
     if (seen.has(key) || !isCellSupportedForMode(state, deposit.hex)) {
       return false;
