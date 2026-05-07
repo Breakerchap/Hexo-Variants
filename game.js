@@ -354,20 +354,20 @@ const BED_SIEGE_BLOCK_STYLES = {
   }
 };
 const FACTORY_CORE_BASE_INTEGRITY = 24;
-const FACTORY_REMOTE_STRIKE_RANGE = 6;
-const FACTORY_MAX_ROUTE_BONUS = 4;
+const FACTORY_REMOTE_STRIKE_RANGE = 4;
+const FACTORY_MAX_ROUTE_BONUS = 2;
 const FACTORY_RESOURCE_TYPES = ["ore", "flux", "points"];
 const FACTORY_STARTING_RESOURCES = {
   ore: 0,
   flux: 0,
-  points: 8
+  points: 6
 };
 const FACTORY_RESOURCE_LABELS = {
   ore: { name: "Ore", short: "o" },
   flux: { name: "Flux", short: "f" },
   points: { name: "Points", short: "pt" }
 };
-const FACTORY_MODULE_ORDER = ["belt", "miner", "wall", "forge", "launcher"];
+const FACTORY_MODULE_ORDER = ["belt", "miner", "wall", "mine", "forge", "launcher"];
 const FACTORY_MODULE_UPGRADES = {
   belt: "forge"
 };
@@ -404,13 +404,21 @@ const FACTORY_MODULE_DEFS = {
     hp: 3,
     description: "A tough factory block that absorbs attacks and helps shield your route."
   },
+  mine: {
+    name: "Blast Charge",
+    symbol: "B",
+    fill: "rgba(255, 74, 93, 0.22)",
+    cost: { points: 4 },
+    hp: 1,
+    description: "A placeable charge. Click your own connected charge to detonate it against adjacent enemy factory tiles."
+  },
   forge: {
     name: "Upgraded Conveyor",
     symbol: "+",
     fill: "rgba(118, 227, 168, 0.22)",
     cost: { points: 3 },
     hp: 2,
-    description: "An upgraded conveyor. Each connected upgraded conveyor adds +1 point to every delivered resource, up to +4."
+    description: "An upgraded conveyor. Connected upgraded conveyors add a small bonus to delivered resources, up to +2."
   },
   launcher: {
     name: "Cannon",
@@ -422,7 +430,7 @@ const FACTORY_MODULE_DEFS = {
   }
 };
 const FACTORY_COMMAND_GROUPS = {
-  build: ["belt", "miner", "wall", "launcher"],
+  build: ["belt", "miner", "wall", "mine", "launcher"],
   attack: ["strike", "shot"]
 };
 const FACTORY_COMMAND_DEFS = {
@@ -450,6 +458,14 @@ const FACTORY_COMMAND_DEFS = {
     cost: FACTORY_MODULE_DEFS.wall.cost,
     description: FACTORY_MODULE_DEFS.wall.description
   },
+  mine: {
+    name: "Blast Charge",
+    symbol: "B",
+    moduleType: "mine",
+    group: "build",
+    cost: FACTORY_MODULE_DEFS.mine.cost,
+    description: FACTORY_MODULE_DEFS.mine.description
+  },
   launcher: {
     name: "Cannon",
     symbol: "X",
@@ -474,7 +490,7 @@ const FACTORY_COMMAND_DEFS = {
     cost: { points: 7 },
     coreDamage: 3,
     moduleDamage: 2,
-    description: "Spend points from a connected Cannon to hit an enemy tile up to 6 spaces away."
+    description: "Spend points from a connected Cannon to hit an enemy tile up to 4 spaces away."
   }
 };
 const FACTORY_DEPOSIT_DEFS = {
@@ -764,8 +780,8 @@ const MODES = {
   },
   factoryFoundry: {
     name: "Foundry War",
-    summary: "Secret factory duel: place miners around Ore and the middle Flux node, route them home with conveyors, upgrade belts for bigger deliveries, then spend points to crack rival cores. Last base standing wins.",
-    hint: "Build from your core. The most adjacent Miner strength controls each resource node. Ore is worth 1, middle Flux is worth 3, upgraded conveyors add delivery value, and points buy blocks, cannons, repairs, and attacks.",
+    summary: "Secret factory duel: each player has one mirrored Ore node, the middle Flux node is contested, conveyors deliver resources home for points, and points buy blocks, cannons, blast charges, repairs, and attacks. Last base standing wins.",
+    hint: "Build from your core. The most adjacent Miner strength controls a node. Ore is worth 1, middle Flux is worth 3, upgraded conveyors add a small delivery bonus, Cannon range is 4, and Blast Charges damage adjacent factories.",
     secret: true
   },
   everythingBagel: {
@@ -5978,35 +5994,40 @@ function getFactoryHomeHexForOwner(state, owner) {
   return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
 }
 
+function getFactoryHexTowardOrigin(state, hex, steps = 1) {
+  let cursor = { q: Math.trunc(Number(hex?.q) || 0), r: Math.trunc(Number(hex?.r) || 0) };
+  for (let i = 0; i < Math.max(0, Math.round(Number(steps) || 0)); i += 1) {
+    const next = getAdjacentsForMode(state, cursor)
+      .filter((candidate) => isCellSupportedForMode(state, candidate))
+      .sort((a, b) => (
+        getDistanceForMode(state, a) - getDistanceForMode(state, b)
+        || a.q - b.q
+        || a.r - b.r
+      ))[0];
+    if (!next || getDistanceForMode(state, next) >= getDistanceForMode(state, cursor)) {
+      break;
+    }
+    cursor = next;
+  }
+  return cursor;
+}
+
 function getFactoryDepositDefinitions(state) {
   const deposits = [];
-  const localDeposits = [
-    { offset: { q: 2, r: 0 }, type: "ore" },
-    { offset: { q: 0, r: 2 }, type: "ore" },
-    { offset: { q: 2, r: -2 }, type: "ore" }
-  ];
 
   for (const owner of getPlayerNumbers(state)) {
     const home = getFactoryHomeHexForOwner(state, owner);
-    for (const deposit of localDeposits) {
-      const hex = addHex(home, deposit.offset);
-      deposits.push({
-        id: `p${owner}-${deposit.type}-${hex.q}-${hex.r}`,
-        owner,
-        type: deposit.type,
-        hex
-      });
-    }
+    const hex = getFactoryHexTowardOrigin(state, home, 3);
+    deposits.push({
+      id: `p${owner}-ore-${hex.q}-${hex.r}`,
+      owner,
+      type: "ore",
+      hex
+    });
   }
 
   const neutralDeposits = [
-    { hex: { q: 0, r: 0 }, type: "flux" },
-    { hex: { q: 4, r: 0 }, type: "ore" },
-    { hex: { q: -4, r: 0 }, type: "ore" },
-    { hex: { q: 0, r: 4 }, type: "ore" },
-    { hex: { q: 0, r: -4 }, type: "ore" },
-    { hex: { q: 4, r: -4 }, type: "ore" },
-    { hex: { q: -4, r: 4 }, type: "ore" }
+    { hex: { q: 0, r: 0 }, type: "flux" }
   ];
   for (const deposit of neutralDeposits) {
     deposits.push({
@@ -6433,6 +6454,54 @@ function damageFactoryModule(state, hex, amount) {
   return { removed: false, hp: nextHp, maxHp, moduleName };
 }
 
+function getFactoryBlastChargeTargets(state, hex, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  return getAdjacentsForMode(state, hex)
+    .map((targetHex) => ({ hex: targetHex, cell: getCellAt(state, targetHex) }))
+    .filter((entry) => (
+      entry.cell
+      && isFactoryCell(entry.cell)
+      && isValidPlayerNumber(entry.cell.owner, state)
+      && normalisePlayerNumber(entry.cell.owner, state) !== safeOwner
+    ));
+}
+
+function handleFactoryBlastChargeAction(state, hex, owner) {
+  const connected = getFactoryConnectedKeySet(state, owner);
+  if (!connected.has(keyOf(hex.q, hex.r))) {
+    showFactoryNotice("Blast Charges must stay connected to detonate.");
+    return;
+  }
+
+  const targets = getFactoryBlastChargeTargets(state, hex, owner);
+  if (targets.length <= 0) {
+    showFactoryNotice("Blast Charge needs an adjacent enemy factory tile.");
+    return;
+  }
+
+  saveHistory();
+  let coreHits = 0;
+  let moduleHits = 0;
+  let brokenModules = 0;
+  for (const target of targets) {
+    const targetOwner = normalisePlayerNumber(target.cell.owner, state);
+    if (getFactoryCellType(target.cell) === "core") {
+      coreHits += 1;
+      damageFactoryCore(state, targetOwner, 3, owner, "from a blast charge");
+      continue;
+    }
+    moduleHits += 1;
+    const result = damageFactoryModule(state, target.hex, 2);
+    if (result.removed) {
+      brokenModules += 1;
+    }
+  }
+  removeStone(state, hex);
+  const coreText = coreHits > 0 ? `${coreHits} core hit${coreHits === 1 ? "" : "s"}` : "no core hits";
+  const moduleText = moduleHits > 0 ? `${moduleHits} module hit${moduleHits === 1 ? "" : "s"} (${brokenModules} broken)` : "no module hits";
+  finishFactoryAction(state, `Player ${owner} detonated a Blast Charge: ${coreText}, ${moduleText}.`);
+}
+
 function finishFactoryAction(state, logText) {
   pushLog(logText);
   if (checkForWinner(state)) {
@@ -6502,12 +6571,17 @@ function handleFactoryBuildAction(state, hex, owner) {
 }
 
 function handleFactoryOwnCellAction(state, hex, owner, cell) {
+  const moduleType = getFactoryCellType(cell);
+  if (moduleType === "mine") {
+    handleFactoryBlastChargeAction(state, hex, owner);
+    return;
+  }
+
   const selectedAction = getFactorySelectedAction(state, owner);
   if (getFactoryCommandDef(selectedAction).group === "attack") {
     showFactoryNotice("Attack actions need an enemy target.");
     return;
   }
-  const moduleType = getFactoryCellType(cell);
   if (moduleType === "core") {
     const core = getFactoryCore(state, owner);
     if (!core?.alive) {
@@ -7433,7 +7507,7 @@ function renderFactoryPanel() {
     ui.factoryActiveActionText.textContent = `Active: Player ${owner} | ${actionDef.name} | ${wallet.points}pt${reportText}`;
   }
   if (ui.factoryRuleText) {
-    ui.factoryRuleText.textContent = "Ore nodes are worth 1. The middle Flux node is worth 3. Most adjacent Miner strength controls a node; connected conveyors carry it home for points, and upgraded conveyors add value to every delivery. Spend points on blocks, cannons, repairs, and attacks. Last core alive wins.";
+    ui.factoryRuleText.textContent = "Each player has one mirrored Ore node worth 1. The middle Flux node is worth 3. Most adjacent Miner strength controls a node; connected conveyors carry it home for points, and upgraded conveyors add up to +2 value. Cannons shoot 4 spaces. Blast Charges detonate into adjacent enemy factories. Last core alive wins.";
   }
 
   renderFactoryCommandButtons(
@@ -9414,11 +9488,8 @@ function renderNow() {
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
   ui.coordText.textContent = `${getBoardCoordinateLabel(game.state)}: (${game.hoverHex.q}, ${game.hoverHex.r})`;
   if (usesFactoryMode(game.state)) {
-    const animationNow = window.performance?.now ? window.performance.now() : Date.now();
-    if (animationNow - game.lastFactoryAnimationAt >= 16) {
-      game.lastFactoryAnimationAt = animationNow;
-      scheduleFactoryAmbientAnimation();
-    }
+    game.lastFactoryAnimationAt = window.performance?.now ? window.performance.now() : Date.now();
+    scheduleFactoryAmbientAnimation();
   } else {
     game.lastFactoryAnimationAt = 0;
     game.factoryAnimationFramePending = false;
@@ -9453,6 +9524,9 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap);
+  game.factoryAnimationDisabled = false;
+  game.factoryAnimationFramePending = false;
+  game.lastFactoryAnimationAt = 0;
   const startingPlayer = resolveStartingPlayer(game.turnOrder, playerCount);
   game.state.startingPlayer = startingPlayer;
   game.state.turnPlayer = startingPlayer;
