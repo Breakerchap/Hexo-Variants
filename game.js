@@ -5987,37 +5987,40 @@ function getFactoryHomeHexForOwner(state, owner) {
     4: {
       1: { q: -8, r: 0 },
       2: { q: 8, r: 0 },
-      3: { q: 0, r: 8 },
-      4: { q: 0, r: -8 }
+      3: { q: 4, r: -8 },
+      4: { q: -4, r: 8 }
     }
   };
   return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
 }
 
-function getFactoryHexTowardOrigin(state, hex, steps = 1) {
-  let cursor = { q: Math.trunc(Number(hex?.q) || 0), r: Math.trunc(Number(hex?.r) || 0) };
-  for (let i = 0; i < Math.max(0, Math.round(Number(steps) || 0)); i += 1) {
-    const next = getAdjacentsForMode(state, cursor)
-      .filter((candidate) => isCellSupportedForMode(state, candidate))
-      .sort((a, b) => (
-        getDistanceForMode(state, a) - getDistanceForMode(state, b)
-        || a.q - b.q
-        || a.r - b.r
-      ))[0];
-    if (!next || getDistanceForMode(state, next) >= getDistanceForMode(state, cursor)) {
-      break;
+function getFactoryLocalOreHexForOwner(state, owner) {
+  const playerCount = getPlayerCount(state);
+  const layouts = {
+    2: {
+      1: { q: -4, r: 0 },
+      2: { q: 4, r: 0 }
+    },
+    3: {
+      1: { q: -4, r: 0 },
+      2: { q: 4, r: -4 },
+      3: { q: 0, r: 4 }
+    },
+    4: {
+      1: { q: -5, r: 0 },
+      2: { q: 5, r: 0 },
+      3: { q: 3, r: -5 },
+      4: { q: -3, r: 5 }
     }
-    cursor = next;
-  }
-  return cursor;
+  };
+  return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
 }
 
 function getFactoryDepositDefinitions(state) {
   const deposits = [];
 
   for (const owner of getPlayerNumbers(state)) {
-    const home = getFactoryHomeHexForOwner(state, owner);
-    const hex = getFactoryHexTowardOrigin(state, home, 3);
+    const hex = getFactoryLocalOreHexForOwner(state, owner);
     deposits.push({
       id: `p${owner}-ore-${hex.q}-${hex.r}`,
       owner,
