@@ -6089,8 +6089,8 @@ function getFactoryLocalOreHexesForOwner(state, owner) {
   const left = dirs[(inwardIndex + 1) % dirs.length];
   const right = dirs[(inwardIndex + dirs.length - 1) % dirs.length];
   return [
-    addHex(addHex(addHex(addHex(home, inward), inward), inward), left),
-    addHex(addHex(addHex(addHex(home, inward), inward), inward), right)
+    addHex(addHex(addHex(addHex(addHex(home, inward), inward), inward), left), { q: 0, r: -1 }),
+    addHex(addHex(addHex(addHex(addHex(home, inward), inward), inward), right), { q: 0, r: 1 })
   ];
 }
 
