@@ -1,7 +1,7 @@
 # Infinite Hex Tic-Tac-Toe
 
 A browser-based infinite strategy game where players race to connect **6 in a row**.  
-It includes stackable rule modes like `Triangle Grid`, `Square Grid`, `Octagon Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, `Meteor`, `LDM`, and `Extreme LDM`.
+It includes stackable rule modes like `Triangle Grid`, `Square Grid`, `Octagon Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.
 
 ## Quick Start
 
@@ -62,14 +62,13 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - `New Game`: restart with selected modes
 - `Back` / `Forward`: browse earlier/later board states
 - `Centre Board`: reset camera
+- `LDM` / `XLDM`: toggle low-detail rendering from the footer
 
 ## Modes
 
 - **Triangle Grid**: swaps the board from hex tiles to triangle cells (place inside triangles; all other rules still apply).
 - **Square Grid**: swaps the board from hex tiles to square cells (place inside squares; all other rules still apply).
 - **Octagon Grid**: swaps the board from hex tiles to an octagon-and-diamond tiling (place inside octagons and the small diamonds; all other rules still apply).
-- **LDM**: lowers visual detail only, capping render scale and reducing expensive preview/grid work for smoother play.
-- **Extreme LDM**: an aggressive visual-only optimisation mode with sparse grid drawing, minimal overlays, and no ambient animation loop.
 - **Duck**: move duck after your placements; no one can place on it.
 - **King Duck**: adds a panic ring around the king duck.
 - **Egyptian**: each player has a soft `n` stone cap (set `n` in the UI); when your own placements go over `n`, choose up to 2 of your stones per turn to remove (not the one just placed). Echoes never remove stones automatically, so a player may stay above `n`.

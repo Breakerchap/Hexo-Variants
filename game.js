@@ -85,6 +85,8 @@ const ui = {
   onlineRoomText: document.getElementById("onlineRoomText"),
   onlineRoleText: document.getElementById("onlineRoleText"),
   toggleMenuBtn: document.getElementById("toggleMenuBtn"),
+  ldmBtn: document.getElementById("ldmBtn"),
+  extremeLdmBtn: document.getElementById("extremeLdmBtn"),
   secretModesBtn: document.getElementById("secretModesBtn")
 };
 
@@ -735,16 +737,6 @@ const MODES = {
     summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
     hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
   },
-  ldm: {
-    name: "LDM",
-    summary: "Low Detail Mode keeps the rules unchanged while capping render scale, reducing expensive grid hints, and toning down animation-heavy previews.",
-    hint: "Low Detail Mode is visual only: the game rules stay the same, but the board uses cheaper rendering for smoother play."
-  },
-  extremeLdm: {
-    name: "Extreme LDM",
-    summary: "Aggressive Low Detail Mode for slower devices: 1x canvas scale, sparse grid drawing, minimal preview overlays, and no ambient animation loop.",
-    hint: "Extreme Low Detail Mode keeps the playable board and hover feedback while dropping most decorative and animation-heavy effects."
-  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -842,7 +834,6 @@ const triangleLineKinds = [
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
 const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
-const PERFORMANCE_MODE_KEYS = ["ldm", "extremeLdm"];
 const LDM_DEVICE_PIXEL_RATIO_CAP = 1.5;
 const EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP = 1;
 const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
@@ -2530,6 +2521,7 @@ const game = {
   lastFactoryAnimationAt: 0,
   factoryAnimationFramePending: false,
   factoryAnimationDisabled: false,
+  performanceModeLevel: 0,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
@@ -2580,9 +2572,6 @@ function normaliseModeKeys(modeKeys) {
   if (requested.has("fourPlayer")) {
     requested.delete("threePlayer");
   }
-  if (requested.has("extremeLdm")) {
-    requested.delete("ldm");
-  }
   const selectedGridModes = GRID_MODE_KEYS.filter((key) => requested.has(key));
   if (selectedGridModes.length > 1) {
     for (const key of selectedGridModes.slice(0, -1)) {
@@ -2591,12 +2580,7 @@ function normaliseModeKeys(modeKeys) {
   }
   if (requested.has("factoryFoundry")) {
     for (const key of Array.from(requested)) {
-      if (
-        key !== "factoryFoundry"
-        && key !== "threePlayer"
-        && key !== "fourPlayer"
-        && !PERFORMANCE_MODE_KEYS.includes(key)
-      ) {
+      if (key !== "factoryFoundry" && key !== "threePlayer" && key !== "fourPlayer") {
         requested.delete(key);
       }
     }
@@ -2883,29 +2867,25 @@ function usesFactoryMode(state) {
   return Boolean(state && hasMode(state, "factoryFoundry"));
 }
 
-function getPerformanceModeLevelForKeys(modeKeys) {
-  const keys = Array.isArray(modeKeys) ? modeKeys : [];
-  if (keys.includes("extremeLdm")) {
-    return 2;
-  }
-  return keys.includes("ldm") ? 1 : 0;
+function normalisePerformanceModeLevel(level) {
+  return Math.max(0, Math.min(2, Math.trunc(Number(level) || 0)));
 }
 
-function getPerformanceModeLevel(state = game.state) {
-  return getPerformanceModeLevelForKeys(state?.modeKeys);
+function getPerformanceModeLevel() {
+  return normalisePerformanceModeLevel(game.performanceModeLevel);
 }
 
-function usesLdmMode(state = game.state) {
-  return getPerformanceModeLevel(state) >= 1;
+function usesLdmMode() {
+  return getPerformanceModeLevel() >= 1;
 }
 
-function usesExtremeLdmMode(state = game.state) {
-  return getPerformanceModeLevel(state) >= 2;
+function usesExtremeLdmMode() {
+  return getPerformanceModeLevel() >= 2;
 }
 
 function getEffectiveCanvasDevicePixelRatio() {
   const rawDpr = Math.max(1, Number(window.devicePixelRatio) || 1);
-  const level = getPerformanceModeLevel(game.state);
+  const level = getPerformanceModeLevel();
   if (level >= 2) {
     return Math.min(rawDpr, EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP);
   }
@@ -2915,8 +2895,8 @@ function getEffectiveCanvasDevicePixelRatio() {
   return rawDpr;
 }
 
-function getGridDrawStep(size, state = game.state) {
-  const level = getPerformanceModeLevel(state);
+function getGridDrawStep(size) {
+  const level = getPerformanceModeLevel();
   if (level >= 2) {
     return size < 30 ? 3 : 2;
   }
@@ -2928,7 +2908,7 @@ function getGridDrawStep(size, state = game.state) {
 
 function canDrawPlacementHints(state = game.state, size = currentHexSize()) {
   return (
-    getPerformanceModeLevel(state) === 0
+    getPerformanceModeLevel() === 0
     && size >= GRID_HINT_MIN_HEX_SIZE
     && !isBrowsingHistory()
     && !state.winner
@@ -2937,16 +2917,27 @@ function canDrawPlacementHints(state = game.state, size = currentHexSize()) {
   );
 }
 
-function canDrawDetailText(size, state = game.state) {
-  return getPerformanceModeLevel(state) < 2 || size >= 22;
+function canDrawDetailText(size) {
+  return getPerformanceModeLevel() < 2 || size >= 22;
 }
 
-function setPerformanceModeClasses(modeKeys) {
-  const level = getPerformanceModeLevelForKeys(normaliseModeKeys(modeKeys));
+function updatePerformanceModeUI() {
+  const level = getPerformanceModeLevel();
   ui.appRoot?.classList.toggle("ldmMode", level >= 1);
   ui.appRoot?.classList.toggle("extremeLdmMode", level >= 2);
   document.body?.classList.toggle("ldmMode", level >= 1);
   document.body?.classList.toggle("extremeLdmMode", level >= 2);
+  ui.ldmBtn?.classList.toggle("active", level === 1);
+  ui.extremeLdmBtn?.classList.toggle("active", level === 2);
+  ui.ldmBtn?.setAttribute("aria-pressed", level === 1 ? "true" : "false");
+  ui.extremeLdmBtn?.setAttribute("aria-pressed", level === 2 ? "true" : "false");
+}
+
+function setPerformanceModeLevel(level) {
+  game.performanceModeLevel = normalisePerformanceModeLevel(level);
+  updatePerformanceModeUI();
+  resizeCanvas();
+  render();
 }
 
 function getBirdMoveKinds(state) {
@@ -3074,7 +3065,6 @@ function setModeUI(modeKeys) {
   ui.modeSummary.textContent = mode.summary;
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
-  setPerformanceModeClasses(modeKeys);
   refreshEgyptianCapControls(modeKeys);
   refreshArmoryControls(modeKeys);
   refreshBedSiegeControls(modeKeys);
@@ -8241,7 +8231,7 @@ function drawGrid() {
       hexSize: size,
       marginHexes: 2
     });
-  const drawStep = getGridDrawStep(size, game.state);
+  const drawStep = getGridDrawStep(size);
   const showPlacementHints = canDrawPlacementHints(game.state, size);
 
   if (triangleMode) {
@@ -8432,7 +8422,7 @@ function drawFactoryOverlay() {
   const deposits = getFactoryDepositDefinitions(game.state);
   const now = window.performance?.now ? window.performance.now() : Date.now();
   const deliveryByDeposit = new Map();
-  const detailLevel = getPerformanceModeLevel(game.state);
+  const detailLevel = getPerformanceModeLevel();
   const animateFactory = detailLevel === 0;
   const showFactoryRoutes = detailLevel < 2;
 
@@ -8650,7 +8640,7 @@ function drawFactoryPiece(hex, cell, screen, size, connected) {
   const coreOwner = moduleType === "core" ? getFactoryCoreOwnerAt(game.state, hex) : 0;
   const core = coreOwner ? getFactoryCore(game.state, coreOwner) : null;
   const brokenCore = moduleType === "core" && core && !core.alive;
-  const showDetailText = canDrawDetailText(size, game.state);
+  const showDetailText = canDrawDetailText(size);
 
   ctx.save();
   ctx.globalAlpha = connected || moduleType === "core" ? 1 : 0.48;
@@ -9061,11 +9051,11 @@ function drawPieces() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const detailLevel = getPerformanceModeLevel(game.state);
+  const detailLevel = getPerformanceModeLevel();
   const showRecentHighlights = detailLevel < 2;
   const showEventHighlights = detailLevel < 2;
   const showInnerDots = detailLevel < 2;
-  const showDetailText = canDrawDetailText(size, game.state);
+  const showDetailText = canDrawDetailText(size);
   const recentSerials = showRecentHighlights ? getRecentSerials(game.state.cells) : [];
   const recentSerialSet = new Set(recentSerials);
   const newestSerial = recentSerials[0];
@@ -9535,7 +9525,7 @@ function drawWinnerLineHint() {
 }
 
 function scheduleFactoryAmbientAnimation() {
-  if (game.factoryAnimationDisabled || game.factoryAnimationFramePending || usesLdmMode(game.state)) {
+  if (game.factoryAnimationDisabled || game.factoryAnimationFramePending || usesLdmMode()) {
     return;
   }
   game.factoryAnimationFramePending = true;
@@ -9547,7 +9537,7 @@ function scheduleFactoryAmbientAnimation() {
       return;
     }
     game.factoryAnimationFramePending = false;
-    if (game.state && usesFactoryMode(game.state) && !usesLdmMode(game.state)) {
+    if (game.state && usesFactoryMode(game.state) && !usesLdmMode()) {
       render();
     }
   });
@@ -9578,7 +9568,7 @@ function renderNow() {
 
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
   ui.coordText.textContent = `${getBoardCoordinateLabel(game.state)}: (${game.hoverHex.q}, ${game.hoverHex.r})`;
-  if (usesFactoryMode(game.state) && !usesLdmMode(game.state)) {
+  if (usesFactoryMode(game.state) && !usesLdmMode()) {
     game.lastFactoryAnimationAt = window.performance?.now ? window.performance.now() : Date.now();
     scheduleFactoryAmbientAnimation();
   } else {
@@ -9660,11 +9650,6 @@ function fillModePicker() {
         if (GRID_MODE_KEYS.includes(key)) {
           for (const gridModeKey of GRID_MODE_KEYS) {
             nextModeKeys.delete(gridModeKey);
-          }
-        }
-        if (PERFORMANCE_MODE_KEYS.includes(key)) {
-          for (const performanceModeKey of PERFORMANCE_MODE_KEYS) {
-            nextModeKeys.delete(performanceModeKey);
           }
         }
         nextModeKeys.add(key);
@@ -9993,6 +9978,12 @@ for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
 ui.armoryRerollBtn?.addEventListener("click", () => {
   rerollArmoryShopForCurrentPlayer();
 });
+ui.ldmBtn?.addEventListener("click", () => {
+  setPerformanceModeLevel(getPerformanceModeLevel() === 1 ? 0 : 1);
+});
+ui.extremeLdmBtn?.addEventListener("click", () => {
+  setPerformanceModeLevel(getPerformanceModeLevel() === 2 ? 0 : 2);
+});
 ui.secretModesBtn?.addEventListener("click", () => {
   setSecretModesUnlocked(!game.secretModesUnlocked);
 });
@@ -10022,6 +10013,7 @@ setTimerInputs(game.timerConfig);
 setEgyptianCapInput(game.egyptianStoneCap);
 getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
+updatePerformanceModeUI();
 setOptionsMenuCollapsed(false);
 setSelectedModeKeys([]);
 newGame([], game.timerConfig);
