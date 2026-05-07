@@ -735,6 +735,16 @@ const MODES = {
     summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
     hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
   },
+  ldm: {
+    name: "LDM",
+    summary: "Low Detail Mode keeps the rules unchanged while capping render scale, reducing expensive grid hints, and toning down animation-heavy previews.",
+    hint: "Low Detail Mode is visual only: the game rules stay the same, but the board uses cheaper rendering for smoother play."
+  },
+  extremeLdm: {
+    name: "Extreme LDM",
+    summary: "Aggressive Low Detail Mode for slower devices: 1x canvas scale, sparse grid drawing, minimal preview overlays, and no ambient animation loop.",
+    hint: "Extreme Low Detail Mode keeps the playable board and hover feedback while dropping most decorative and animation-heavy effects."
+  },
   duck: {
     name: "Duck",
     summary: "After your placements, move the duck to any empty space. Nobody can place on the duck.",
@@ -832,6 +842,9 @@ const triangleLineKinds = [
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
 const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
+const PERFORMANCE_MODE_KEYS = ["ldm", "extremeLdm"];
+const LDM_DEVICE_PIXEL_RATIO_CAP = 1.5;
+const EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP = 1;
 const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
 
 function keyOf(q, r) {
@@ -2567,6 +2580,9 @@ function normaliseModeKeys(modeKeys) {
   if (requested.has("fourPlayer")) {
     requested.delete("threePlayer");
   }
+  if (requested.has("extremeLdm")) {
+    requested.delete("ldm");
+  }
   const selectedGridModes = GRID_MODE_KEYS.filter((key) => requested.has(key));
   if (selectedGridModes.length > 1) {
     for (const key of selectedGridModes.slice(0, -1)) {
@@ -2575,7 +2591,12 @@ function normaliseModeKeys(modeKeys) {
   }
   if (requested.has("factoryFoundry")) {
     for (const key of Array.from(requested)) {
-      if (key !== "factoryFoundry" && key !== "threePlayer" && key !== "fourPlayer") {
+      if (
+        key !== "factoryFoundry"
+        && key !== "threePlayer"
+        && key !== "fourPlayer"
+        && !PERFORMANCE_MODE_KEYS.includes(key)
+      ) {
         requested.delete(key);
       }
     }
@@ -2862,6 +2883,72 @@ function usesFactoryMode(state) {
   return Boolean(state && hasMode(state, "factoryFoundry"));
 }
 
+function getPerformanceModeLevelForKeys(modeKeys) {
+  const keys = Array.isArray(modeKeys) ? modeKeys : [];
+  if (keys.includes("extremeLdm")) {
+    return 2;
+  }
+  return keys.includes("ldm") ? 1 : 0;
+}
+
+function getPerformanceModeLevel(state = game.state) {
+  return getPerformanceModeLevelForKeys(state?.modeKeys);
+}
+
+function usesLdmMode(state = game.state) {
+  return getPerformanceModeLevel(state) >= 1;
+}
+
+function usesExtremeLdmMode(state = game.state) {
+  return getPerformanceModeLevel(state) >= 2;
+}
+
+function getEffectiveCanvasDevicePixelRatio() {
+  const rawDpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+  const level = getPerformanceModeLevel(game.state);
+  if (level >= 2) {
+    return Math.min(rawDpr, EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP);
+  }
+  if (level >= 1) {
+    return Math.min(rawDpr, LDM_DEVICE_PIXEL_RATIO_CAP);
+  }
+  return rawDpr;
+}
+
+function getGridDrawStep(size, state = game.state) {
+  const level = getPerformanceModeLevel(state);
+  if (level >= 2) {
+    return size < 30 ? 3 : 2;
+  }
+  if (level >= 1 && size < 17) {
+    return 2;
+  }
+  return 1;
+}
+
+function canDrawPlacementHints(state = game.state, size = currentHexSize()) {
+  return (
+    getPerformanceModeLevel(state) === 0
+    && size >= GRID_HINT_MIN_HEX_SIZE
+    && !isBrowsingHistory()
+    && !state.winner
+    && !state.duckPhase
+    && !hasEgyptianRemovalPhase(state)
+  );
+}
+
+function canDrawDetailText(size, state = game.state) {
+  return getPerformanceModeLevel(state) < 2 || size >= 22;
+}
+
+function setPerformanceModeClasses(modeKeys) {
+  const level = getPerformanceModeLevelForKeys(normaliseModeKeys(modeKeys));
+  ui.appRoot?.classList.toggle("ldmMode", level >= 1);
+  ui.appRoot?.classList.toggle("extremeLdmMode", level >= 2);
+  document.body?.classList.toggle("ldmMode", level >= 1);
+  document.body?.classList.toggle("extremeLdmMode", level >= 2);
+}
+
 function getBirdMoveKinds(state) {
   return BIRD_KINDS.filter((birdKind) => hasMode(state, birdKind));
 }
@@ -2987,6 +3074,7 @@ function setModeUI(modeKeys) {
   ui.modeSummary.textContent = mode.summary;
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
+  setPerformanceModeClasses(modeKeys);
   refreshEgyptianCapControls(modeKeys);
   refreshArmoryControls(modeKeys);
   refreshBedSiegeControls(modeKeys);
@@ -7588,7 +7676,7 @@ function updateStatus() {
 }
 
 function resizeCanvas() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = getEffectiveCanvasDevicePixelRatio();
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.floor(rect.width * dpr);
   canvas.height = Math.floor(rect.height * dpr);
@@ -8053,7 +8141,7 @@ function drawRadialLatticeGrid(params) {
   const gridFill = "rgba(255, 255, 255, 0.026)";
   let hoverDrawn = false;
 
-  for (let ring = bounds.minQ; ring <= bounds.maxQ; ring += 1) {
+  for (let ring = bounds.minQ; ring <= bounds.maxQ; ring += drawStep) {
     const sectors = ring === 0 ? [0] : Array.from({ length: RADIAL_SECTOR_COUNT }, (_, sector) => sector);
     for (const sector of sectors) {
       const hex = { q: ring, r: sector };
@@ -8154,14 +8242,8 @@ function drawGrid() {
       hexSize: size,
       marginHexes: 2
     });
-  const drawStep = 1;
-  const showPlacementHints = (
-    size >= GRID_HINT_MIN_HEX_SIZE
-    && !isBrowsingHistory()
-    && !game.state.winner
-    && !game.state.duckPhase
-    && !hasEgyptianRemovalPhase(game.state)
-  );
+  const drawStep = getGridDrawStep(size, game.state);
+  const showPlacementHints = canDrawPlacementHints(game.state, size);
 
   if (triangleMode) {
     drawTriangleLatticeGrid({
@@ -8274,7 +8356,7 @@ function clampNumber(value, min, max) {
   return Math.min(max, Math.max(min, Number(value) || 0));
 }
 
-function drawFactoryFlowPath(path, owner, size, now) {
+function drawFactoryFlowPath(path, owner, size, now, animate = true) {
   if (!Array.isArray(path) || path.length < 2) {
     return;
   }
@@ -8293,7 +8375,7 @@ function drawFactoryFlowPath(path, owner, size, now) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.setLineDash([Math.max(4, size * 0.20), Math.max(4, size * 0.20)]);
-  ctx.lineDashOffset = -now / 70;
+  ctx.lineDashOffset = animate ? -now / 70 : 0;
   ctx.strokeStyle = style.strongStroke;
   ctx.lineWidth = Math.max(2, size * 0.09);
   ctx.beginPath();
@@ -8319,7 +8401,7 @@ function drawFactoryFlowPath(path, owner, size, now) {
     segments.push({ from, to, length });
     totalLength += length;
   }
-  if (totalLength > 0) {
+  if (animate && totalLength > 0) {
     const travel = ((now / 900) % 1) * totalLength;
     let cursor = 0;
     for (const segment of segments) {
@@ -8351,6 +8433,9 @@ function drawFactoryOverlay() {
   const deposits = getFactoryDepositDefinitions(game.state);
   const now = window.performance?.now ? window.performance.now() : Date.now();
   const deliveryByDeposit = new Map();
+  const detailLevel = getPerformanceModeLevel(game.state);
+  const animateFactory = detailLevel === 0;
+  const showFactoryRoutes = detailLevel < 2;
 
   ctx.save();
   for (const owner of getPlayerNumbers(game.state)) {
@@ -8359,11 +8444,14 @@ function drawFactoryOverlay() {
     for (const delivery of getFactoryDeliveryInfosForOwner(game.state, owner)) {
       deliveryByDeposit.set(delivery.deposit.id, delivery);
     }
+    if (!showFactoryRoutes) {
+      continue;
+    }
     ctx.strokeStyle = style.echoStroke;
     ctx.lineWidth = Math.max(1.2, size * 0.08);
     ctx.lineCap = "round";
     ctx.setLineDash([Math.max(4, size * 0.24), Math.max(4, size * 0.22)]);
-    ctx.lineDashOffset = -now / 85;
+    ctx.lineDashOffset = animateFactory ? -now / 85 : 0;
     for (const key of connected) {
       const from = parseKey(key);
       const fromWorld = boardCellToPixel(from, size, game.state);
@@ -8387,9 +8475,11 @@ function drawFactoryOverlay() {
     ctx.setLineDash([]);
   }
 
-  for (const owner of getPlayerNumbers(game.state)) {
-    for (const delivery of getFactoryDeliveryInfosForOwner(game.state, owner)) {
-      drawFactoryFlowPath(delivery.path, owner, size, now);
+  if (showFactoryRoutes) {
+    for (const owner of getPlayerNumbers(game.state)) {
+      for (const delivery of getFactoryDeliveryInfosForOwner(game.state, owner)) {
+        drawFactoryFlowPath(delivery.path, owner, size, now, animateFactory);
+      }
     }
   }
 
@@ -8402,7 +8492,7 @@ function drawFactoryOverlay() {
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
     }
-    const pulse = 0.5 + 0.5 * Math.sin(now / 520 + deposit.hex.q * 0.7 + deposit.hex.r * 0.45);
+    const pulse = animateFactory ? 0.5 + 0.5 * Math.sin(now / 520 + deposit.hex.q * 0.7 + deposit.hex.r * 0.45) : 0.35;
     const controllerStyle = control.controller ? getPlayerStyle(control.controller) : null;
     const stroke = controllerStyle ? controllerStyle.strongStroke : (control.tied ? "rgba(255, 215, 94, 0.82)" : depositDef.stroke);
     drawBoardShape(
@@ -8561,6 +8651,7 @@ function drawFactoryPiece(hex, cell, screen, size, connected) {
   const coreOwner = moduleType === "core" ? getFactoryCoreOwnerAt(game.state, hex) : 0;
   const core = coreOwner ? getFactoryCore(game.state, coreOwner) : null;
   const brokenCore = moduleType === "core" && core && !core.alive;
+  const showDetailText = canDrawDetailText(size, game.state);
 
   ctx.save();
   ctx.globalAlpha = connected || moduleType === "core" ? 1 : 0.48;
@@ -8591,22 +8682,22 @@ function drawFactoryPiece(hex, cell, screen, size, connected) {
   ctx.textBaseline = "middle";
   ctx.fillText(brokenCore ? "!" : moduleDef.symbol, screen.x, screen.y - (moduleType === "core" ? size * 0.07 : 0));
 
-  if (moduleType === "miner") {
+  if (showDetailText && moduleType === "miner") {
     const level = Math.max(1, Math.round(Number(cell.factoryLevel) || 1));
     const depositType = cell.factoryDepositType || getFactoryDepositAt(game.state, hex)?.type || "ore";
     const depositDef = getFactoryDepositDef(depositType);
     ctx.fillStyle = "rgba(6, 12, 23, 0.78)";
     ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
     ctx.fillText(`${depositDef.symbol}x${level}`, screen.x, screen.y + size * 0.32);
-  } else if (moduleType === "core" && core) {
+  } else if (showDetailText && moduleType === "core" && core) {
     ctx.fillStyle = "rgba(6, 12, 23, 0.76)";
     ctx.font = `${Math.max(7, Math.min(10, size * 0.27))}px Inter, system-ui, sans-serif`;
     ctx.fillText(`${core.integrity}/${core.maxIntegrity}`, screen.x, screen.y + size * 0.30);
-  } else if (Number(cell.factoryHp) > 0 && Number(cell.factoryHp) < getFactoryModuleMaxHp(cell)) {
+  } else if (showDetailText && Number(cell.factoryHp) > 0 && Number(cell.factoryHp) < getFactoryModuleMaxHp(cell)) {
     ctx.fillStyle = "rgba(255, 231, 189, 0.90)";
     ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
     ctx.fillText(`${cell.factoryHp}/${getFactoryModuleMaxHp(cell)}`, screen.x, screen.y + size * 0.31);
-  } else if (!connected) {
+  } else if (showDetailText && !connected) {
     ctx.fillStyle = "rgba(236, 242, 255, 0.76)";
     ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
     ctx.fillText("OFF", screen.x, screen.y + size * 0.31);
@@ -8615,7 +8706,7 @@ function drawFactoryPiece(hex, cell, screen, size, connected) {
 }
 
 function drawEchoTargets() {
-  if (!hasMode(game.state, "echo")) {
+  if (!hasMode(game.state, "echo") || usesExtremeLdmMode(game.state)) {
     return;
   }
 
@@ -8710,7 +8801,7 @@ function canBirdEchoCopyAppearAfterMove(state, birdKind, destinationHex) {
 
 function drawHoverEchoPreview() {
   const state = game.state;
-  if (!canShowHoverEchoPreview(state)) {
+  if (usesExtremeLdmMode(state) || !canShowHoverEchoPreview(state)) {
     return;
   }
 
@@ -8801,6 +8892,9 @@ function drawMeteorPreview() {
     ui.meteorTimerBadge.hidden = false;
     ui.meteorTimerBadge.textContent = meterText;
   }
+  if (usesExtremeLdmMode(game.state)) {
+    return;
+  }
 
   const size = currentHexSize();
   if (size < 8) {
@@ -8834,7 +8928,7 @@ function drawMeteorPreview() {
 }
 
 function drawOrbitPreview() {
-  if (!hasMode(game.state, "orbit")) {
+  if (!hasMode(game.state, "orbit") || usesLdmMode(game.state)) {
     return;
   }
 
@@ -8875,7 +8969,7 @@ function drawOrbitPreview() {
 }
 
 function drawKingDuckRadius() {
-  if (!usesPanicBirdMode(game.state)) {
+  if (!usesPanicBirdMode(game.state) || usesExtremeLdmMode(game.state)) {
     return;
   }
 
@@ -8968,7 +9062,12 @@ function drawPieces() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const recentSerials = getRecentSerials(game.state.cells);
+  const detailLevel = getPerformanceModeLevel(game.state);
+  const showRecentHighlights = detailLevel < 2;
+  const showEventHighlights = detailLevel < 2;
+  const showInnerDots = detailLevel < 2;
+  const showDetailText = canDrawDetailText(size, game.state);
+  const recentSerials = showRecentHighlights ? getRecentSerials(game.state.cells) : [];
   const recentSerialSet = new Set(recentSerials);
   const newestSerial = recentSerials[0];
   const factoryConnectedByOwner = usesFactoryMode(game.state)
@@ -8985,7 +9084,7 @@ function drawPieces() {
 
     if (usesFactoryMode(game.state) && isFactoryCell(cell)) {
       const connected = Boolean(factoryConnectedByOwner?.[cell.owner]?.has(key));
-      if (recentSerialSet.has(cell.serial)) {
+      if (showRecentHighlights && recentSerialSet.has(cell.serial)) {
         const ownerStyle = getPlayerStyle(cell.owner);
         drawBoardShape(
           screen.x,
@@ -9010,7 +9109,7 @@ function drawPieces() {
     const colour = isTeamWool ? getBedSiegePastelTeamFill(ownerStyle) : (bedSiegeBlockStyle?.fill || ownerStyle.hex);
     const blockStroke = bedSiegeBlockType ? ownerStyle.strongStroke : "rgba(255,255,255,0.45)";
     const blockText = isTeamWool ? "rgba(6, 12, 23, 0.72)" : bedSiegeBlockStyle?.text;
-    if (recentSerialSet.has(cell.serial)) {
+    if (showRecentHighlights && recentSerialSet.has(cell.serial)) {
       const isNewest = cell.serial === newestSerial;
       const recentStroke = ownerStyle.strongStroke;
       drawBoardShape(
@@ -9033,7 +9132,7 @@ function drawPieces() {
       1.5,
       hex
     );
-    if (!bedSiegeBlockType) {
+    if (showInnerDots && !bedSiegeBlockType) {
       ctx.fillStyle = "rgba(6, 12, 23, 0.52)";
       ctx.beginPath();
       const innerDotRadius = size * (usesTriangleGridMode(game.state) ? 0.18 : 0.28);
@@ -9042,7 +9141,7 @@ function drawPieces() {
     }
 
     const bedOwner = getBedSiegeBedOwnerAt(game.state, hex, true);
-    if (bedOwner) {
+    if (bedOwner && showDetailText) {
       drawBoardShape(
         screen.x,
         screen.y,
@@ -9057,7 +9156,7 @@ function drawPieces() {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("B", screen.x, screen.y + 0.5);
-    } else if (usesBedSiegeMode(game.state) && cell.bedSiegeBrokenBed) {
+    } else if (showDetailText && usesBedSiegeMode(game.state) && cell.bedSiegeBrokenBed) {
       drawBoardShape(
         screen.x,
         screen.y,
@@ -9072,20 +9171,20 @@ function drawPieces() {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("X", screen.x, screen.y + 0.5);
-    } else if (bedSiegeBlockType) {
+    } else if (showDetailText && bedSiegeBlockType) {
       const blockDef = getBedSiegeItemDef(bedSiegeBlockType);
       ctx.fillStyle = blockText;
       ctx.font = `${Math.max(8, Math.min(13, size * 0.4))}px Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText(blockDef.symbol, screen.x, screen.y + 0.5);
-    } else if (usesBedSiegeMode(game.state) && cell.bedSiegeWool) {
+    } else if (showDetailText && usesBedSiegeMode(game.state) && cell.bedSiegeWool) {
       ctx.fillStyle = "rgba(236, 242, 255, 0.84)";
       ctx.font = `${Math.max(8, Math.min(13, size * 0.38))}px Inter, system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("W", screen.x, screen.y + 0.5);
-    } else if (usesArmoryMode(game.state)) {
+    } else if (showDetailText && usesArmoryMode(game.state)) {
       const pieceType = getArmoryPieceType(cell);
       const pieceDef = getArmoryPieceDef(pieceType);
       ctx.fillStyle = "rgba(236, 242, 255, 0.92)";
@@ -9096,7 +9195,7 @@ function drawPieces() {
     }
   }
 
-  if (hasEgyptianRemovalPhase(game.state) && !game.state.winner) {
+  if (showEventHighlights && hasEgyptianRemovalPhase(game.state) && !game.state.winner) {
     const owner = game.state.egyptianRemoval.owner;
     const ownerEntries = getOwnerStoneEntriesSortedByAge(game.state, owner);
     const stroke = getPlayerStyle(owner).strongStroke;
@@ -9118,7 +9217,7 @@ function drawPieces() {
     }
   }
 
-  const recentCapRemovalEvents = getLastTurnCapRemovalEvents(game.state);
+  const recentCapRemovalEvents = showEventHighlights ? getLastTurnCapRemovalEvents(game.state) : [];
   for (const event of recentCapRemovalEvents) {
     const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
@@ -9150,7 +9249,7 @@ function drawPieces() {
     ctx.stroke();
   }
 
-  const recentMeteorRemovalEvents = getLastTurnMeteorRemovalEvents(game.state);
+  const recentMeteorRemovalEvents = showEventHighlights ? getLastTurnMeteorRemovalEvents(game.state) : [];
   for (const event of recentMeteorRemovalEvents) {
     const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
@@ -9183,7 +9282,7 @@ function drawPieces() {
     ctx.stroke();
   }
 
-  const recentBirdEvents = getLastTurnBirdEvents(game.state);
+  const recentBirdEvents = showEventHighlights ? getLastTurnBirdEvents(game.state) : [];
   for (const event of recentBirdEvents) {
     const world = boardCellToPixel(event.hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
@@ -9437,7 +9536,7 @@ function drawWinnerLineHint() {
 }
 
 function scheduleFactoryAmbientAnimation() {
-  if (game.factoryAnimationDisabled || game.factoryAnimationFramePending) {
+  if (game.factoryAnimationDisabled || game.factoryAnimationFramePending || usesLdmMode(game.state)) {
     return;
   }
   game.factoryAnimationFramePending = true;
@@ -9449,7 +9548,7 @@ function scheduleFactoryAmbientAnimation() {
       return;
     }
     game.factoryAnimationFramePending = false;
-    if (game.state && usesFactoryMode(game.state)) {
+    if (game.state && usesFactoryMode(game.state) && !usesLdmMode(game.state)) {
       render();
     }
   });
@@ -9480,7 +9579,7 @@ function renderNow() {
 
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
   ui.coordText.textContent = `${getBoardCoordinateLabel(game.state)}: (${game.hoverHex.q}, ${game.hoverHex.r})`;
-  if (usesFactoryMode(game.state)) {
+  if (usesFactoryMode(game.state) && !usesLdmMode(game.state)) {
     game.lastFactoryAnimationAt = window.performance?.now ? window.performance.now() : Date.now();
     scheduleFactoryAmbientAnimation();
   } else {
@@ -9527,6 +9626,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   ensureClockState(game.state);
   game.history = [];
   game.futureHistory = [];
+  resizeCanvas();
   centreBoard();
   updateStatus();
   syncClockTickerFromState();
@@ -9561,6 +9661,11 @@ function fillModePicker() {
         if (GRID_MODE_KEYS.includes(key)) {
           for (const gridModeKey of GRID_MODE_KEYS) {
             nextModeKeys.delete(gridModeKey);
+          }
+        }
+        if (PERFORMANCE_MODE_KEYS.includes(key)) {
+          for (const performanceModeKey of PERFORMANCE_MODE_KEYS) {
+            nextModeKeys.delete(performanceModeKey);
           }
         }
         nextModeKeys.add(key);

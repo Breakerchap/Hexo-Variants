@@ -67,6 +67,25 @@ body::after {
   opacity: 0.28;
 }
 
+body.ldmMode::before,
+body.ldmMode::after {
+  animation: none;
+  will-change: auto;
+}
+
+body.ldmMode::before {
+  opacity: 0.16;
+}
+
+body.ldmMode::after {
+  opacity: 0.1;
+}
+
+body.extremeLdmMode::before,
+body.extremeLdmMode::after {
+  display: none;
+}
+
 @keyframes bgFloatA {
   0% {
     transform: translate3d(-34%, -30%, 0) scale(0.82) rotate(-8deg);
@@ -143,6 +162,10 @@ body::after {
 
 .app.menuCollapsed {
   grid-template-columns: 0 1fr;
+}
+
+.app.ldmMode {
+  transition-duration: 0.08s;
 }
 
 .sidebar {
@@ -577,6 +600,15 @@ select:focus-visible,
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
+.app.ldmMode .boardWrap::after {
+  box-shadow: none;
+}
+
+.app.extremeLdmMode .boardWrap::after {
+  opacity: 0.72;
+  border-width: 2px;
+}
+
 .boardWrap.turnP1 {
   --turn-outline: var(--p1);
   --turn-outline-glow: rgba(109, 198, 255, 0.34);
@@ -675,6 +707,15 @@ canvas:focus-visible {
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
   min-width: 190px;
+}
+
+.app.ldmMode .badge,
+.app.ldmMode .menuToggleButton,
+.app.ldmMode .help,
+.app.ldmMode .boardClock,
+.app.ldmMode .meteorTimerBadge {
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 .badge .small {
