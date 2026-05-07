@@ -47,6 +47,11 @@ const ui = {
   factoryBuildSelect: document.getElementById("factoryBuildSelect"),
   factoryActionSelect: document.getElementById("factoryActionSelect"),
   factoryRuleText: document.getElementById("factoryRuleText"),
+  bagelControls: document.getElementById("bagelControls"),
+  bagelPhaseText: document.getElementById("bagelPhaseText"),
+  bagelZoneText: document.getElementById("bagelZoneText"),
+  bagelReceiptText: document.getElementById("bagelReceiptText"),
+  bagelNextText: document.getElementById("bagelNextText"),
   log: document.getElementById("log"),
   overlayTitle: document.getElementById("overlayTitle"),
   overlayHint: document.getElementById("overlayHint"),
@@ -115,6 +120,8 @@ const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
+const BAGEL_SESAME_SPREAD_LIMIT = 2;
+const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
 const BED_SIEGE_BRIDGE_RANGE = 3;
 const BED_SIEGE_PEARL_RANGE = 6;
 const BED_SIEGE_FIREBALL_RANGE = 5;
@@ -787,8 +794,8 @@ const MODES = {
   },
   everythingBagel: {
     name: "Everything Bagel",
-    summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, coupons print receipts, toll booths bribe clocks, and paperwork mutates the board.",
-    hint: "Still connect 6, technically. Red tape blocks placement, portals teleport, coupons spawn receipt stones, and end-turn paperwork may copy, move, or swap stones.",
+    summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, schmear slides them, sesame spreads receipts, poppy stamps flip rivals, deli queues advance, and paperwork mutates the board.",
+    hint: "Still connect 6, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
     secret: true
   }
 };
@@ -1341,37 +1348,73 @@ function uniqueSupportedHexes(state, hexes) {
 
 function getEverythingBagelZones(state) {
   const phase = Math.max(0, Math.trunc(Number(state?.turnCount) || 0));
+  const redCenter = rotateAxial({ q: 2 + (phase % 4), r: -4 }, phase + 1);
+  const redTape = uniqueSupportedHexes(state, [
+    redCenter,
+    ...getAdjacentsForMode(state, redCenter).slice(0, 4)
+  ]);
+  const redTapeKeys = new Set(redTape.map((hex) => keyOf(hex.q, hex.r)));
+  const withoutRedTape = (hexes) => uniqueSupportedHexes(state, hexes)
+    .filter((hex) => !redTapeKeys.has(keyOf(hex.q, hex.r)));
   const portalSeeds = [
     [rotateAxial({ q: 4, r: -1 }, phase), rotateAxial({ q: -2, r: 5 }, phase + 2)],
     [rotateAxial({ q: -5, r: 2 }, phase + 1), rotateAxial({ q: 3, r: -6 }, phase + 4)]
   ];
   const portalPairs = portalSeeds
     .map(([a, b], index) => ({ index, a, b }))
-    .filter((pair) => isCellSupportedForMode(state, pair.a) && isCellSupportedForMode(state, pair.b));
-  const redCenter = rotateAxial({ q: 2 + (phase % 4), r: -4 }, phase + 1);
-  const redTape = uniqueSupportedHexes(state, [
-    redCenter,
-    ...getAdjacentsForMode(state, redCenter).slice(0, 4)
-  ]);
+    .filter((pair) => (
+      isCellSupportedForMode(state, pair.a)
+        && isCellSupportedForMode(state, pair.b)
+        && !redTapeKeys.has(keyOf(pair.a.q, pair.a.r))
+        && !redTapeKeys.has(keyOf(pair.b.q, pair.b.r))
+    ));
   const tollBooths = uniqueSupportedHexes(state, [
     rotateAxial({ q: 1, r: -3 }, phase + 2),
     rotateAxial({ q: -4, r: 3 }, phase + 5),
     rotateAxial({ q: 5, r: -5 }, phase + 3)
-  ]);
-  const coupons = uniqueSupportedHexes(state, [
+  ]).filter((hex) => !redTapeKeys.has(keyOf(hex.q, hex.r)));
+  const coupons = withoutRedTape([
     rotateAxial({ q: 0, r: 4 }, phase),
     rotateAxial({ q: -3, r: -1 }, phase + 3)
   ]);
+  const schmear = withoutRedTape([
+    rotateAxial({ q: -1, r: 3 + (phase % 2) }, phase + 1),
+    rotateAxial({ q: 0, r: 3 }, phase + 2),
+    rotateAxial({ q: 1, r: 2 + (phase % 3) }, phase + 3)
+  ]);
+  const sesame = withoutRedTape([
+    rotateAxial({ q: -4, r: 0 }, phase + 1),
+    rotateAxial({ q: 2, r: 3 }, phase + 2),
+    rotateAxial({ q: 4, r: -3 }, phase + 5)
+  ]);
+  const poppyStamps = withoutRedTape([
+    rotateAxial({ q: -1, r: -4 }, phase + 4),
+    rotateAxial({ q: 4, r: 1 }, phase + 2)
+  ]);
+  const queueDirection = dirs[positiveMod(phase + 2, dirs.length)];
+  const queueStart = rotateAxial({ q: -3 + (phase % 2), r: 2 }, phase + 1);
+  const deliQueue = withoutRedTape(Array.from({ length: 4 }, (_, index) => ({
+    q: queueStart.q + queueDirection.q * index,
+    r: queueStart.r + queueDirection.r * index
+  })));
 
   return {
     phase,
     portalPairs,
     redTape,
-    redTapeKeys: new Set(redTape.map((hex) => keyOf(hex.q, hex.r))),
+    redTapeKeys,
     tollBooths,
     tollBoothKeys: new Set(tollBooths.map((hex) => keyOf(hex.q, hex.r))),
     coupons,
-    couponKeys: new Set(coupons.map((hex) => keyOf(hex.q, hex.r)))
+    couponKeys: new Set(coupons.map((hex) => keyOf(hex.q, hex.r))),
+    schmear,
+    schmearKeys: new Set(schmear.map((hex) => keyOf(hex.q, hex.r))),
+    sesame,
+    sesameKeys: new Set(sesame.map((hex) => keyOf(hex.q, hex.r))),
+    poppyStamps,
+    poppyStampKeys: new Set(poppyStamps.map((hex) => keyOf(hex.q, hex.r))),
+    deliQueue,
+    deliQueueKeys: new Set(deliQueue.map((hex) => keyOf(hex.q, hex.r)))
   };
 }
 
@@ -2626,6 +2669,28 @@ function refreshFactoryControls(modeKeys) {
   ui.factoryControls.hidden = !normaliseModeKeys(modeKeys).includes("factoryFoundry");
 }
 
+function refreshBagelControls(modeKeys) {
+  if (!ui.bagelControls) {
+    return;
+  }
+  const active = normaliseModeKeys(modeKeys).includes("everythingBagel");
+  ui.bagelControls.hidden = !active;
+  if (active && (!game.state || !hasEverythingBagelMode(game.state))) {
+    if (ui.bagelPhaseText) {
+      ui.bagelPhaseText.textContent = "New docket";
+    }
+    if (ui.bagelZoneText) {
+      ui.bagelZoneText.textContent = "Start a new game to seat the rotating zones.";
+    }
+    if (ui.bagelReceiptText) {
+      ui.bagelReceiptText.textContent = "Receipt stones are temporary until anchored.";
+    }
+    if (ui.bagelNextText) {
+      ui.bagelNextText.textContent = "Next filing: auditor | queue | red tape";
+    }
+  }
+}
+
 function refreshSecretModeVisibility() {
   const selected = new Set(getSelectedModeKeys());
   for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
@@ -3055,6 +3120,9 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     state.openingMoveDone = true;
     state.log[0] = "Foundry War started: control the farther Ore nodes and the center Flux node, route them home for capped points, and keep your core alive.";
   }
+  if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
+    state.log[0] = "Everything Bagel started: read the docket, dodge the paperwork, and connect 6 if the filings allow it.";
+  }
   return state;
 }
 
@@ -3069,6 +3137,7 @@ function setModeUI(modeKeys) {
   refreshArmoryControls(modeKeys);
   refreshBedSiegeControls(modeKeys);
   refreshFactoryControls(modeKeys);
+  refreshBagelControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
@@ -4889,6 +4958,16 @@ function applyEverythingBagelPlacementEffects(state, placedHex, owner) {
     currentHex = { ...portalExit };
   }
 
+  if (zones.schmearKeys.has(keyOf(currentHex.q, currentHex.r))) {
+    const slideTarget = getOpenStepAwayFromOriginForMode(state, currentHex);
+    if (slideTarget && moveStonePreservingSerial(state, currentHex, slideTarget)) {
+      messages.push(`Schmear slide moved Player ${owner}'s stone from (${currentHex.q}, ${currentHex.r}) to (${slideTarget.q}, ${slideTarget.r}).`);
+      currentHex = { ...slideTarget };
+    } else {
+      messages.push("Schmear slide found no clean lane and stayed sticky.");
+    }
+  }
+
   if (zones.tollBoothKeys.has(keyOf(currentHex.q, currentHex.r))) {
     ensureClockState(state);
     if (state.clock.enabled) {
@@ -4901,10 +4980,29 @@ function applyEverythingBagelPlacementEffects(state, placedHex, owner) {
 
   if (zones.couponKeys.has(keyOf(currentHex.q, currentHex.r)) && Object.keys(state.cells).length < BAGEL_RECEIPT_STONE_LIMIT) {
     const receiptTarget = rotateAxial({ q: currentHex.q + owner, r: currentHex.r - 1 }, zones.phase + owner + 1);
-    if (isOpenForEverythingBagelEffect(state, receiptTarget) && addEffectStone(state, receiptTarget, owner, "stone", { bagelReceipt: true })) {
+    if (isOpenForEverythingBagelEffect(state, receiptTarget) && addBagelReceiptStone(state, receiptTarget, owner, { bagelCoupon: true })) {
       messages.push(`Coupon printer made a Player ${owner} receipt stone at (${receiptTarget.q}, ${receiptTarget.r}).`);
     } else {
       messages.push("Coupon printer jammed. This is legally considered gameplay.");
+    }
+  }
+
+  if (zones.sesameKeys.has(keyOf(currentHex.q, currentHex.r))) {
+    const sprinkled = applyBagelSesameSpread(state, currentHex, owner, zones);
+    if (sprinkled.length > 0) {
+      const targets = sprinkled.map((hex) => `(${hex.q}, ${hex.r})`).join(", ");
+      messages.push(`Sesame spread printed ${sprinkled.length} receipt stone${sprinkled.length === 1 ? "" : "s"} at ${targets}.`);
+    } else {
+      messages.push("Sesame spread had nowhere tasteful to land.");
+    }
+  }
+
+  if (zones.poppyStampKeys.has(keyOf(currentHex.q, currentHex.r))) {
+    const stamp = applyBagelPoppyStamp(state, currentHex, owner);
+    if (stamp) {
+      messages.push(`Poppy stamp reassigned (${stamp.hex.q}, ${stamp.hex.r}) from Player ${stamp.oldOwner} to Player ${stamp.newOwner}.`);
+    } else {
+      messages.push("Poppy stamp found no adjacent rival paperwork.");
     }
   }
 
@@ -4919,6 +5017,103 @@ function getOpenStepTowardOriginForMode(state, hex) {
     .find((candidate) => getDistanceForMode(state, candidate) < currentDistance) || null;
 }
 
+function getOpenStepAwayFromOriginForMode(state, hex) {
+  const currentDistance = getDistanceForMode(state, hex);
+  return getAdjacentsForMode(state, hex)
+    .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+    .sort((a, b) => getDistanceForMode(state, b) - getDistanceForMode(state, a))
+    .find((candidate) => getDistanceForMode(state, candidate) > currentDistance) || null;
+}
+
+function getBagelReceiptEntriesSortedByAge(state) {
+  return Object.entries(state.cells)
+    .map(([key, cell]) => ({ hex: parseKey(key), cell }))
+    .filter((entry) => entry.cell.kind === "stone" && entry.cell.bagelReceipt)
+    .sort((a, b) => a.cell.serial - b.cell.serial);
+}
+
+function getEverythingBagelReceiptStats(state) {
+  let pending = 0;
+  let certified = 0;
+  let stamped = 0;
+  for (const cell of Object.values(state?.cells || {})) {
+    if (!cell || cell.kind !== "stone") {
+      continue;
+    }
+    if (cell.bagelReceipt) {
+      pending += 1;
+    }
+    if (cell.bagelCertified) {
+      certified += 1;
+    }
+    if (cell.bagelStamped) {
+      stamped += 1;
+    }
+  }
+  return { pending, certified, stamped };
+}
+
+function addBagelReceiptStone(state, hex, owner, extras = {}) {
+  return addEffectStone(state, hex, owner, "stone", {
+    bagelReceipt: true,
+    ...extras
+  });
+}
+
+function getBagelSesameCandidates(state, origin, phase) {
+  return getAdjacentsForMode(state, origin)
+    .filter((candidate) => isOpenForEverythingBagelEffect(state, candidate))
+    .sort((a, b) => (
+      positiveMod(a.q * 17 + a.r * 29 + phase * 7, 97)
+        - positiveMod(b.q * 17 + b.r * 29 + phase * 7, 97)
+      || getDistanceForMode(state, b) - getDistanceForMode(state, a)
+    ));
+}
+
+function applyBagelSesameSpread(state, origin, owner, zones) {
+  if (Object.keys(state.cells).length >= BAGEL_RECEIPT_STONE_LIMIT) {
+    return [];
+  }
+  const created = [];
+  for (const target of getBagelSesameCandidates(state, origin, zones.phase)) {
+    if (created.length >= BAGEL_SESAME_SPREAD_LIMIT || Object.keys(state.cells).length >= BAGEL_RECEIPT_STONE_LIMIT) {
+      break;
+    }
+    if (addBagelReceiptStone(state, target, owner, { bagelSeed: true })) {
+      created.push(target);
+    }
+  }
+  return created;
+}
+
+function applyBagelPoppyStamp(state, origin, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const target = getAdjacentsForMode(state, origin)
+    .map((hex) => ({ hex, cell: getCellAt(state, hex) }))
+    .filter((entry) => (
+      entry.cell
+        && entry.cell.kind === "stone"
+        && entry.cell.owner !== safeOwner
+        && !entry.cell.bedSiegeBed
+        && !entry.cell.factoryType
+    ))
+    .sort((a, b) => (
+      a.cell.serial - b.cell.serial
+      || getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
+    ))[0];
+  if (!target) {
+    return null;
+  }
+  const oldOwner = target.cell.owner;
+  target.cell.owner = safeOwner;
+  target.cell.bagelStamped = true;
+  return {
+    hex: target.hex,
+    oldOwner,
+    newOwner: safeOwner
+  };
+}
+
 function resolveBagelAuditorCopy(state, owner, messages) {
   if (Object.keys(state.cells).length >= BAGEL_RECEIPT_STONE_LIMIT) {
     return;
@@ -4929,7 +5124,7 @@ function resolveBagelAuditorCopy(state, owner, messages) {
     return;
   }
   const target = getMirrorCellForMode(state, rotateAxial(newest.hex, state.turnCount + owner));
-  if (isOpenForEverythingBagelEffect(state, target) && addEffectStone(state, target, owner, "stone", { bagelReceipt: true })) {
+  if (isOpenForEverythingBagelEffect(state, target) && addBagelReceiptStone(state, target, owner, { bagelAuditorCopy: true })) {
     messages.push(`Auditor copied Player ${owner}'s newest stone to (${target.q}, ${target.r}).`);
   }
 }
@@ -4992,6 +5187,76 @@ function resolveBagelRedTapeEvictions(state, messages) {
   }
 }
 
+function resolveBagelDeliQueue(state, messages) {
+  const zones = getEverythingBagelZones(state);
+  if (zones.deliQueue.length < 2) {
+    return;
+  }
+  const moved = [];
+  for (let index = zones.deliQueue.length - 2; index >= 0; index -= 1) {
+    const fromHex = zones.deliQueue[index];
+    const toHex = zones.deliQueue[index + 1];
+    const cell = getCellAt(state, fromHex);
+    if (!cell || cell.kind !== "stone") {
+      continue;
+    }
+    if (moveStonePreservingSerial(state, fromHex, toHex)) {
+      moved.push({ fromHex, toHex, owner: cell.owner });
+    }
+  }
+  if (moved.length > 0) {
+    messages.push(`Deli queue advanced ${moved.length} stone${moved.length === 1 ? "" : "s"}.`);
+  }
+}
+
+function isBagelReceiptAnchored(state, entry) {
+  return getAdjacentsForMode(state, entry.hex).some((candidate) => {
+    const cell = getCellAt(state, candidate);
+    return Boolean(
+      cell
+        && cell.kind === "stone"
+        && cell.owner === entry.cell.owner
+        && !cell.bagelReceipt
+    );
+  });
+}
+
+function resolveBagelReceiptAudit(state, messages) {
+  if (state.turnCount % BAGEL_RECEIPT_AUDIT_INTERVAL !== 0) {
+    return;
+  }
+  const oldestReceipt = getBagelReceiptEntriesSortedByAge(state)[0];
+  if (!oldestReceipt) {
+    return;
+  }
+  if (isBagelReceiptAnchored(state, oldestReceipt)) {
+    delete oldestReceipt.cell.bagelReceipt;
+    delete oldestReceipt.cell.bagelSeed;
+    delete oldestReceipt.cell.bagelAuditorCopy;
+    oldestReceipt.cell.bagelCertified = true;
+    messages.push(`Receipt audit certified Player ${oldestReceipt.cell.owner}'s stone at (${oldestReceipt.hex.q}, ${oldestReceipt.hex.r}).`);
+    return;
+  }
+  const owner = oldestReceipt.cell.owner;
+  removeStone(state, oldestReceipt.hex);
+  messages.push(`Receipt audit voided Player ${owner}'s loose receipt at (${oldestReceipt.hex.q}, ${oldestReceipt.hex.r}).`);
+}
+
+function getEverythingBagelNextDocketText(state) {
+  const nextTurnCount = Math.max(1, Math.trunc(Number(state?.turnCount) || 0) + 1);
+  const filings = ["auditor", "queue", "red tape"];
+  if (nextTurnCount % 3 === 0) {
+    filings.push("gravity");
+  }
+  if (nextTurnCount % 4 === 0) {
+    filings.push("tax swap");
+  }
+  if (nextTurnCount % BAGEL_RECEIPT_AUDIT_INTERVAL === 0) {
+    filings.push("receipt audit");
+  }
+  return filings.join(" | ");
+}
+
 function resolveEverythingBagel(state, previousPlayer) {
   if (!hasEverythingBagelMode(state)) {
     return;
@@ -5000,6 +5265,8 @@ function resolveEverythingBagel(state, previousPlayer) {
   resolveBagelAuditorCopy(state, previousPlayer, messages);
   resolveBagelGravityComplaint(state, messages);
   resolveBagelOwnerSwap(state, messages);
+  resolveBagelDeliQueue(state, messages);
+  resolveBagelReceiptAudit(state, messages);
   resolveBagelRedTapeEvictions(state, messages);
   rebuildPanicZones(state);
   pushLog(messages.length > 0
@@ -7563,6 +7830,43 @@ function renderFactoryPanel() {
   );
 }
 
+function renderEverythingBagelPanel() {
+  if (!ui.bagelControls) {
+    return;
+  }
+  const state = game.state;
+  if (!state || !hasEverythingBagelMode(state)) {
+    ui.bagelControls.hidden = true;
+    return;
+  }
+
+  ui.bagelControls.hidden = false;
+  const zones = getEverythingBagelZones(state);
+  const receiptStats = getEverythingBagelReceiptStats(state);
+  const portalCount = zones.portalPairs.length * 2;
+  const zoneParts = [
+    `${zones.redTape.length} red tape`,
+    `${portalCount} portals`,
+    `${zones.schmear.length} schmear`,
+    `${zones.sesame.length} sesame`,
+    `${zones.poppyStamps.length} poppy`,
+    `${zones.deliQueue.length} queue`
+  ];
+
+  if (ui.bagelPhaseText) {
+    ui.bagelPhaseText.textContent = `Phase ${positiveMod(zones.phase, 12)} | Turn ${state.turnCount}`;
+  }
+  if (ui.bagelZoneText) {
+    ui.bagelZoneText.textContent = zoneParts.join(" | ");
+  }
+  if (ui.bagelReceiptText) {
+    ui.bagelReceiptText.textContent = `${receiptStats.pending} pending receipts | ${receiptStats.certified} certified | ${receiptStats.stamped} stamped`;
+  }
+  if (ui.bagelNextText) {
+    ui.bagelNextText.textContent = `Next filing: ${getEverythingBagelNextDocketText(state)}`;
+  }
+}
+
 function updateStatus() {
   const state = game.state;
   ensureClockState(state);
@@ -7619,6 +7923,10 @@ function updateStatus() {
       ui.subturnText.textContent = `${state.movesLeftInTurn} factory action${state.movesLeftInTurn === 1 ? "" : "s"} left | ${getFactoryPlayerSummary(state, state.turnPlayer)} | ${getFactoryScoreSummary(state)}`;
     }
   }
+  if (hasEverythingBagelMode(state) && !state.winner) {
+    const receiptStats = getEverythingBagelReceiptStats(state);
+    ui.subturnText.textContent += ` | Bagel phase ${positiveMod(state.turnCount, 12)} | ${receiptStats.pending} receipts`;
+  }
 
   updateClockUI();
   updateTurnOrderSummary(getPlayerCount(state));
@@ -7627,6 +7935,7 @@ function updateStatus() {
   renderArmoryPanel();
   renderBedSiegePanel();
   renderFactoryPanel();
+  renderEverythingBagelPanel();
 }
 
 function resizeCanvas() {
@@ -8571,29 +8880,73 @@ function drawEverythingBagelOverlay() {
   }
   const size = currentHexSize();
   const zones = getEverythingBagelZones(game.state);
+  const showDetailText = canDrawDetailText(size);
   const overlayEntries = [
-    ...zones.redTape.map((hex) => ({ hex, fill: "rgba(255, 74, 93, 0.18)", stroke: "rgba(255, 74, 93, 0.72)", label: "RT" })),
-    ...zones.tollBooths.map((hex) => ({ hex, fill: "rgba(118, 227, 168, 0.13)", stroke: "rgba(118, 227, 168, 0.56)", label: "+7" })),
-    ...zones.coupons.map((hex) => ({ hex, fill: "rgba(255, 215, 94, 0.13)", stroke: "rgba(255, 215, 94, 0.62)", label: "CP" }))
+    ...zones.redTape.map((hex) => ({ hex, fill: "rgba(255, 74, 93, 0.18)", stroke: "rgba(255, 74, 93, 0.72)", text: "rgba(255, 231, 238, 0.92)", label: "RT", lineWidth: 2.1 })),
+    ...zones.tollBooths.map((hex) => ({ hex, fill: "rgba(118, 227, 168, 0.13)", stroke: "rgba(118, 227, 168, 0.58)", text: "rgba(222, 255, 235, 0.92)", label: "+7", lineWidth: 1.7 })),
+    ...zones.coupons.map((hex) => ({ hex, fill: "rgba(255, 215, 94, 0.14)", stroke: "rgba(255, 215, 94, 0.66)", text: "rgba(255, 247, 207, 0.95)", label: "CP", lineWidth: 1.7 })),
+    ...zones.schmear.map((hex) => ({ hex, fill: "rgba(255, 232, 184, 0.12)", stroke: "rgba(255, 232, 184, 0.64)", text: "rgba(255, 245, 222, 0.94)", label: "SL", lineWidth: 1.8 })),
+    ...zones.sesame.map((hex) => ({ hex, fill: "rgba(102, 212, 190, 0.12)", stroke: "rgba(102, 212, 190, 0.68)", text: "rgba(220, 255, 248, 0.94)", label: "SE", lineWidth: 1.8 })),
+    ...zones.poppyStamps.map((hex) => ({ hex, fill: "rgba(255, 111, 177, 0.13)", stroke: "rgba(255, 111, 177, 0.70)", text: "rgba(255, 232, 244, 0.95)", label: "PS", lineWidth: 1.8 })),
+    ...zones.deliQueue.map((hex, index) => ({ hex, fill: "rgba(109, 198, 255, 0.10)", stroke: "rgba(109, 198, 255, 0.58)", text: "rgba(225, 246, 255, 0.94)", label: `Q${index + 1}`, lineWidth: 1.6 }))
   ];
+
+  function screenPointForBagelHex(hex) {
+    const world = boardCellToPixel(hex, size, game.state);
+    return worldToScreen(world.x, world.y);
+  }
+
   for (const pair of zones.portalPairs) {
-    overlayEntries.push({ hex: pair.a, fill: "rgba(165, 107, 255, 0.13)", stroke: "rgba(165, 107, 255, 0.64)", label: "P" });
-    overlayEntries.push({ hex: pair.b, fill: "rgba(165, 107, 255, 0.13)", stroke: "rgba(165, 107, 255, 0.64)", label: "P" });
+    const a = screenPointForBagelHex(pair.a);
+    const b = screenPointForBagelHex(pair.b);
+    ctx.save();
+    ctx.setLineDash([size * 0.28, size * 0.18]);
+    ctx.strokeStyle = "rgba(181, 137, 255, 0.42)";
+    ctx.lineWidth = Math.max(1.2, size * 0.055);
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.restore();
+
+    overlayEntries.push({ hex: pair.a, fill: "rgba(165, 107, 255, 0.14)", stroke: "rgba(181, 137, 255, 0.70)", text: "rgba(244, 237, 255, 0.95)", label: `P${pair.index + 1}`, lineWidth: 1.9 });
+    overlayEntries.push({ hex: pair.b, fill: "rgba(165, 107, 255, 0.14)", stroke: "rgba(181, 137, 255, 0.70)", text: "rgba(244, 237, 255, 0.95)", label: `P${pair.index + 1}`, lineWidth: 1.9 });
+  }
+
+  if (zones.deliQueue.length > 1) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(109, 198, 255, 0.34)";
+    ctx.lineWidth = Math.max(1, size * 0.045);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    zones.deliQueue.forEach((hex, index) => {
+      const screen = screenPointForBagelHex(hex);
+      if (index === 0) {
+        ctx.moveTo(screen.x, screen.y);
+      } else {
+        ctx.lineTo(screen.x, screen.y);
+      }
+    });
+    ctx.stroke();
+    ctx.restore();
   }
 
   ctx.save();
-  ctx.font = `${Math.max(8, Math.min(13, size * 0.42))}px Inter, system-ui, sans-serif`;
+  ctx.font = `${Math.max(8, Math.min(13, size * 0.40))}px Inter, system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (const entry of overlayEntries) {
-    const world = boardCellToPixel(entry.hex, size, game.state);
-    const screen = worldToScreen(world.x, world.y);
+    const screen = screenPointForBagelHex(entry.hex);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > canvas.clientWidth + size * 2 || screen.y > canvas.clientHeight + size * 2) {
       continue;
     }
-    drawBoardShape(screen.x, screen.y, size * 0.95, entry.fill, entry.stroke, 1.8, entry.hex);
-    ctx.fillStyle = "rgba(236, 242, 255, 0.82)";
-    ctx.fillText(entry.label, screen.x, screen.y);
+    drawBoardShape(screen.x, screen.y, size * 0.96, entry.fill, entry.stroke, entry.lineWidth, entry.hex);
+    if (showDetailText) {
+      ctx.fillStyle = entry.text || "rgba(236, 242, 255, 0.86)";
+      ctx.fillText(entry.label, screen.x, screen.y);
+    }
   }
   ctx.restore();
 }
@@ -9092,6 +9445,29 @@ function drawPieces() {
       const innerDotRadius = size * (usesTriangleGridMode(game.state) ? 0.18 : 0.28);
       ctx.arc(screen.x, screen.y, innerDotRadius, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    if (hasEverythingBagelMode(game.state) && !bedSiegeBlockType && (cell.bagelReceipt || cell.bagelCertified || cell.bagelStamped)) {
+      const stampRadius = Math.max(3.2, size * 0.15);
+      const stampX = screen.x + size * 0.36;
+      const stampY = screen.y - size * 0.36;
+      const stampFill = cell.bagelCertified
+        ? "rgba(118, 227, 168, 0.92)"
+        : (cell.bagelStamped ? "rgba(255, 111, 177, 0.92)" : "rgba(255, 215, 94, 0.92)");
+      ctx.fillStyle = stampFill;
+      ctx.strokeStyle = "rgba(8, 12, 26, 0.72)";
+      ctx.lineWidth = Math.max(1, size * 0.035);
+      ctx.beginPath();
+      ctx.arc(stampX, stampY, stampRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (showDetailText) {
+        ctx.fillStyle = "rgba(8, 12, 26, 0.88)";
+        ctx.font = `${Math.max(7, Math.min(10, size * 0.28))}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(cell.bagelCertified ? "C" : (cell.bagelStamped ? "P" : "R"), stampX, stampY + 0.5);
+      }
     }
 
     const bedOwner = getBedSiegeBedOwnerAt(game.state, hex, true);
