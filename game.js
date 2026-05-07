@@ -355,7 +355,6 @@ const BED_SIEGE_BLOCK_STYLES = {
 };
 const FACTORY_CORE_BASE_INTEGRITY = 24;
 const FACTORY_REMOTE_STRIKE_RANGE = 4;
-const FACTORY_MAX_ROUTE_BONUS = 2;
 const FACTORY_RESOURCE_TYPES = ["ore", "flux", "points"];
 const FACTORY_STARTING_RESOURCES = {
   ore: 0,
@@ -384,7 +383,7 @@ const FACTORY_MODULE_DEFS = {
     name: "Conveyor",
     symbol: ">",
     fill: "rgba(169, 186, 214, 0.30)",
-    cost: { points: 1 },
+    cost: { points: 2 },
     hp: 1,
     description: "Extends your connected factory line back to your core."
   },
@@ -392,7 +391,7 @@ const FACTORY_MODULE_DEFS = {
     name: "Miner",
     symbol: "M",
     fill: "rgba(255, 215, 94, 0.24)",
-    cost: { points: 2 },
+    cost: { points: 3 },
     hp: 1,
     description: "Place beside a resource node. The player with the most adjacent Miner strength controls that node."
   },
@@ -400,7 +399,7 @@ const FACTORY_MODULE_DEFS = {
     name: "Block",
     symbol: "#",
     fill: "rgba(236, 242, 255, 0.16)",
-    cost: { points: 2 },
+    cost: { points: 3 },
     hp: 3,
     description: "A tough factory block that absorbs attacks and helps shield your route."
   },
@@ -408,7 +407,7 @@ const FACTORY_MODULE_DEFS = {
     name: "Blast Charge",
     symbol: "B",
     fill: "rgba(255, 74, 93, 0.22)",
-    cost: { points: 4 },
+    cost: { points: 5 },
     hp: 1,
     description: "A placeable charge. Click your own connected charge to detonate it against adjacent enemy factory tiles."
   },
@@ -416,15 +415,15 @@ const FACTORY_MODULE_DEFS = {
     name: "Upgraded Conveyor",
     symbol: "+",
     fill: "rgba(118, 227, 168, 0.22)",
-    cost: { points: 3 },
+    cost: { points: 4 },
     hp: 2,
-    description: "An upgraded conveyor. Connected upgraded conveyors add a small bonus to delivered resources, up to +2."
+    description: "A tougher conveyor that keeps important routes online longer."
   },
   launcher: {
     name: "Cannon",
     symbol: "X",
     fill: "rgba(255, 179, 92, 0.24)",
-    cost: { points: 6 },
+    cost: { points: 7 },
     hp: 2,
     description: "A connected cannon lets you spend points on remote shots within range."
   }
@@ -478,7 +477,7 @@ const FACTORY_COMMAND_DEFS = {
     name: "Strike Crew",
     symbol: "!",
     group: "attack",
-    cost: { points: 4 },
+    cost: { points: 5 },
     coreDamage: 4,
     moduleDamage: 2,
     description: "Spend points to hit an adjacent enemy factory tile from your connected network."
@@ -487,7 +486,7 @@ const FACTORY_COMMAND_DEFS = {
     name: "Cannon Shot",
     symbol: "*",
     group: "attack",
-    cost: { points: 7 },
+    cost: { points: 8 },
     coreDamage: 3,
     moduleDamage: 2,
     description: "Spend points from a connected Cannon to hit an enemy tile up to 4 spaces away."
@@ -780,8 +779,8 @@ const MODES = {
   },
   factoryFoundry: {
     name: "Foundry War",
-    summary: "Secret factory duel: each player has one mirrored Ore node, the middle Flux node is contested, conveyors deliver resources home for points, and points buy blocks, cannons, blast charges, repairs, and attacks. Last base standing wins.",
-    hint: "Build from your core. The most adjacent Miner strength controls a node. Ore is worth 1, middle Flux is worth 3, upgraded conveyors add a small delivery bonus, Cannon range is 4, and Blast Charges damage adjacent factories.",
+    summary: "Secret factory duel: each base has two nearby Ore nodes, two Flux nodes sit above and below center, conveyors deliver resources home for capped points, and points buy blocks, cannons, blast charges, repairs, and attacks. Last base standing wins.",
+    hint: "Build from your core. Most adjacent Miner strength controls a node. Each Ore pays at most 1 point per turn and each Flux pays at most 3. Cannons shoot 4 spaces, and Blast Charges damage adjacent factories.",
     secret: true
   },
   everythingBagel: {
@@ -2976,7 +2975,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     placeFactoryCoreCells(state);
     state.movesLeftInTurn = 2;
     state.openingMoveDone = true;
-    state.log[0] = "Foundry War started: control Ore and middle Flux with miners, route them home for points, and keep your core alive.";
+    state.log[0] = "Foundry War started: control nearby Ore and the upper/lower Flux nodes, route them home for capped points, and keep your core alive.";
   }
   return state;
 }
@@ -5994,43 +5993,46 @@ function getFactoryHomeHexForOwner(state, owner) {
   return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
 }
 
-function getFactoryLocalOreHexForOwner(state, owner) {
-  const playerCount = getPlayerCount(state);
-  const layouts = {
-    2: {
-      1: { q: -4, r: 0 },
-      2: { q: 4, r: 0 }
-    },
-    3: {
-      1: { q: -4, r: 0 },
-      2: { q: 4, r: -4 },
-      3: { q: 0, r: 4 }
-    },
-    4: {
-      1: { q: -5, r: 0 },
-      2: { q: 5, r: 0 },
-      3: { q: 3, r: -5 },
-      4: { q: -3, r: 5 }
-    }
-  };
-  return { ...(layouts[playerCount]?.[normalisePlayerNumber(owner, playerCount)] || layouts[2][1]) };
+function getFactoryLocalOreHexesForOwner(state, owner) {
+  const home = getFactoryHomeHexForOwner(state, owner);
+  const inwardIndex = dirs
+    .map((dir, index) => ({
+      dir,
+      index,
+      hex: addHex(home, dir)
+    }))
+    .filter((entry) => isCellSupportedForMode(state, entry.hex))
+    .sort((a, b) => (
+      getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
+      || a.hex.q - b.hex.q
+      || a.hex.r - b.hex.r
+    ))[0]?.index ?? 0;
+  const inward = dirs[inwardIndex];
+  const left = dirs[(inwardIndex + 1) % dirs.length];
+  const right = dirs[(inwardIndex + dirs.length - 1) % dirs.length];
+  return [
+    addHex(addHex(addHex(home, inward), inward), left),
+    addHex(addHex(addHex(home, inward), inward), right)
+  ];
 }
 
 function getFactoryDepositDefinitions(state) {
   const deposits = [];
 
   for (const owner of getPlayerNumbers(state)) {
-    const hex = getFactoryLocalOreHexForOwner(state, owner);
-    deposits.push({
-      id: `p${owner}-ore-${hex.q}-${hex.r}`,
-      owner,
-      type: "ore",
-      hex
-    });
+    for (const [index, hex] of getFactoryLocalOreHexesForOwner(state, owner).entries()) {
+      deposits.push({
+        id: `p${owner}-ore-${index + 1}-${hex.q}-${hex.r}`,
+        owner,
+        type: "ore",
+        hex
+      });
+    }
   }
 
   const neutralDeposits = [
-    { hex: { q: 0, r: 0 }, type: "flux" }
+    { hex: { q: 3, r: -6 }, type: "flux" },
+    { hex: { q: -3, r: 6 }, type: "flux" }
   ];
   for (const deposit of neutralDeposits) {
     deposits.push({
@@ -6400,7 +6402,7 @@ function placeFactoryModule(state, hex, owner, moduleType, extras = {}) {
 }
 
 function getFactoryMinerUpgradeCost(level) {
-  return { points: Math.max(1, Math.round(Number(level) || 1)) * 4 };
+  return { points: Math.max(1, Math.round(Number(level) || 1)) * 5 };
 }
 
 function damageFactoryCore(state, targetOwner, amount, attacker = null, sourceText = "") {
@@ -6591,7 +6593,7 @@ function handleFactoryOwnCellAction(state, hex, owner, cell) {
       return;
     }
     if (core.integrity < core.maxIntegrity) {
-      const repairCost = { points: 4 };
+      const repairCost = { points: 5 };
       if (!canAffordFactoryCost(state, owner, repairCost)) {
         showFactoryNotice(`Core repair needs ${formatFactoryCost(repairCost)}.`);
         return;
@@ -6636,7 +6638,7 @@ function handleFactoryOwnCellAction(state, hex, owner, cell) {
     const maxHp = getFactoryModuleMaxHp(cell);
     const currentHp = Math.max(1, Math.round(Number(cell.factoryHp) || maxHp));
     if (currentHp < maxHp) {
-      const repairCost = { points: 2 };
+      const repairCost = { points: 3 };
       if (!canAffordFactoryCost(state, owner, repairCost)) {
         showFactoryNotice(`${getFactoryModuleDef(moduleType).name} repair needs ${formatFactoryCost(repairCost)}.`);
         return;
@@ -6857,17 +6859,9 @@ function findFactoryPathToCore(state, owner, startHex, connectedSet = null) {
   return [];
 }
 
-function getFactoryRouteBonus(state, owner, connectedEntries = null) {
-  const entries = connectedEntries || getFactoryConnectedEntries(state, owner);
-  const forgeCount = entries.filter((entry) => getFactoryCellType(entry.cell) === "forge").length;
-  return Math.min(FACTORY_MAX_ROUTE_BONUS, forgeCount);
-}
-
 function getFactoryDeliveryInfosForOwner(state, owner) {
   const safeOwner = normalisePlayerNumber(owner, state);
   const connected = getFactoryConnectedKeySet(state, safeOwner);
-  const connectedEntries = Array.from(connected).map((key) => ({ key, hex: parseKey(key), cell: state.cells[key] }));
-  const routeBonus = getFactoryRouteBonus(state, safeOwner, connectedEntries);
   const infos = [];
   for (const deposit of getFactoryDepositDefinitions(state)) {
     const control = getFactoryDepositControl(state, deposit);
@@ -6884,7 +6878,7 @@ function getFactoryDeliveryInfosForOwner(state, owner) {
       control,
       miner,
       path: [deposit.hex, ...findFactoryPathToCore(state, safeOwner, miner.hex, connected)],
-      value: Math.max(1, Math.round(Number(depositDef.baseValue) || 1)) + routeBonus
+      value: Math.max(1, Math.round(Number(depositDef.baseValue) || 1))
     });
   }
   return infos;
@@ -6902,19 +6896,16 @@ function resolveFactoryTurnEnd(state, owner) {
   }
 
   const connectedEntries = getFactoryConnectedEntries(state, safeOwner);
-  const activeEntries = connectedEntries.filter((entry) => getFactoryCellType(entry.cell) !== "core");
   const wallet = factory.resources[safeOwner];
   const ownedFactoryCells = Object.values(state.cells).filter((cell) => isFactoryCell(cell) && cell.owner === safeOwner);
   const inactiveCount = Math.max(0, ownedFactoryCells.length - connectedEntries.length);
   const connectedSet = new Set(connectedEntries.map((entry) => entry.key));
-  const routeBonus = getFactoryRouteBonus(state, safeOwner, activeEntries);
   const report = {
     delivered: { ore: 0, flux: 0 },
     points: 0,
     controlled: 0,
     contested: 0,
     unrouted: 0,
-    bonus: routeBonus,
     inactive: inactiveCount
   };
 
@@ -6934,7 +6925,7 @@ function resolveFactoryTurnEnd(state, owner) {
     }
     const depositDef = getFactoryDepositDef(deposit.type);
     const baseValue = Math.max(1, Math.round(Number(depositDef.baseValue) || 1));
-    const gainedPoints = baseValue + routeBonus;
+    const gainedPoints = baseValue;
     wallet[deposit.type] += 1;
     wallet.points += gainedPoints;
     report.delivered[deposit.type] += 1;
@@ -6947,11 +6938,10 @@ function resolveFactoryTurnEnd(state, owner) {
     .map(([resource, amount]) => `${amount} ${FACTORY_RESOURCE_LABELS[resource]?.name || resource}${amount === 1 ? "" : "s"}`)
     .join(" ");
   const pointsText = report.points > 0 ? `${deliveredText} for +${report.points}pt` : "no deliveries";
-  const bonusText = report.bonus > 0 ? `, belt bonus +${report.bonus}` : "";
   const unroutedText = report.unrouted > 0 ? `, ${report.unrouted} controlled but not routed` : "";
   const contestedText = report.contested > 0 ? `, ${report.contested} contested` : "";
   const inactiveText = report.inactive > 0 ? `, ${report.inactive} disconnected` : "";
-  pushLog(`Player ${safeOwner} foundry tick: ${pointsText}${bonusText}${unroutedText}${contestedText}${inactiveText}.`);
+  pushLog(`Player ${safeOwner} foundry tick: ${pointsText}${unroutedText}${contestedText}${inactiveText}.`);
   return report;
 }
 
@@ -7510,7 +7500,7 @@ function renderFactoryPanel() {
     ui.factoryActiveActionText.textContent = `Active: Player ${owner} | ${actionDef.name} | ${wallet.points}pt${reportText}`;
   }
   if (ui.factoryRuleText) {
-    ui.factoryRuleText.textContent = "Each player has one mirrored Ore node worth 1. The middle Flux node is worth 3. Most adjacent Miner strength controls a node; connected conveyors carry it home for points, and upgraded conveyors add up to +2 value. Cannons shoot 4 spaces. Blast Charges detonate into adjacent enemy factories. Last core alive wins.";
+    ui.factoryRuleText.textContent = "Each base has two nearby Ore nodes worth 1 each. Two Flux nodes sit above and below center and are worth 3 each. Most adjacent Miner strength controls a node; connected conveyors carry it home, but node income never exceeds 1 for Ore or 3 for Flux. Cannons shoot 4 spaces. Blast Charges detonate into adjacent enemy factories. Last core alive wins.";
   }
 
   renderFactoryCommandButtons(
