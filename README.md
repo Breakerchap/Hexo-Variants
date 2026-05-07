@@ -75,6 +75,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.
 - **Bed Siege**: a Bedwars-style secret mode with starting islands, beds, generators, shop resources, defensive blocks, tools, bridge eggs, pearls, and bed-break win conditions.
+- **Foundry War**: a secret factory duel where miners control Ore and the middle Flux node, conveyors deliver resources home for points, upgraded belts increase delivery value, and points buy blocks, cannons, repairs, and attacks until only one core remains.
 
 ## Project Structure
 
