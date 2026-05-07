@@ -116,6 +116,7 @@ const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BED_SIEGE_BRIDGE_RANGE = 3;
 const BED_SIEGE_PEARL_RANGE = 6;
 const BED_SIEGE_FIREBALL_RANGE = 5;
+const BED_SIEGE_GENERATOR_YIELD_MULTIPLIER = 0.5;
 const ARMORY_DEFAULT_CLASS = "vanguard";
 const ARMORY_REROLL_GOLD_COST = 2;
 const ARMORY_SHOP_SLOTS = 4;
@@ -278,7 +279,7 @@ const BED_SIEGE_ITEM_DEFS = {
     category: "mobility",
     bundle: 1,
     startingCount: 0,
-    cost: { diamond: 2 },
+    cost: { diamond: 2, emerald: 1 },
     description: "Builds a short wool bridge up to 3 spaces from your network."
   },
   pearl: {
@@ -1557,7 +1558,8 @@ function createBedSiegeStateForGame(state) {
     resources: createPlayerMap(getPlayerCount(state), () => createBedSiegeResources()),
     inventory: createPlayerMap(getPlayerCount(state), () => createBedSiegeInventory()),
     selectedItem: createPlayerMap(getPlayerCount(state), () => "wool"),
-    generatorTicks: {}
+    generatorTicks: {},
+    generatorRemainders: {}
   };
 }
 
@@ -1648,6 +1650,9 @@ function ensureBedSiegeState(state) {
   ));
   if (!state.bedSiege.generatorTicks || typeof state.bedSiege.generatorTicks !== "object") {
     state.bedSiege.generatorTicks = {};
+  }
+  if (!state.bedSiege.generatorRemainders || typeof state.bedSiege.generatorRemainders !== "object") {
+    state.bedSiege.generatorRemainders = {};
   }
   placeBedSiegeBedCells(state);
   return state.bedSiege;
@@ -2095,19 +2100,90 @@ function getBedSiegeShearTargets(state, owner, centerHex) {
   });
 }
 
-function getBedSiegeGeneratorController(state, generatorHex) {
-  const adjacentOwners = new Set();
+function getBedSiegeAdjacentGeneratorBlockCount(state, generatorHex, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  let count = 0;
+  for (const candidate of getAdjacentsForMode(state, generatorHex)) {
+    const cell = getCellAt(state, candidate);
+    if (cell && cell.kind === "stone" && cell.owner === safeOwner) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function getBedSiegeGeneratorControl(state, generatorHex) {
+  const blockCountsByOwner = new Map();
   for (const candidate of getAdjacentsForMode(state, generatorHex)) {
     const cell = getCellAt(state, candidate);
     if (!cell || cell.kind !== "stone" || !isValidPlayerNumber(cell.owner, state)) {
       continue;
     }
-    const bed = getBedSiegeBed(state, cell.owner);
-    if (bed?.alive) {
-      adjacentOwners.add(cell.owner);
+    const owner = normalisePlayerNumber(cell.owner, state);
+    const bed = getBedSiegeBed(state, owner);
+    if (!bed?.alive) {
+      continue;
+    }
+    blockCountsByOwner.set(owner, (blockCountsByOwner.get(owner) || 0) + 1);
+  }
+  const controlledEntries = Array.from(blockCountsByOwner.entries()).filter(([, count]) => count > 0);
+  if (controlledEntries.length !== 1) {
+    return { controller: 0, blockCount: 0 };
+  }
+  const [controller, blockCount] = controlledEntries[0];
+  return { controller, blockCount };
+}
+
+function getBedSiegeGeneratorController(state, generatorHex) {
+  return getBedSiegeGeneratorControl(state, generatorHex).controller;
+}
+
+function getBedSiegeGeneratorRemainderBucket(bedSiege, generatorId, owner) {
+  const key = `${generatorId}:P${owner}`;
+  const source = bedSiege.generatorRemainders?.[key] && typeof bedSiege.generatorRemainders[key] === "object"
+    ? bedSiege.generatorRemainders[key]
+    : {};
+  const bucket = {};
+  for (const resource of BED_SIEGE_RESOURCE_TYPES) {
+    const amount = Number(source[resource]);
+    bucket[resource] = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+  }
+  bedSiege.generatorRemainders[key] = bucket;
+  return bucket;
+}
+
+function getScaledBedSiegeGeneratorIncome(state, generator, owner, blockCount) {
+  const bedSiege = ensureBedSiegeState(state);
+  const adjacentBlocks = Math.max(0, Math.round(Number(blockCount) || 0));
+  const remainderBucket = getBedSiegeGeneratorRemainderBucket(bedSiege, generator.id, owner);
+  const income = {};
+
+  for (const [resource, amount] of Object.entries(generator.income || {})) {
+    if (!BED_SIEGE_RESOURCE_TYPES.includes(resource)) {
+      continue;
+    }
+    const scaledAmount = Math.max(0, Number(amount) || 0)
+      * adjacentBlocks
+      * BED_SIEGE_GENERATOR_YIELD_MULTIPLIER;
+    if (scaledAmount <= 0) {
+      continue;
+    }
+    const total = remainderBucket[resource] + scaledAmount;
+    const wholeAmount = Math.floor(total);
+    remainderBucket[resource] = total - wholeAmount;
+    if (wholeAmount > 0) {
+      income[resource] = wholeAmount;
     }
   }
-  return adjacentOwners.size === 1 ? Array.from(adjacentOwners)[0] : 0;
+
+  return income;
+}
+
+function formatBedSiegeResourceGain(gain = {}) {
+  return Object.entries(gain)
+    .filter(([, amount]) => amount > 0)
+    .map(([resource, amount]) => `+${amount}${resource[0]}`)
+    .join("/");
 }
 
 function resolveBedSiegeTurnEnd(state, owner) {
@@ -2119,8 +2195,22 @@ function resolveBedSiegeTurnEnd(state, owner) {
   const incomeLines = [];
 
   if (bedSiege.beds[safeOwner]?.alive) {
-    gainBedSiegeResources(state, safeOwner, { iron: 4, gold: state.turnCount % 2 === 0 ? 2 : 1 });
-    incomeLines.push(`P${safeOwner} base +4i/+${state.turnCount % 2 === 0 ? 2 : 1}g`);
+    const baseGeneratorHex = getBedSiegeBaseGeneratorHexForOwner(state, safeOwner);
+    const baseBlockCount = getBedSiegeAdjacentGeneratorBlockCount(state, baseGeneratorHex, safeOwner);
+    const baseIncome = getScaledBedSiegeGeneratorIncome(
+      state,
+      {
+        id: `base-${safeOwner}`,
+        income: { iron: 4, gold: state.turnCount % 2 === 0 ? 2 : 1 }
+      },
+      safeOwner,
+      baseBlockCount
+    );
+    const baseGainText = formatBedSiegeResourceGain(baseIncome);
+    if (baseGainText) {
+      gainBedSiegeResources(state, safeOwner, baseIncome);
+      incomeLines.push(`P${safeOwner} base ${baseGainText} (${baseBlockCount} block${baseBlockCount === 1 ? "" : "s"})`);
+    }
   }
 
   for (const generator of getBedSiegeNeutralGenerators(state)) {
@@ -2128,15 +2218,16 @@ function resolveBedSiegeTurnEnd(state, owner) {
     if (state.turnCount % every !== 0) {
       continue;
     }
-    const controller = getBedSiegeGeneratorController(state, generator.hex);
+    const { controller, blockCount } = getBedSiegeGeneratorControl(state, generator.hex);
     if (!controller) {
       continue;
     }
-    gainBedSiegeResources(state, controller, generator.income);
-    const gainText = Object.entries(generator.income)
-      .map(([resource, amount]) => `+${amount}${resource[0]}`)
-      .join("/");
-    incomeLines.push(`P${controller} ${generator.type} ${gainText}`);
+    const generatorIncome = getScaledBedSiegeGeneratorIncome(state, generator, controller, blockCount);
+    const gainText = formatBedSiegeResourceGain(generatorIncome);
+    if (gainText) {
+      gainBedSiegeResources(state, controller, generatorIncome);
+      incomeLines.push(`P${controller} ${generator.type} ${gainText} (${blockCount} block${blockCount === 1 ? "" : "s"})`);
+    }
     bedSiege.generatorTicks[generator.id] = state.turnCount;
   }
 
@@ -2409,6 +2500,8 @@ const game = {
   modeUiSignature: "",
   renderScheduled: false,
   lastFactoryAnimationAt: 0,
+  factoryAnimationFramePending: false,
+  factoryAnimationDisabled: false,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
@@ -9276,6 +9369,26 @@ function drawWinnerLineHint() {
   }
 }
 
+function scheduleFactoryAmbientAnimation() {
+  if (game.factoryAnimationDisabled || game.factoryAnimationFramePending) {
+    return;
+  }
+  game.factoryAnimationFramePending = true;
+  let callbackWasSynchronous = true;
+  window.requestAnimationFrame(() => {
+    if (callbackWasSynchronous) {
+      game.factoryAnimationDisabled = true;
+      game.factoryAnimationFramePending = false;
+      return;
+    }
+    game.factoryAnimationFramePending = false;
+    if (game.state && usesFactoryMode(game.state)) {
+      render();
+    }
+  });
+  callbackWasSynchronous = false;
+}
+
 function renderNow() {
   if (!game.state) {
     return;
@@ -9304,10 +9417,11 @@ function renderNow() {
     const animationNow = window.performance?.now ? window.performance.now() : Date.now();
     if (animationNow - game.lastFactoryAnimationAt >= 16) {
       game.lastFactoryAnimationAt = animationNow;
-      render();
+      scheduleFactoryAmbientAnimation();
     }
   } else {
     game.lastFactoryAnimationAt = 0;
+    game.factoryAnimationFramePending = false;
   }
 }
 
