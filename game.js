@@ -3042,6 +3042,9 @@ function getBirdActionPrompt(action) {
   if (!safeAction) {
     return "";
   }
+  if (safeAction.birdKind === "kingDuck" && Object.keys(game.state?.panicZones || {}).length > 0) {
+    return `Move the ${getBirdMoveLabel(safeAction.birdKind)} to any empty ${getBoardSpaceLabel(game.state)} outside the current panic zone`;
+  }
   return `Move the ${getBirdMoveLabel(safeAction.birdKind)} to any empty ${getBoardSpaceLabel(game.state)}`;
 }
 
@@ -4181,20 +4184,24 @@ function isHexOpen(state, hex) {
 }
 
 function isHexOpenForBird(state, hex, birdKind) {
+  const safeBirdKind = birdKind === "kingDuck" ? "kingDuck" : "duck";
   if (!isCellSupportedForMode(state, hex)) {
     return false;
   }
   if (isStoneOccupied(state, hex)) {
     return false;
   }
+  if (safeBirdKind === "kingDuck" && state.panicZones?.[keyOf(hex.q, hex.r)]) {
+    return false;
+  }
 
   const birdAt = getBirdAt(state, hex);
-  if (birdAt && birdAt !== birdKind) {
+  if (birdAt && birdAt !== safeBirdKind) {
     return false;
   }
 
   const copyAt = getBirdEchoCopyAt(state, hex);
-  if (copyAt && copyAt !== birdKind) {
+  if (copyAt && copyAt !== safeBirdKind) {
     return false;
   }
   return true;

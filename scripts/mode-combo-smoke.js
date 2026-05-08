@@ -921,6 +921,14 @@ function runKingDuckPanicChecks(context, radialOnly = false) {
     const actualKeys = Object.keys(state.panicZones).sort();
     const expectedKeys = expectedPanicKeys.slice().sort();
     assert.deepEqual(actualKeys, expectedKeys, `${messagePrefix}: panic zones should match expected adjacency`);
+
+    for (const panicKey of expectedKeys) {
+      assert.equal(
+        context.isHexOpenForBird(state, parseKey(panicKey), "kingDuck"),
+        false,
+        `${messagePrefix}: king duck should not be movable into current panic zone ${panicKey}`
+      );
+    }
   }
 
   if (!radialOnly) {
