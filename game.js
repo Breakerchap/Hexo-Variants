@@ -123,6 +123,34 @@ const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
 const BAGEL_EFFECT_TILE_PHASE = 0;
+const POWDER_MAX_GRAINS = 180;
+const POWDER_EMIT_PER_PLACEMENT = 4;
+const POWDER_TICKS_PER_TURN = 5;
+const POWDER_MAX_MOVES_PER_TURN = 85;
+const POWDER_MATERIAL_SEQUENCE = ["sand", "water", "ember", "sand"];
+const POWDER_MATERIAL_DEFS = {
+  sand: {
+    name: "sand",
+    fill: "rgba(255, 215, 94, 0.78)",
+    stroke: "rgba(255, 246, 214, 0.62)",
+    maxAge: 38,
+    radius: 0.22
+  },
+  water: {
+    name: "water",
+    fill: "rgba(109, 198, 255, 0.66)",
+    stroke: "rgba(191, 232, 255, 0.56)",
+    maxAge: 30,
+    radius: 0.19
+  },
+  ember: {
+    name: "ember",
+    fill: "rgba(255, 111, 97, 0.78)",
+    stroke: "rgba(255, 199, 145, 0.66)",
+    maxAge: 10,
+    radius: 0.16
+  }
+};
 const BED_SIEGE_BRIDGE_RANGE = 3;
 const BED_SIEGE_PEARL_RANGE = 6;
 const BED_SIEGE_FIREBALL_RANGE = 5;
@@ -797,6 +825,12 @@ const MODES = {
     name: "Everything Bagel",
     summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, schmear slides them, sesame spreads receipts, poppy stamps flip rivals, deli queues advance, and paperwork mutates the board.",
     hint: "Still connect 6, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
+    secret: true
+  },
+  powderCascade: {
+    name: "Powder Cascade",
+    summary: "Secret powder-sim mode: placements vent tiny sand, water, and ember grains that fall, flow, fizzle, and stay capped so the board never becomes a slideshow.",
+    hint: "Each placement vents a few grains. Completed turns advance a bounded powder simulation; grains are visual soft matter and can be played through.",
     secret: true
   }
 };
@@ -2933,6 +2967,10 @@ function usesFactoryMode(state) {
   return Boolean(state && hasMode(state, "factoryFoundry"));
 }
 
+function usesPowderMode(state) {
+  return Boolean(state && hasMode(state, "powderCascade"));
+}
+
 function normalisePerformanceModeLevel(level) {
   return Math.max(0, Math.min(2, Math.trunc(Number(level) || 0)));
 }
@@ -2959,6 +2997,326 @@ function getEffectiveCanvasDevicePixelRatio() {
     return Math.min(rawDpr, LDM_DEVICE_PIXEL_RATIO_CAP);
   }
   return rawDpr;
+}
+
+function createPowderStateForGame() {
+  return {
+    grains: {},
+    nextId: 1,
+    lastReport: null
+  };
+}
+
+function normalisePowderMaterial(material) {
+  return Object.prototype.hasOwnProperty.call(POWDER_MATERIAL_DEFS, material) ? material : "sand";
+}
+
+function getPowderMaterialDef(material) {
+  return POWDER_MATERIAL_DEFS[normalisePowderMaterial(material)];
+}
+
+function ensurePowderState(state) {
+  if (!state || !usesPowderMode(state)) {
+    return null;
+  }
+  if (!state.powder || typeof state.powder !== "object") {
+    state.powder = createPowderStateForGame();
+  }
+  const powder = state.powder;
+  if (!powder.grains || typeof powder.grains !== "object" || Array.isArray(powder.grains)) {
+    powder.grains = {};
+  }
+  powder.nextId = Math.max(1, Math.trunc(Number(powder.nextId) || 1));
+
+  for (const [key, grain] of Object.entries(powder.grains)) {
+    const hex = parseKey(key);
+    if (!Number.isFinite(hex.q) || !Number.isFinite(hex.r) || !grain || typeof grain !== "object") {
+      delete powder.grains[key];
+      continue;
+    }
+    grain.owner = normalisePlayerNumber(grain.owner, state);
+    grain.material = normalisePowderMaterial(grain.material);
+    grain.age = Math.max(0, Math.trunc(Number(grain.age) || 0));
+    grain.id = Math.max(1, Math.trunc(Number(grain.id) || powder.nextId));
+    powder.nextId = Math.max(powder.nextId, grain.id + 1);
+  }
+  return powder;
+}
+
+function getPowderGrainEntries(state) {
+  const powder = ensurePowderState(state);
+  if (!powder) {
+    return [];
+  }
+  return Object.entries(powder.grains).map(([key, grain]) => ({
+    key,
+    hex: parseKey(key),
+    grain
+  }));
+}
+
+function getPowderGrainCount(state) {
+  const powder = ensurePowderState(state);
+  return powder ? Object.keys(powder.grains).length : 0;
+}
+
+function clearPowderAt(state, hex) {
+  const grains = state?.powder?.grains;
+  if (!grains || !hex || !Number.isFinite(hex.q) || !Number.isFinite(hex.r)) {
+    return false;
+  }
+  const key = keyOf(hex.q, hex.r);
+  if (!grains[key]) {
+    return false;
+  }
+  delete grains[key];
+  return true;
+}
+
+function isPowderCellFree(state, hex) {
+  if (!usesPowderMode(state) || !hex || !isCellSupportedForMode(state, hex)) {
+    return false;
+  }
+  if (getCellAt(state, hex) || getBirdAt(state, hex) || getBirdEchoCopyAt(state, hex)) {
+    return false;
+  }
+  if (isEverythingBagelRedTapeHex(state, hex)) {
+    return false;
+  }
+  return !state.powder?.grains?.[keyOf(hex.q, hex.r)];
+}
+
+function getPowderCellScreenBasis(state, hex) {
+  return boardCellToPixel(hex, 1, state);
+}
+
+function getPowderSortedNeighbours(state, hex, grain) {
+  const origin = getPowderCellScreenBasis(state, hex);
+  const driftSign = positiveMod((grain?.id || 0) + state.turnCount, 2) === 0 ? -1 : 1;
+  return getAdjacentsForMode(state, hex)
+    .filter((target) => isCellSupportedForMode(state, target))
+    .map((target) => {
+      const point = getPowderCellScreenBasis(state, target);
+      return {
+        target,
+        dx: point.x - origin.x,
+        dy: point.y - origin.y
+      };
+    })
+    .sort((a, b) => ((b.dx * driftSign) - (a.dx * driftSign)) || (b.dy - a.dy));
+}
+
+function getPowderMoveCandidates(state, hex, grain) {
+  const neighboursForGrain = getPowderSortedNeighbours(state, hex, grain);
+  const lower = neighboursForGrain
+    .filter((entry) => entry.dy > 0.01)
+    .sort((a, b) => (b.dy - a.dy) || (Math.abs(a.dx) - Math.abs(b.dx)));
+  const lateral = neighboursForGrain
+    .filter((entry) => Math.abs(entry.dy) <= 0.01)
+    .sort((a, b) => Math.abs(b.dx) - Math.abs(a.dx));
+  const upper = neighboursForGrain
+    .filter((entry) => entry.dy < -0.01)
+    .sort((a, b) => (a.dy - b.dy) || (Math.abs(a.dx) - Math.abs(b.dx)));
+
+  if (grain.material === "water") {
+    return [...lower, ...lateral].map((entry) => entry.target);
+  }
+  if (grain.material === "ember") {
+    return [...upper, ...lateral].map((entry) => entry.target);
+  }
+  return lower.map((entry) => entry.target);
+}
+
+function getPowderEmissionCandidates(state, origin) {
+  const originPoint = getPowderCellScreenBasis(state, origin);
+  return getAdjacentsForMode(state, origin)
+    .filter((target) => isCellSupportedForMode(state, target))
+    .map((target) => {
+      const point = getPowderCellScreenBasis(state, target);
+      return {
+        target,
+        dy: point.y - originPoint.y,
+        distance: getDistanceForMode(state, origin, target)
+      };
+    })
+    .sort((a, b) => (a.dy - b.dy) || (a.distance - b.distance))
+    .map((entry) => entry.target);
+}
+
+function addPowderGrain(state, hex, owner, material) {
+  const powder = ensurePowderState(state);
+  if (!powder || !isPowderCellFree(state, hex)) {
+    return false;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  powder.grains[keyOf(hex.q, hex.r)] = {
+    owner: safeOwner,
+    material: normalisePowderMaterial(material),
+    age: 0,
+    id: powder.nextId
+  };
+  powder.nextId += 1;
+  return true;
+}
+
+function trimPowderToLimit(state) {
+  const powder = ensurePowderState(state);
+  if (!powder) {
+    return 0;
+  }
+  const entries = getPowderGrainEntries(state);
+  const overflow = entries.length - POWDER_MAX_GRAINS;
+  if (overflow <= 0) {
+    return 0;
+  }
+  entries
+    .sort((a, b) => (b.grain.age - a.grain.age) || (a.grain.id - b.grain.id))
+    .slice(0, overflow)
+    .forEach((entry) => {
+      delete powder.grains[entry.key];
+    });
+  return overflow;
+}
+
+function emitPowderFromPlacement(state, origin, owner) {
+  const powder = ensurePowderState(state);
+  if (!powder || !origin) {
+    return null;
+  }
+  const candidates = getPowderEmissionCandidates(state, origin);
+  let added = 0;
+  for (let offset = 0; offset < POWDER_EMIT_PER_PLACEMENT; offset += 1) {
+    const material = POWDER_MATERIAL_SEQUENCE[positiveMod(state.moveSerial + owner + offset, POWDER_MATERIAL_SEQUENCE.length)];
+    const startIndex = positiveMod(offset + owner, Math.max(1, candidates.length));
+    for (let step = 0; step < candidates.length; step += 1) {
+      const target = candidates[positiveMod(startIndex + step, candidates.length)];
+      if (addPowderGrain(state, target, owner, material)) {
+        added += 1;
+        break;
+      }
+    }
+  }
+  const trimmed = trimPowderToLimit(state);
+  if (added <= 0 && trimmed <= 0) {
+    return null;
+  }
+  const pieces = [];
+  if (added > 0) {
+    pieces.push(`vented ${added} powder grain${added === 1 ? "" : "s"}`);
+  }
+  if (trimmed > 0) {
+    pieces.push(`recycled ${trimmed} old grain${trimmed === 1 ? "" : "s"}`);
+  }
+  return `Powder ${pieces.join(", ")}.`;
+}
+
+function resolvePowderReactions(state) {
+  const powder = ensurePowderState(state);
+  if (!powder) {
+    return 0;
+  }
+  let removed = 0;
+  const entries = getPowderGrainEntries(state)
+    .filter((entry) => entry.grain.material === "ember")
+    .sort((a, b) => a.grain.id - b.grain.id);
+
+  for (const entry of entries) {
+    if (!powder.grains[entry.key]) {
+      continue;
+    }
+    const waterTarget = getAdjacentsForMode(state, entry.hex)
+      .map((target) => ({ target, key: keyOf(target.q, target.r) }))
+      .find((targetEntry) => powder.grains[targetEntry.key]?.material === "water");
+    if (!waterTarget) {
+      continue;
+    }
+    delete powder.grains[entry.key];
+    delete powder.grains[waterTarget.key];
+    removed += 2;
+  }
+  return removed;
+}
+
+function simulatePowderCascade(state) {
+  const powder = ensurePowderState(state);
+  const report = {
+    moved: 0,
+    fizzled: 0,
+    trimmed: 0,
+    grains: 0
+  };
+  if (!powder) {
+    return report;
+  }
+
+  for (const entry of getPowderGrainEntries(state)) {
+    const grain = powder.grains[entry.key];
+    if (!grain) {
+      continue;
+    }
+    grain.age += 1;
+    if (grain.age > getPowderMaterialDef(grain.material).maxAge) {
+      delete powder.grains[entry.key];
+      report.fizzled += 1;
+    }
+  }
+
+  report.fizzled += resolvePowderReactions(state);
+
+  for (let tick = 0; tick < POWDER_TICKS_PER_TURN && report.moved < POWDER_MAX_MOVES_PER_TURN; tick += 1) {
+    let movedThisTick = 0;
+    const entries = getPowderGrainEntries(state)
+      .sort((a, b) => {
+        const ay = getPowderCellScreenBasis(state, a.hex).y;
+        const by = getPowderCellScreenBasis(state, b.hex).y;
+        return (by - ay) || (a.grain.id - b.grain.id);
+      });
+
+    for (const entry of entries) {
+      if (report.moved >= POWDER_MAX_MOVES_PER_TURN || !powder.grains[entry.key]) {
+        continue;
+      }
+      const grain = powder.grains[entry.key];
+      const target = getPowderMoveCandidates(state, entry.hex, grain).find((candidate) => isPowderCellFree(state, candidate));
+      if (!target) {
+        continue;
+      }
+      delete powder.grains[entry.key];
+      powder.grains[keyOf(target.q, target.r)] = grain;
+      report.moved += 1;
+      movedThisTick += 1;
+    }
+
+    if (movedThisTick === 0) {
+      break;
+    }
+  }
+
+  report.trimmed += trimPowderToLimit(state);
+  report.grains = getPowderGrainCount(state);
+  powder.lastReport = report;
+  return report;
+}
+
+function resolvePowderCascade(state) {
+  if (!usesPowderMode(state)) {
+    return;
+  }
+  const report = simulatePowderCascade(state);
+  if (report.moved <= 0 && report.fizzled <= 0 && report.trimmed <= 0) {
+    return;
+  }
+  const reportParts = [];
+  if (report.moved > 0) {
+    reportParts.push(`${report.moved} drift`);
+  }
+  if (report.fizzled > 0) {
+    reportParts.push(`${report.fizzled} fizzle`);
+  }
+  if (report.trimmed > 0) {
+    reportParts.push(`${report.trimmed} recycled`);
+  }
+  pushLog(`Powder cascade: ${reportParts.join(", ")} | ${report.grains} grains.`);
 }
 
 function getGridDrawStep(size) {
@@ -3105,7 +3463,8 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     clock: createClockState(timerConfig, playerCount),
     armory: null,
     bedSiege: null,
-    factory: null
+    factory: null,
+    powder: null
   };
   if (usesArmoryMode(state)) {
     state.armory = createArmoryStateForGame(state);
@@ -3126,6 +3485,12 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
   }
   if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     state.log[0] = "Everything Bagel started: read the docket, dodge the paperwork, and connect 6 if the filings allow it.";
+  }
+  if (usesPowderMode(state)) {
+    state.powder = createPowderStateForGame();
+    if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
+      state.log[0] = "Powder Cascade started: placements vent tiny sand, water, and embers that drift after each completed turn.";
+    }
   }
   return state;
 }
@@ -4430,6 +4795,7 @@ function canSelectEgyptianRemovalHex(state, hex) {
 function placeStone(state, hex, owner, kind = "stone", extras = {}) {
   const safeOwner = normalisePlayerNumber(owner, state);
   const extraFields = typeof extras === "string" ? { pieceType: extras } : { ...(extras || {}) };
+  clearPowderAt(state, hex);
   state.moveSerial += 1;
   state.cells[keyOf(hex.q, hex.r)] = {
     owner: safeOwner,
@@ -4456,6 +4822,7 @@ function addEffectStone(state, hex, owner, kind = "stone", extras = {}) {
     return false;
   }
   const safeOwner = normalisePlayerNumber(owner, state);
+  clearPowderAt(state, hex);
   state.moveSerial += 1;
   state.cells[keyOf(hex.q, hex.r)] = {
     owner: safeOwner,
@@ -4475,6 +4842,7 @@ function moveStonePreservingSerial(state, fromHex, toHex) {
     return false;
   }
   removeStone(state, fromHex);
+  clearPowderAt(state, toHex);
   state.cells[keyOf(toHex.q, toHex.r)] = { ...cell };
   replaceTrackedHex(state, fromHex, toHex);
   return true;
@@ -6033,6 +6401,7 @@ function endTurn(state) {
   resolveOrbit(state);
   resolveMeteorAccounting(state);
   resolveEverythingBagel(state, previousPlayer);
+  resolvePowderCascade(state);
   resolveArmoryTurnEnd(state);
   resolveBedSiegeTurnEnd(state, previousPlayer);
   resolveFactoryTurnEnd(state, previousPlayer);
@@ -6092,6 +6461,7 @@ function placeTurnTile(state, hex, owner) {
 
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
   const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
+  const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
@@ -6104,7 +6474,8 @@ function placeTurnTile(state, hex, owner) {
     usesArmoryMode(state) ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
     armoryAbilityMessage,
     ...bedSiegeMessages,
-    ...bagelMessages
+    ...bagelMessages,
+    powderMessage
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
 
@@ -7935,6 +8306,11 @@ function updateStatus() {
     const receiptStats = getEverythingBagelReceiptStats(state);
     ui.subturnText.textContent += ` | Bagel phase ${positiveMod(state.turnCount, 12)} | ${receiptStats.pending} receipts`;
   }
+  if (usesPowderMode(state) && !state.winner) {
+    const powderReport = state.powder?.lastReport;
+    const movedText = powderReport?.moved ? `, ${powderReport.moved} drift` : "";
+    ui.subturnText.textContent += ` | Powder ${getPowderGrainCount(state)} grains${movedText}`;
+  }
 
   updateClockUI();
   updateTurnOrderSummary(getPlayerCount(state));
@@ -9373,6 +9749,58 @@ function drawBirdPiece(birdKind, birdHex, size) {
   }
 }
 
+function drawPowderOverlay() {
+  if (!usesPowderMode(game.state)) {
+    return;
+  }
+  const entries = getPowderGrainEntries(game.state);
+  if (entries.length === 0) {
+    return;
+  }
+
+  const size = currentHexSize();
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const detailLevel = getPerformanceModeLevel();
+  const drawLimit = detailLevel >= 2 ? Math.min(entries.length, 90) : entries.length;
+  const stride = entries.length > drawLimit ? Math.ceil(entries.length / drawLimit) : 1;
+  const showStroke = detailLevel < 2 && size >= 10;
+  const margin = size * 2;
+  let drawn = 0;
+
+  for (let index = 0; index < entries.length && drawn < drawLimit; index += stride) {
+    const entry = entries[index];
+    const grain = entry.grain;
+    const def = getPowderMaterialDef(grain.material);
+    const world = boardCellToPixel(entry.hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (screen.x < -margin || screen.y < -margin || screen.x > w + margin || screen.y > h + margin) {
+      continue;
+    }
+
+    const jitterAngle = positiveMod((grain.id || 0) * 7, 19) / 19 * Math.PI * 2;
+    const jitterDistance = size * (0.08 + (positiveMod((grain.id || 0) * 5, 7) / 7) * 0.12);
+    const cx = screen.x + Math.cos(jitterAngle) * jitterDistance;
+    const cy = screen.y + Math.sin(jitterAngle) * jitterDistance;
+    const radius = Math.max(2.2, size * def.radius);
+
+    ctx.fillStyle = def.fill;
+    ctx.strokeStyle = def.stroke;
+    ctx.lineWidth = Math.max(1, size * 0.035);
+    ctx.beginPath();
+    if (grain.material === "water") {
+      ctx.ellipse(cx, cy, radius * 1.22, radius * 0.74, jitterAngle * 0.5, 0, Math.PI * 2);
+    } else {
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (showStroke) {
+      ctx.stroke();
+    }
+    drawn += 1;
+  }
+}
+
 function drawPieces() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
@@ -9906,6 +10334,7 @@ function renderNow() {
   drawFactoryOverlay();
   drawBedSiegeOverlay();
   drawEverythingBagelOverlay();
+  drawPowderOverlay();
   drawOriginIndicator();
   drawEchoTargets();
   drawHoverEchoPreview();
