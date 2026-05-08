@@ -122,6 +122,7 @@ const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
+const BAGEL_STONE_MOVEMENT_ENABLED = false;
 const BED_SIEGE_BRIDGE_RANGE = 3;
 const BED_SIEGE_PEARL_RANGE = 6;
 const BED_SIEGE_FIREBALL_RANGE = 5;
@@ -794,8 +795,8 @@ const MODES = {
   },
   everythingBagel: {
     name: "Everything Bagel",
-    summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, schmear slides them, sesame spreads receipts, poppy stamps flip rivals, deli queues advance, and paperwork mutates the board.",
-    hint: "Still connect 6, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
+    summary: "Secret rules casserole: red tape blocks spaces, portals mark spaces, schmear sticks, sesame spreads receipts, and poppy stamps flip rivals.",
+    hint: "Still connect 6, technically. Watch the docket: red tape blocks, portals and schmear mark special spaces, sesame sprouts receipt stones, and poppy stamps flip adjacent rivals.",
     secret: true
   }
 };
@@ -2686,7 +2687,7 @@ function refreshBagelControls(modeKeys) {
       ui.bagelReceiptText.textContent = "Receipt stones are temporary until anchored.";
     }
     if (ui.bagelNextText) {
-      ui.bagelNextText.textContent = "Next filing: auditor | queue | red tape";
+      ui.bagelNextText.textContent = "Next filing: auditor | red tape";
     }
   }
 }
@@ -4953,18 +4954,22 @@ function applyEverythingBagelPlacementEffects(state, placedHex, owner) {
   let currentHex = { ...placedHex };
   const portalExit = getPortalExitForHex(zones, currentHex);
 
-  if (portalExit && moveStonePreservingSerial(state, currentHex, portalExit)) {
-    messages.push(`Everything Bagel portal fired: (${currentHex.q}, ${currentHex.r}) became (${portalExit.q}, ${portalExit.r}).`);
-    currentHex = { ...portalExit };
+  if (portalExit) {
+    if (BAGEL_STONE_MOVEMENT_ENABLED && moveStonePreservingSerial(state, currentHex, portalExit)) {
+      messages.push(`Everything Bagel portal fired: (${currentHex.q}, ${currentHex.r}) became (${portalExit.q}, ${portalExit.r}).`);
+      currentHex = { ...portalExit };
+    } else {
+      messages.push("Everything Bagel portal stayed sealed.");
+    }
   }
 
   if (zones.schmearKeys.has(keyOf(currentHex.q, currentHex.r))) {
-    const slideTarget = getOpenStepAwayFromOriginForMode(state, currentHex);
+    const slideTarget = BAGEL_STONE_MOVEMENT_ENABLED ? getOpenStepAwayFromOriginForMode(state, currentHex) : null;
     if (slideTarget && moveStonePreservingSerial(state, currentHex, slideTarget)) {
       messages.push(`Schmear slide moved Player ${owner}'s stone from (${currentHex.q}, ${currentHex.r}) to (${slideTarget.q}, ${slideTarget.r}).`);
       currentHex = { ...slideTarget };
     } else {
-      messages.push("Schmear slide found no clean lane and stayed sticky.");
+      messages.push("Schmear stayed sticky.");
     }
   }
 
@@ -5130,6 +5135,9 @@ function resolveBagelAuditorCopy(state, owner, messages) {
 }
 
 function resolveBagelGravityComplaint(state, messages) {
+  if (!BAGEL_STONE_MOVEMENT_ENABLED) {
+    return;
+  }
   if (state.turnCount % 3 !== 0) {
     return;
   }
@@ -5146,6 +5154,9 @@ function resolveBagelGravityComplaint(state, messages) {
 }
 
 function resolveBagelOwnerSwap(state, messages) {
+  if (!BAGEL_STONE_MOVEMENT_ENABLED) {
+    return;
+  }
   if (state.turnCount % 4 !== 0) {
     return;
   }
@@ -5172,6 +5183,9 @@ function resolveBagelOwnerSwap(state, messages) {
 }
 
 function resolveBagelRedTapeEvictions(state, messages) {
+  if (!BAGEL_STONE_MOVEMENT_ENABLED) {
+    return;
+  }
   const zones = getEverythingBagelZones(state);
   for (const hex of zones.redTape) {
     const cell = getCellAt(state, hex);
@@ -5188,6 +5202,9 @@ function resolveBagelRedTapeEvictions(state, messages) {
 }
 
 function resolveBagelDeliQueue(state, messages) {
+  if (!BAGEL_STONE_MOVEMENT_ENABLED) {
+    return;
+  }
   const zones = getEverythingBagelZones(state);
   if (zones.deliQueue.length < 2) {
     return;
@@ -5244,12 +5261,15 @@ function resolveBagelReceiptAudit(state, messages) {
 
 function getEverythingBagelNextDocketText(state) {
   const nextTurnCount = Math.max(1, Math.trunc(Number(state?.turnCount) || 0) + 1);
-  const filings = ["auditor", "queue", "red tape"];
-  if (nextTurnCount % 3 === 0) {
-    filings.push("gravity");
-  }
-  if (nextTurnCount % 4 === 0) {
-    filings.push("tax swap");
+  const filings = ["auditor", "red tape"];
+  if (BAGEL_STONE_MOVEMENT_ENABLED) {
+    filings.push("queue");
+    if (nextTurnCount % 3 === 0) {
+      filings.push("gravity");
+    }
+    if (nextTurnCount % 4 === 0) {
+      filings.push("tax swap");
+    }
   }
   if (nextTurnCount % BAGEL_RECEIPT_AUDIT_INTERVAL === 0) {
     filings.push("receipt audit");
@@ -7846,11 +7866,11 @@ function renderEverythingBagelPanel() {
   const portalCount = zones.portalPairs.length * 2;
   const zoneParts = [
     `${zones.redTape.length} red tape`,
-    `${portalCount} portals`,
+    `${portalCount} sealed portals`,
     `${zones.schmear.length} schmear`,
     `${zones.sesame.length} sesame`,
     `${zones.poppyStamps.length} poppy`,
-    `${zones.deliQueue.length} queue`
+    `${zones.deliQueue.length} queue markers`
   ];
 
   if (ui.bagelPhaseText) {
