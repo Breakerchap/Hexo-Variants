@@ -5183,19 +5183,11 @@ function formatChaosRuleDuration(ruleDef) {
   return minTurns === maxTurns ? `${minTurns} turns` : `${minTurns}-${maxTurns} turns`;
 }
 
-function getChaosRuleDescription(ruleDef) {
-  if (!ruleDef) {
-    return "";
-  }
-  const description = ruleDef.description || "";
-  return ruleDef.eachPlayer ? `${description} Applies to each player.` : description;
-}
-
 function makeChaosChoiceSnapshot(ruleDef) {
   return {
     id: ruleDef.id,
     title: ruleDef.title,
-    description: getChaosRuleDescription(ruleDef),
+    description: ruleDef.description,
     trigger: ruleDef.trigger || "static",
     durationText: formatChaosRuleDuration(ruleDef)
   };
@@ -5684,7 +5676,227 @@ function applyChaosSwapOwnersEffect(state, rule, ruleDef, event) {
   return "swapped 2 stone owners";
 }
 
-function applyChaosRuleEffectForOwner(state, rule, ruleDef, event = {}) {
+function applyChaosRotateOwnersEffect(state, rule, ruleDef, event) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, Math.max(3, Math.trunc(Number(ruleDef.count) || 3)));
+  if (entries.length < 3) {
+    return "";
+  }
+  const cells = entries
+    .map((entry) => getCellAt(state, entry.hex))
+    .filter((cell) => cell && cell.kind === "stone");
+  if (cells.length < 3) {
+    return "";
+  }
+  const owners = cells.map((cell) => cell.owner);
+  for (let i = 0; i < cells.length; i += 1) {
+    cells[i].owner = owners[(i + owners.length - 1) % owners.length];
+    cells[i].serial = ++state.moveSerial;
+  }
+  return `rotated owners across ${cells.length} stones`;
+}
+
+function applyChaosCyclePositionsEffect(state, rule, ruleDef, event) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, Math.max(3, Math.trunc(Number(ruleDef.count) || 3)));
+  if (entries.length < 3) {
+    return "";
+  }
+  const cells = entries.map((entry) => getCellAt(state, entry.hex));
+  if (cells.some((cell) => !cell || cell.kind !== "stone")) {
+    return "";
+  }
+
+  const destinations = new Map();
+  for (let i = 0; i < entries.length; i += 1) {
+    const from = entries[i].hex;
+    const to = entries[(i + 1) % entries.length].hex;
+    destinations.set(keyOf(from.q, from.r), { ...to });
+  }
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const destination = entries[(i + 1) % entries.length].hex;
+    state.cells[keyOf(destination.q, destination.r)] = { ...cells[i] };
+  }
+  transformTrackedHexes(state, (hex) => destinations.get(keyOf(hex.q, hex.r)) || { ...hex });
+  return `cycled ${entries.length} stone positions`;
+}
+
+function getChaosAreaHexes(state, centerHex, radius = 1) {
+  const safeRadius = Math.max(1, Math.min(3, Math.trunc(Number(radius) || 1)));
+  const seen = new Map();
+  let frontier = uniqueSupportedHexes(state, [centerHex]);
+  for (const hex of frontier) {
+    seen.set(keyOf(hex.q, hex.r), hex);
+  }
+
+  for (let depth = 0; depth < safeRadius; depth += 1) {
+    const next = [];
+    for (const hex of frontier) {
+      for (const adjacent of getAdjacentsForMode(state, hex)) {
+        if (!isCellSupportedForMode(state, adjacent)) {
+          continue;
+        }
+        const key = keyOf(adjacent.q, adjacent.r);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.set(key, adjacent);
+        next.push(adjacent);
+      }
+    }
+    frontier = next;
+  }
+
+  seen.delete(keyOf(centerHex.q, centerHex.r));
+  return Array.from(seen.values());
+}
+
+function getChaosAreaStoneEntries(state, centerHex, rule, event, target = "all", radius = 1) {
+  const ruleOwner = getChaosRuleOwner(rule, state);
+  const triggerOwner = getChaosTriggerOwner(event, state);
+  return getChaosAreaHexes(state, centerHex, radius)
+    .map((hex) => ({ hex, cell: getCellAt(state, hex) }))
+    .filter((entry) => (
+      entry.cell
+      && entry.cell.kind === "stone"
+      && isValidPlayerNumber(entry.cell.owner, state)
+      && chaosScopeMatches(target, ruleOwner, triggerOwner, normalisePlayerNumber(entry.cell.owner, state))
+    ));
+}
+
+function getChaosAreaOpenHexes(state, centerHex, radius = 1) {
+  return shuffleChaosList(getChaosAreaHexes(state, centerHex, radius))
+    .filter((hex) => isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex) && !isChaosBlockedHex(state, hex));
+}
+
+function applyChaosPulseEffect(state, rule, ruleDef, event) {
+  const anchors = selectChaosEntries(state, rule, ruleDef, event, Math.max(1, Math.trunc(Number(ruleDef.count) || 1)));
+  if (anchors.length === 0) {
+    return "";
+  }
+  const pulseAction = ruleDef.pulseAction || "remove";
+  const radius = Math.max(1, Math.min(3, Math.trunc(Number(ruleDef.radius) || 1)));
+  const pulseLimit = Math.max(1, Math.trunc(Number(ruleDef.pulseCount) || 99));
+  const parts = {
+    removed: 0,
+    cracked: 0,
+    converted: 0,
+    shielded: 0,
+    spawned: 0,
+    moved: 0
+  };
+
+  for (const anchor of anchors) {
+    if (pulseAction === "spawn") {
+      const owner = getChaosOwnerFromRuleValue(
+        state,
+        rule,
+        event,
+        ruleDef.pulseSpawnOwner || ruleDef.spawnOwner || "ruleOwner",
+        getChaosRuleOwner(rule, state)
+      );
+      for (const hex of getChaosAreaOpenHexes(state, anchor.hex, radius)) {
+        if (parts.spawned >= pulseLimit) {
+          break;
+        }
+        if (addEffectStone(state, hex, owner, "stone", usesArmoryMode(state) ? { pieceType: "militia" } : {})) {
+          parts.spawned += 1;
+        }
+      }
+      continue;
+    }
+
+    const areaEntries = shuffleChaosList(getChaosAreaStoneEntries(
+      state,
+      anchor.hex,
+      rule,
+      event,
+      ruleDef.pulseTarget || ruleDef.target || "all",
+      radius
+    )).slice(0, pulseLimit);
+
+    if (pulseAction === "remove") {
+      for (const entry of areaEntries) {
+        const hadShield = Boolean(entry.cell.chaosShield);
+        const removedCell = removeStone(state, entry.hex);
+        if (removedCell) {
+          parts.removed += 1;
+        } else if (hadShield) {
+          parts.cracked += 1;
+        }
+      }
+    } else if (pulseAction === "convert") {
+      const toOwner = getChaosOwnerFromRuleValue(
+        state,
+        rule,
+        event,
+        ruleDef.convertTo || "ruleOwner",
+        getChaosRuleOwner(rule, state)
+      );
+      for (const entry of areaEntries) {
+        const cell = getCellAt(state, entry.hex);
+        if (cell && cell.kind === "stone" && cell.owner !== toOwner) {
+          cell.owner = toOwner;
+          cell.serial = ++state.moveSerial;
+          parts.converted += 1;
+        }
+      }
+    } else if (pulseAction === "shield") {
+      for (const entry of areaEntries) {
+        const cell = getCellAt(state, entry.hex);
+        if (cell && cell.kind === "stone" && !cell.chaosShield) {
+          cell.chaosShield = true;
+          cell.serial = ++state.moveSerial;
+          parts.shielded += 1;
+        }
+      }
+    } else if (pulseAction === "push") {
+      for (const entry of areaEntries) {
+        const target = getChaosMoveDestination(state, entry.hex, ruleDef.movement || "awayAnchor", anchor.hex);
+        if (target && moveStonePreservingSerial(state, entry.hex, target)) {
+          parts.moved += 1;
+        }
+      }
+    }
+  }
+
+  const messages = [];
+  if (parts.removed > 0) messages.push(`removed ${parts.removed}`);
+  if (parts.cracked > 0) messages.push(`cracked ${parts.cracked} shield${parts.cracked === 1 ? "" : "s"}`);
+  if (parts.converted > 0) messages.push(`converted ${parts.converted}`);
+  if (parts.shielded > 0) messages.push(`shielded ${parts.shielded}`);
+  if (parts.spawned > 0) messages.push(`spawned ${parts.spawned}`);
+  if (parts.moved > 0) messages.push(`pushed ${parts.moved}`);
+  return messages.length > 0 ? messages.join(", ") : "";
+}
+
+function applyChaosSacrificeSpawnEffect(state, rule, ruleDef, event) {
+  const entry = selectChaosEntries(state, rule, ruleDef, event, 1)[0];
+  if (!entry) {
+    return "";
+  }
+  const removedOwner = normalisePlayerNumber(entry.cell.owner, state);
+  const removedCell = removeStone(state, entry.hex, { ignoreChaosShield: Boolean(ruleDef.ignoreShield) });
+  if (!removedCell) {
+    return "";
+  }
+
+  const spawnOwner = ruleDef.spawnOwner === "selectedOwner"
+    ? removedOwner
+    : getChaosOwnerFromRuleValue(state, rule, event, ruleDef.spawnOwner || "ruleOwner", getChaosRuleOwner(rule, state));
+  const spawnCount = Math.max(1, Math.trunc(Number(ruleDef.spawnCount ?? ruleDef.count) || 1));
+  let spawned = 0;
+  for (const hex of getChaosSpawnCandidates(state, entry.hex)) {
+    if (spawned >= spawnCount) {
+      break;
+    }
+    if (addEffectStone(state, hex, spawnOwner, "stone", usesArmoryMode(state) ? { pieceType: "militia" } : {})) {
+      spawned += 1;
+    }
+  }
+  return `sacrificed 1 stone and added ${spawned} Player ${spawnOwner} stone${spawned === 1 ? "" : "s"}`;
+}
+
+function applyChaosRuleEffect(state, rule, ruleDef, event = {}) {
   if (!ruleDef || Math.random() > Math.max(0, Math.min(1, Number(ruleDef.chance) || 1))) {
     return "";
   }
@@ -5719,6 +5931,18 @@ function applyChaosRuleEffectForOwner(state, rule, ruleDef, event = {}) {
   if (ruleDef.effect === "swapOwners") {
     return applyChaosSwapOwnersEffect(state, rule, ruleDef, event);
   }
+  if (ruleDef.effect === "rotateOwners") {
+    return applyChaosRotateOwnersEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "cyclePositions") {
+    return applyChaosCyclePositionsEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "pulse") {
+    return applyChaosPulseEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "sacrificeSpawn") {
+    return applyChaosSacrificeSpawnEffect(state, rule, ruleDef, event);
+  }
   if (ruleDef.effect === "shieldAndSpawn") {
     const entries = selectChaosEntries(state, rule, ruleDef, event, 1);
     if (entries.length === 0) {
@@ -5743,23 +5967,6 @@ function applyChaosRuleEffectForOwner(state, rule, ruleDef, event = {}) {
     return entry ? applyChaosSpawnEffect(state, rule, ruleDef, event, entry) : "";
   }
   return "";
-}
-
-function applyChaosRuleEffect(state, rule, ruleDef, event = {}) {
-  if (!ruleDef) {
-    return "";
-  }
-  if (ruleDef.eachPlayer) {
-    const messages = [];
-    for (const owner of getPlayerNumbers(state)) {
-      const message = applyChaosRuleEffectForOwner(state, { ...rule, owner }, ruleDef, event);
-      if (message) {
-        messages.push(`P${owner} ${message}`);
-      }
-    }
-    return messages.join("; ");
-  }
-  return applyChaosRuleEffectForOwner(state, rule, ruleDef, event);
 }
 
 function applyChaosAfterPlacementEffects(state, placedHex, owner) {
@@ -5852,7 +6059,7 @@ function applyChaosChosenRule(state, choice) {
       trigger: "instant",
       triggerOwner: chooser
     });
-    pushLog(`${ruleDef.title} chosen by Player ${chooser}.${message ? ` Result: ${message}.` : ""}`);
+    pushLog(`${ruleDef.title} chosen by Player ${chooser}.${message ? ` It ${message}.` : ""}`);
     return true;
   }
 
@@ -9463,10 +9670,10 @@ function renderChaosPanel() {
 
         const title = document.createElement("div");
         title.className = "chaosActiveRuleTitle";
-        title.textContent = `${ruleDef?.title || rule.title} | ${ruleDef?.eachPlayer ? "All players" : `P${rule.owner}`} | ${rule.turnsLeft} left`;
+        title.textContent = `${ruleDef?.title || rule.title} | P${rule.owner} | ${rule.turnsLeft} left`;
         const description = document.createElement("div");
         description.className = "small chaosActiveRuleDescription";
-        description.textContent = ruleDef ? getChaosRuleDescription(ruleDef) : (rule.description || "");
+        description.textContent = ruleDef?.description || rule.description || "";
 
         item.appendChild(title);
         item.appendChild(description);
