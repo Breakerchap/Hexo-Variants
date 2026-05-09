@@ -625,6 +625,56 @@ select:focus-visible,
   border-color: rgba(255, 215, 94, 0.38);
 }
 
+.chaosPanelLine {
+  margin-bottom: 10px;
+  color: var(--muted);
+}
+
+.chaosVoteOptions {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chaosVoteOption {
+  display: grid;
+  gap: 4px;
+}
+
+.chaosRuleTitle,
+.chaosActiveRuleTitle {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.chaosRuleMeta {
+  font-size: 0.76rem;
+  color: #ffdf78;
+}
+
+.chaosRuleDescription,
+.chaosActiveRuleDescription {
+  font-size: 0.78rem;
+  line-height: 1.32;
+  color: var(--muted);
+}
+
+.chaosActiveRules {
+  display: grid;
+  gap: 8px;
+}
+
+.chaosActiveRule {
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 215, 94, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.chaosEmpty {
+  color: var(--muted);
+}
+
 .turnBig {
   font-size: 1.45rem;
   font-weight: 700;

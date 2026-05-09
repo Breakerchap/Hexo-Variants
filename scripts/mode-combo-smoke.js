@@ -234,6 +234,10 @@ function makeSandbox() {
     "egyptianCapControls",
     "egyptianCapInput",
     "egyptianCapSummaryText",
+    "chaosControls",
+    "chaosVoteText",
+    "chaosVoteOptions",
+    "chaosActiveRules",
     "log",
     "overlayTitle",
     "overlayHint",
@@ -995,18 +999,48 @@ function runHistoryReadOnlyChecks(context) {
   assert.equal(stateFingerprint(game.state), liveFingerprint, "forward should restore the live game state exactly");
 }
 
+function runChaosVoteChecks(context) {
+  assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
+  assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+  assert.equal(typeof context.HexTicTacToeInternals.chooseChaosRule, "function", "expected chaos choice helper");
+
+  context.window.newGame(["chaosVote"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  context.clickPlacement({ q: 0, r: 0 });
+  context.clickPlacement({ q: 1, r: 0 });
+  context.clickPlacement({ q: 1, r: -1 });
+  context.clickPlacement({ q: 0, r: 1 });
+  context.clickPlacement({ q: -1, r: 1 });
+
+  const state = context.HexTicTacToeInternals.game.state;
+  assert.equal(state.turnCount, 3, "chaos vote should open after the third completed turn");
+  assert.ok(state.chaos?.pendingVote, "chaos vote should be pending");
+  assert.equal(state.chaos.pendingVote.chooser, 1, "the player who just moved should choose");
+  assert.equal(state.chaos.pendingVote.choices.length, 3, "chaos vote should offer three rules");
+
+  const beforeRecent = state.chaos.recentRuleIds.length;
+  context.HexTicTacToeInternals.chooseChaosRule(0);
+  const afterState = context.HexTicTacToeInternals.game.state;
+  assert.equal(afterState.chaos.pendingVote, null, "choosing should close the pending vote");
+  assert.equal(afterState.turnPlayer, 2, "turn should pass to the next player after the vote");
+  assert.equal(afterState.turnCount, 3, "choosing a rule should not count as another turn");
+  assert.equal(afterState.chaos.recentRuleIds.length, beforeRecent + 1, "chosen rule should be remembered");
+}
+
 function main() {
   const sandbox = makeSandbox();
   const context = vm.createContext(sandbox);
 
   loadScript(context, "perf-helpers.js");
   loadScript(context, "timer-helpers.js");
+  loadScript(context, "chaos_rules.js");
   loadScript(context, "game.js");
   loadScript(context, "turn-order-patch.js");
 
   const modeButtons = context.document.getElementById("modePicker").children;
   const modeKeys = modeButtons.map((button) => button.dataset.mode);
   assert.ok(modeKeys.includes("egyptian"), "egyptian mode should exist");
+  assert.ok(modeKeys.includes("chaosVote"), "chaos vote mode should exist");
+  assert.ok(context.HexTicTacToeInternals.getChaosRuleDefinitions().length >= 50, "chaos vote should load at least 50 rules");
   assert.equal(modeKeys.includes("greek"), false, "greek mode should not exist");
 
   // Legacy compatibility: old "greek" selection maps to "egyptian".
@@ -1017,6 +1051,7 @@ function main() {
     "legacy greek key should canonicalise to egyptian"
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
+  runChaosVoteChecks(context);
 
   if (process.argv.includes("--history-only")) {
     runHistoryReadOnlyChecks(context);
@@ -1025,14 +1060,15 @@ function main() {
   }
 
   const radialOnly = process.argv.includes("--radial-only");
+  const comboModeKeys = modeKeys.filter((key) => key !== "chaosVote");
   const combos = radialOnly
-    ? allModeCombos(modeKeys.filter((key) => (
+    ? allModeCombos(comboModeKeys.filter((key) => (
       key !== "radialGrid"
       && key !== "triangleGrid"
       && key !== "squareGrid"
       && key !== "octagonGrid"
     ))).map((combo) => ["radialGrid", ...combo])
-    : allModeCombos(modeKeys);
+    : allModeCombos(comboModeKeys);
   for (const combo of combos) {
     runScenario(context, combo, false);
     runScenario(context, combo, true);

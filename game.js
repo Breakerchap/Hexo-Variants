@@ -2,6 +2,12 @@ const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 const perfHelpers = window.HexTicTacToePerf || {};
 const timerHelpers = window.HexTicTacToeTimer || {};
+const chaosRuleSource = Array.isArray(window.HexTicTacToeChaosRules) ? window.HexTicTacToeChaosRules : [];
+const chaosRulesById = new Map(
+  chaosRuleSource
+    .filter((rule) => rule && typeof rule.id === "string")
+    .map((rule) => [rule.id, rule])
+);
 
 const ui = {
   appRoot: document.getElementById("appRoot"),
@@ -52,6 +58,10 @@ const ui = {
   bagelZoneText: document.getElementById("bagelZoneText"),
   bagelReceiptText: document.getElementById("bagelReceiptText"),
   bagelNextText: document.getElementById("bagelNextText"),
+  chaosControls: document.getElementById("chaosControls"),
+  chaosVoteText: document.getElementById("chaosVoteText"),
+  chaosVoteOptions: document.getElementById("chaosVoteOptions"),
+  chaosActiveRules: document.getElementById("chaosActiveRules"),
   log: document.getElementById("log"),
   overlayTitle: document.getElementById("overlayTitle"),
   overlayHint: document.getElementById("overlayHint"),
@@ -123,6 +133,9 @@ const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
 const BAGEL_EFFECT_TILE_PHASE = 0;
+const CHAOS_VOTE_INTERVAL = 3;
+const CHAOS_RULE_CHOICE_COUNT = 3;
+const CHAOS_RECENT_RULE_MEMORY = 12;
 const POWDER_GRAINS_PER_CELL = 16;
 const POWDER_PHYSICS_STEPS_PER_TURN = 10;
 const POWDER_MAX_GRAINS = 2200;
@@ -783,6 +796,12 @@ const MODES = {
     name: "Meteor",
     summary: "Every 3 full turns, all occupied spaces tied for farthest distance from the origin are deleted.",
     hint: "Every 3 full turns, all occupied spaces farthest from the center are deleted."
+  },
+  chaosVote: {
+    name: "Rule Vote",
+    summary: "Secret rule-draft mode: after every 3 completed turns, the player who just moved chooses one of 3 offered rules from a 50+ rule catalogue.",
+    hint: "Every third completed turn pauses for the player who just moved to pick the next rule. Timed rules tick down at turn end; instant rules fire right away.",
+    secret: true
   },
   armory: {
     name: "Armoury",
@@ -2714,6 +2733,13 @@ function refreshBagelControls(modeKeys) {
   }
 }
 
+function refreshChaosControls(modeKeys) {
+  if (!ui.chaosControls) {
+    return;
+  }
+  ui.chaosControls.hidden = !normaliseModeKeys(modeKeys).includes("chaosVote");
+}
+
 function refreshSecretModeVisibility() {
   const selected = new Set(getSelectedModeKeys());
   for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
@@ -2957,6 +2983,10 @@ function usesFactoryMode(state) {
 
 function usesPowderMode(state) {
   return Boolean(state && hasMode(state, "powderCascade"));
+}
+
+function usesChaosVoteMode(state) {
+  return Boolean(state && hasMode(state, "chaosVote"));
 }
 
 function normalisePerformanceModeLevel(level) {
@@ -3607,6 +3637,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     armory: null,
     bedSiege: null,
     factory: null,
+    chaos: null,
     powder: null
   };
   if (usesArmoryMode(state)) {
@@ -3625,6 +3656,12 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     state.movesLeftInTurn = 2;
     state.openingMoveDone = true;
     state.log[0] = "Foundry War started: control the farther Ore nodes and the center Flux node, route them home for capped points, and keep your core alive.";
+  }
+  if (usesChaosVoteMode(state)) {
+    state.chaos = createChaosState();
+    if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
+      state.log[0] = `Rule Vote started: every ${CHAOS_VOTE_INTERVAL} completed turns, the player who just moved chooses a new rule.`;
+    }
   }
   if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     state.log[0] = "Everything Bagel started: read the docket, dodge the paperwork, and connect 6 if the filings allow it.";
@@ -3650,6 +3687,7 @@ function setModeUI(modeKeys) {
   refreshBedSiegeControls(modeKeys);
   refreshFactoryControls(modeKeys);
   refreshBagelControls(modeKeys);
+  refreshChaosControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
@@ -4760,6 +4798,9 @@ function isHexBlockedBySpecials(state, hex) {
   if (isEverythingBagelRedTapeHex(state, hex)) {
     return true;
   }
+  if (isChaosBlockedHex(state, hex)) {
+    return true;
+  }
   if (getBirdEchoCopyAt(state, hex)) {
     return true;
   }
@@ -4959,10 +5000,19 @@ function placeStone(state, hex, owner, kind = "stone", extras = {}) {
   state.lastPlacedThisTurn.push({ ...hex });
 }
 
-function removeStone(state, hex) {
+function removeStone(state, hex, options = {}) {
   const removedCell = getCellAt(state, hex);
+  if (!removedCell) {
+    return null;
+  }
+  if (removedCell.chaosShield && !options.ignoreChaosShield) {
+    delete removedCell.chaosShield;
+    removedCell.serial = ++state.moveSerial;
+    return null;
+  }
   delete state.cells[keyOf(hex.q, hex.r)];
   handleBedSiegeStoneRemoved(state, hex, removedCell);
+  return removedCell;
 }
 
 function addEffectStone(state, hex, owner, kind = "stone", extras = {}) {
@@ -4990,11 +5040,821 @@ function moveStonePreservingSerial(state, fromHex, toHex) {
   if (!cell || cell.kind !== "stone") {
     return false;
   }
-  removeStone(state, fromHex);
+  removeStone(state, fromHex, { ignoreChaosShield: true });
   clearPowderAt(state, toHex);
   state.cells[keyOf(toHex.q, toHex.r)] = { ...cell };
   replaceTrackedHex(state, fromHex, toHex);
   return true;
+}
+
+function getChaosRuleDefinitions() {
+  return Array.from(chaosRulesById.values());
+}
+
+function getChaosRuleDef(ruleId) {
+  return chaosRulesById.get(ruleId) || null;
+}
+
+function createChaosState() {
+  return {
+    activeRules: [],
+    pendingVote: null,
+    recentRuleIds: [],
+    serial: 0
+  };
+}
+
+function getChaosRuleDuration(ruleDef) {
+  const minTurns = Math.max(1, Math.trunc(Number(ruleDef?.minTurns) || 3));
+  const maxTurns = Math.max(minTurns, Math.trunc(Number(ruleDef?.maxTurns) || minTurns));
+  return minTurns + Math.floor(Math.random() * (maxTurns - minTurns + 1));
+}
+
+function formatChaosRuleDuration(ruleDef) {
+  if (ruleDef?.trigger === "instant") {
+    return "Instant";
+  }
+  const minTurns = Math.max(1, Math.trunc(Number(ruleDef?.minTurns) || 3));
+  const maxTurns = Math.max(minTurns, Math.trunc(Number(ruleDef?.maxTurns) || minTurns));
+  return minTurns === maxTurns ? `${minTurns} turns` : `${minTurns}-${maxTurns} turns`;
+}
+
+function getChaosRuleDescription(ruleDef) {
+  if (!ruleDef) {
+    return "";
+  }
+  const description = ruleDef.description || "";
+  return ruleDef.eachPlayer ? `${description} Applies to each player.` : description;
+}
+
+function makeChaosChoiceSnapshot(ruleDef) {
+  return {
+    id: ruleDef.id,
+    title: ruleDef.title,
+    description: getChaosRuleDescription(ruleDef),
+    trigger: ruleDef.trigger || "static",
+    durationText: formatChaosRuleDuration(ruleDef)
+  };
+}
+
+function ensureChaosState(state) {
+  if (!state || !usesChaosVoteMode(state)) {
+    return null;
+  }
+  if (!state.chaos || typeof state.chaos !== "object") {
+    state.chaos = createChaosState();
+  }
+  if (!Array.isArray(state.chaos.activeRules)) {
+    state.chaos.activeRules = [];
+  }
+  state.chaos.activeRules = state.chaos.activeRules
+    .map((rule) => {
+      const ruleDef = getChaosRuleDef(rule?.id);
+      if (!ruleDef) {
+        return null;
+      }
+      const turnsLeft = Math.max(0, Math.trunc(Number(rule.turnsLeft) || 0));
+      if (turnsLeft <= 0) {
+        return null;
+      }
+      return {
+        id: ruleDef.id,
+        title: rule.title || ruleDef.title,
+        description: rule.description || ruleDef.description,
+        owner: normalisePlayerNumber(rule.owner, state),
+        turnsLeft,
+        totalTurns: Math.max(turnsLeft, Math.trunc(Number(rule.totalTurns) || turnsLeft)),
+        serial: Math.max(1, Math.trunc(Number(rule.serial) || 1))
+      };
+    })
+    .filter(Boolean);
+
+  if (!Array.isArray(state.chaos.recentRuleIds)) {
+    state.chaos.recentRuleIds = [];
+  }
+  state.chaos.recentRuleIds = state.chaos.recentRuleIds
+    .map((ruleId) => String(ruleId))
+    .filter((ruleId) => chaosRulesById.has(ruleId))
+    .slice(-CHAOS_RECENT_RULE_MEMORY);
+  state.chaos.serial = Math.max(0, Math.trunc(Number(state.chaos.serial) || 0));
+
+  const pending = state.chaos.pendingVote;
+  if (!pending || typeof pending !== "object" || !Array.isArray(pending.choices) || pending.choices.length === 0) {
+    state.chaos.pendingVote = null;
+  } else {
+    const choices = pending.choices
+      .map((choice) => getChaosRuleDef(choice?.id))
+      .filter(Boolean)
+      .map((ruleDef) => makeChaosChoiceSnapshot(ruleDef));
+    state.chaos.pendingVote = choices.length > 0
+      ? {
+        chooser: normalisePlayerNumber(pending.chooser, state),
+        completedTurn: Math.max(0, Math.trunc(Number(pending.completedTurn) || state.turnCount || 0)),
+        choices
+      }
+      : null;
+  }
+
+  return state.chaos;
+}
+
+function hasChaosPendingVote(state) {
+  const chaos = ensureChaosState(state);
+  return Boolean(chaos?.pendingVote);
+}
+
+function getChaosActiveRules(state) {
+  const chaos = ensureChaosState(state);
+  return chaos ? chaos.activeRules : [];
+}
+
+function shuffleChaosList(list) {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function generateChaosRuleChoices(state) {
+  const chaos = ensureChaosState(state);
+  if (!chaos) {
+    return [];
+  }
+  const excluded = new Set([
+    ...chaos.activeRules.map((rule) => rule.id),
+    ...chaos.recentRuleIds
+  ]);
+  const available = getChaosRuleDefinitions().filter((ruleDef) => !excluded.has(ruleDef.id));
+  const fallback = available.length >= CHAOS_RULE_CHOICE_COUNT
+    ? available
+    : getChaosRuleDefinitions().filter((ruleDef) => !chaos.activeRules.some((rule) => rule.id === ruleDef.id));
+  return shuffleChaosList(fallback)
+    .slice(0, CHAOS_RULE_CHOICE_COUNT)
+    .map((ruleDef) => makeChaosChoiceSnapshot(ruleDef));
+}
+
+function openChaosRuleVoteIfNeeded(state, previousPlayer) {
+  if (!usesChaosVoteMode(state) || checkForWinner(state)) {
+    return false;
+  }
+  const chaos = ensureChaosState(state);
+  if (!chaos || chaos.pendingVote || state.turnCount <= 0 || state.turnCount % CHAOS_VOTE_INTERVAL !== 0) {
+    return false;
+  }
+  const choices = generateChaosRuleChoices(state);
+  if (choices.length === 0) {
+    return false;
+  }
+  const chooser = normalisePlayerNumber(previousPlayer, state);
+  chaos.pendingVote = {
+    chooser,
+    completedTurn: state.turnCount,
+    choices
+  };
+  state.turnPlayer = chooser;
+  state.movesLeftInTurn = 0;
+  state.duckPhase = false;
+  state.birdMovesPending = [];
+  state.currentBirdMoveKind = null;
+  state.egyptianRemoval = null;
+  pushLog(`Rule Vote: Player ${chooser} chooses the next rule.`);
+  syncClockTickerFromState();
+  return true;
+}
+
+function canChooseChaosRule(state = game.state) {
+  if (!state || state.winner || isBrowsingHistory() || !hasChaosPendingVote(state)) {
+    return false;
+  }
+  return canActForCurrentTurn();
+}
+
+function getChaosRuleOwner(rule, state) {
+  return normalisePlayerNumber(rule?.owner, state);
+}
+
+function getChaosTriggerOwner(event, state) {
+  return normalisePlayerNumber(event?.triggerOwner || state.turnPlayer, state);
+}
+
+function chaosScopeMatches(scope, ruleOwner, triggerOwner, owner) {
+  if (!owner) {
+    return false;
+  }
+  if (scope === "ruleOwner") {
+    return owner === ruleOwner;
+  }
+  if (scope === "ruleOpponents") {
+    return owner !== ruleOwner;
+  }
+  if (scope === "triggerOwner") {
+    return owner === triggerOwner;
+  }
+  if (scope === "triggerOpponents") {
+    return owner !== triggerOwner;
+  }
+  return true;
+}
+
+function shouldChaosRuleTriggerForOwner(rule, ruleDef, triggerOwner, state) {
+  const ruleOwner = getChaosRuleOwner(rule, state);
+  const scope = ruleDef.triggerScope || "all";
+  if (scope === "all") {
+    return true;
+  }
+  if (scope === "ruleOwner") {
+    return triggerOwner === ruleOwner;
+  }
+  if (scope === "opponentsOfRuleOwner") {
+    return triggerOwner !== ruleOwner;
+  }
+  return true;
+}
+
+function getChaosStoneEntries(state, rule, ruleDef, event, targetOverride = null) {
+  const ruleOwner = getChaosRuleOwner(rule, state);
+  const triggerOwner = getChaosTriggerOwner(event, state);
+  const target = targetOverride || ruleDef.target || "all";
+  return Object.entries(state.cells)
+    .map(([key, cell]) => ({ key, hex: parseKey(key), cell }))
+    .filter((entry) => (
+      entry.cell
+      && entry.cell.kind === "stone"
+      && isValidPlayerNumber(entry.cell.owner, state)
+      && chaosScopeMatches(target, ruleOwner, triggerOwner, normalisePlayerNumber(entry.cell.owner, state))
+    ));
+}
+
+function getChaosAnchorHex(state, rule, ruleDef, event, anchorName = ruleDef.anchor || "origin") {
+  const ruleOwner = getChaosRuleOwner(rule, state);
+  const triggerOwner = getChaosTriggerOwner(event, state);
+  const eventHex = event?.placementHex || null;
+  if (anchorName === "lastPlacement" && eventHex) {
+    return { ...eventHex };
+  }
+  if (anchorName === "lastRuleOwner") {
+    return state.lastPlacedByPlayer?.[ruleOwner] ? { ...state.lastPlacedByPlayer[ruleOwner] } : { q: 0, r: 0 };
+  }
+  if (anchorName === "lastTriggerOwner") {
+    return state.lastPlacedByPlayer?.[triggerOwner] ? { ...state.lastPlacedByPlayer[triggerOwner] } : { q: 0, r: 0 };
+  }
+  if (anchorName === "newestRuleOwner") {
+    const entry = selectChaosEntries(state, rule, { target: "ruleOwner", selector: "newest" }, event, 1)[0];
+    return entry ? { ...entry.hex } : { q: 0, r: 0 };
+  }
+  if (anchorName === "oldestRuleOwner") {
+    const entry = selectChaosEntries(state, rule, { target: "ruleOwner", selector: "oldest" }, event, 1)[0];
+    return entry ? { ...entry.hex } : { q: 0, r: 0 };
+  }
+  return { q: 0, r: 0 };
+}
+
+function sortChaosEntries(state, entries, selector, anchorHex) {
+  const sorted = [...entries];
+  if (selector === "oldest") {
+    sorted.sort((a, b) => a.cell.serial - b.cell.serial);
+  } else if (selector === "newest") {
+    sorted.sort((a, b) => b.cell.serial - a.cell.serial);
+  } else if (selector === "farthestOrigin") {
+    sorted.sort((a, b) => getDistanceForMode(state, b.hex) - getDistanceForMode(state, a.hex));
+  } else if (selector === "nearestOrigin") {
+    sorted.sort((a, b) => getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex));
+  } else if (selector === "nearAnchor" || selector === "adjacentAnchor") {
+    sorted.sort((a, b) => getDistanceForMode(state, a.hex, anchorHex) - getDistanceForMode(state, b.hex, anchorHex));
+  } else if (selector === "farAnchor" || selector === "farthestAnchor") {
+    sorted.sort((a, b) => getDistanceForMode(state, b.hex, anchorHex) - getDistanceForMode(state, a.hex, anchorHex));
+  } else {
+    return shuffleChaosList(sorted);
+  }
+  return sorted;
+}
+
+function selectChaosEntries(state, rule, ruleDef, event, countOverride = null, targetOverride = null, selectorOverride = null) {
+  const count = Math.max(1, Math.trunc(Number(countOverride ?? ruleDef.count) || 1));
+  const selector = selectorOverride || ruleDef.selector || "random";
+  const anchorHex = getChaosAnchorHex(state, rule, ruleDef, event);
+  let entries = getChaosStoneEntries(state, rule, ruleDef, event, targetOverride);
+  if (selector === "adjacentAnchor") {
+    entries = entries.filter((entry) => getDistanceForMode(state, entry.hex, anchorHex) === 1);
+  }
+  return sortChaosEntries(state, entries, selector, anchorHex).slice(0, count);
+}
+
+function getChaosOwnerFromRuleValue(state, rule, event, value, fallbackOwner = 1) {
+  const ruleOwner = getChaosRuleOwner(rule, state);
+  const triggerOwner = getChaosTriggerOwner(event, state);
+  if (value === "ruleOwner") {
+    return ruleOwner;
+  }
+  if (value === "triggerOwner") {
+    return triggerOwner;
+  }
+  if (value === "nextAfterRuleOwner") {
+    return getNextPlayerNumber(state, ruleOwner);
+  }
+  if (value === "nextAfterTriggerOwner") {
+    return getNextPlayerNumber(state, triggerOwner);
+  }
+  return normalisePlayerNumber(fallbackOwner, state);
+}
+
+function getChaosExactSpawnHex(state, rule, ruleDef, event, spawnNear) {
+  const eventHex = event?.placementHex || null;
+  if (spawnNear === "mirrorLastPlacement" && eventHex) {
+    return getMirrorCellForMode(state, eventHex);
+  }
+  if (spawnNear === "mirrorLastRuleOwner") {
+    const base = state.lastPlacedByPlayer?.[getChaosRuleOwner(rule, state)] || { q: 0, r: 0 };
+    return getMirrorCellForMode(state, base);
+  }
+  if (spawnNear === "mirrorLastTriggerOwner") {
+    const base = state.lastPlacedByPlayer?.[getChaosTriggerOwner(event, state)] || { q: 0, r: 0 };
+    return getMirrorCellForMode(state, base);
+  }
+  return null;
+}
+
+function getChaosSpawnCenter(state, rule, ruleDef, event, spawnNear) {
+  const eventHex = event?.placementHex || null;
+  if (spawnNear === "lastPlacement" && eventHex) {
+    return { ...eventHex };
+  }
+  if (spawnNear === "lastRuleOwner") {
+    return state.lastPlacedByPlayer?.[getChaosRuleOwner(rule, state)] || { q: 0, r: 0 };
+  }
+  if (spawnNear === "lastTriggerOwner") {
+    return state.lastPlacedByPlayer?.[getChaosTriggerOwner(event, state)] || { q: 0, r: 0 };
+  }
+  if (spawnNear === "newestRuleOwner") {
+    const entry = selectChaosEntries(state, rule, { target: "ruleOwner", selector: "newest" }, event, 1)[0];
+    return entry ? entry.hex : { q: 0, r: 0 };
+  }
+  if (spawnNear === "oldestRuleOwner") {
+    const entry = selectChaosEntries(state, rule, { target: "ruleOwner", selector: "oldest" }, event, 1)[0];
+    return entry ? entry.hex : { q: 0, r: 0 };
+  }
+  if (spawnNear === "farthestTriggerOwner") {
+    const entry = selectChaosEntries(state, rule, { target: "triggerOwner", selector: "farthestOrigin" }, event, 1)[0];
+    return entry ? entry.hex : { q: 0, r: 0 };
+  }
+  return { q: 0, r: 0 };
+}
+
+function getChaosSpawnCandidates(state, centerHex, includeCenter = false) {
+  const candidates = [];
+  if (includeCenter) {
+    candidates.push(centerHex);
+  }
+  candidates.push(...getAdjacentsForMode(state, centerHex));
+  for (const secondRing of getAdjacentsForMode(state, centerHex)) {
+    candidates.push(...getAdjacentsForMode(state, secondRing));
+  }
+  return shuffleChaosList(uniqueSupportedHexes(state, candidates))
+    .filter((hex) => isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex) && !isChaosBlockedHex(state, hex));
+}
+
+function applyChaosSpawnEffect(state, rule, ruleDef, event, selectedEntry = null) {
+  const count = Math.max(1, Math.trunc(Number(ruleDef.count) || 1));
+  const owner = selectedEntry
+    ? normalisePlayerNumber(selectedEntry.cell.owner, state)
+    : getChaosOwnerFromRuleValue(state, rule, event, ruleDef.spawnOwner || "ruleOwner", getChaosRuleOwner(rule, state));
+  const spawnNear = ruleDef.spawnNear || "lastRuleOwner";
+  const exact = selectedEntry ? null : getChaosExactSpawnHex(state, rule, ruleDef, event, spawnNear);
+  let candidates = [];
+  if (exact) {
+    candidates = isHexOpen(state, exact) && !isEverythingBagelRedTapeHex(state, exact) && !isChaosBlockedHex(state, exact)
+      ? [exact]
+      : [];
+  } else {
+    const center = selectedEntry ? selectedEntry.hex : getChaosSpawnCenter(state, rule, ruleDef, event, spawnNear);
+    candidates = getChaosSpawnCandidates(state, center, spawnNear === "origin");
+  }
+
+  let spawned = 0;
+  for (const hex of candidates) {
+    if (spawned >= count) {
+      break;
+    }
+    if (addEffectStone(state, hex, owner, "stone", usesArmoryMode(state) ? { pieceType: "militia" } : {})) {
+      spawned += 1;
+    }
+  }
+  return spawned > 0 ? `added ${spawned} Player ${owner} stone${spawned === 1 ? "" : "s"}` : "";
+}
+
+function applyChaosRemoveEffect(state, rule, ruleDef, event, targetOverride = null, selectorOverride = null) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, null, targetOverride, selectorOverride);
+  let removed = 0;
+  let cracked = 0;
+  for (const entry of entries) {
+    const hadShield = Boolean(entry.cell.chaosShield);
+    const removedCell = removeStone(state, entry.hex);
+    if (removedCell) {
+      removed += 1;
+    } else if (hadShield) {
+      cracked += 1;
+    }
+  }
+  const parts = [];
+  if (removed > 0) parts.push(`removed ${removed} stone${removed === 1 ? "" : "s"}`);
+  if (cracked > 0) parts.push(`cracked ${cracked} shield${cracked === 1 ? "" : "s"}`);
+  return parts.join(" and ");
+}
+
+function applyChaosConvertEffect(state, rule, ruleDef, event, targetOverride = null, selectorOverride = null) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, null, targetOverride, selectorOverride);
+  const toOwner = getChaosOwnerFromRuleValue(state, rule, event, ruleDef.convertTo || "ruleOwner", getChaosRuleOwner(rule, state));
+  let converted = 0;
+  for (const entry of entries) {
+    const cell = getCellAt(state, entry.hex);
+    if (!cell || cell.kind !== "stone" || cell.owner === toOwner) {
+      continue;
+    }
+    cell.owner = toOwner;
+    cell.serial = ++state.moveSerial;
+    converted += 1;
+  }
+  return converted > 0 ? `converted ${converted} stone${converted === 1 ? "" : "s"} to Player ${toOwner}` : "";
+}
+
+function applyChaosShieldEffect(state, rule, ruleDef, event, targetOverride = null, selectorOverride = null) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, null, targetOverride, selectorOverride);
+  let shielded = 0;
+  for (const entry of entries) {
+    const cell = getCellAt(state, entry.hex);
+    if (!cell || cell.kind !== "stone" || cell.chaosShield) {
+      continue;
+    }
+    cell.chaosShield = true;
+    cell.serial = ++state.moveSerial;
+    shielded += 1;
+  }
+  return shielded > 0 ? `shielded ${shielded} stone${shielded === 1 ? "" : "s"}` : "";
+}
+
+function getChaosMoveDestination(state, fromHex, movement, anchorHex) {
+  if (movement === "clockwise" || movement === "counterClockwise") {
+    const target = movement === "clockwise"
+      ? orbitStepForMode(state, fromHex)
+      : rotateAxial(fromHex, -1);
+    return isHexOpen(state, target) && !isEverythingBagelRedTapeHex(state, target) && !isChaosBlockedHex(state, target) ? target : null;
+  }
+
+  const currentOriginDistance = getDistanceForMode(state, fromHex);
+  const currentAnchorDistance = getDistanceForMode(state, fromHex, anchorHex);
+  const candidates = getAdjacentsForMode(state, fromHex)
+    .filter((hex) => isHexOpen(state, hex) && !isEverythingBagelRedTapeHex(state, hex) && !isChaosBlockedHex(state, hex));
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (movement === "inward") {
+    return candidates
+      .filter((hex) => getDistanceForMode(state, hex) < currentOriginDistance)
+      .sort((a, b) => getDistanceForMode(state, a) - getDistanceForMode(state, b))[0] || null;
+  }
+  if (movement === "towardsAnchor") {
+    return candidates
+      .filter((hex) => getDistanceForMode(state, hex, anchorHex) < currentAnchorDistance)
+      .sort((a, b) => getDistanceForMode(state, a, anchorHex) - getDistanceForMode(state, b, anchorHex))[0] || null;
+  }
+  if (movement === "awayAnchor") {
+    return candidates
+      .filter((hex) => getDistanceForMode(state, hex, anchorHex) > currentAnchorDistance)
+      .sort((a, b) => getDistanceForMode(state, b, anchorHex) - getDistanceForMode(state, a, anchorHex))[0] || null;
+  }
+  return candidates
+    .filter((hex) => getDistanceForMode(state, hex) > currentOriginDistance)
+    .sort((a, b) => getDistanceForMode(state, b) - getDistanceForMode(state, a))[0] || null;
+}
+
+function applyChaosMoveEffect(state, rule, ruleDef, event, targetOverride = null, selectorOverride = null) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, null, targetOverride, selectorOverride);
+  const anchorHex = getChaosAnchorHex(state, rule, ruleDef, event);
+  let moved = 0;
+  for (const entry of entries) {
+    const target = getChaosMoveDestination(state, entry.hex, ruleDef.movement || "outward", anchorHex);
+    if (target && moveStonePreservingSerial(state, entry.hex, target)) {
+      moved += 1;
+    }
+  }
+  return moved > 0 ? `moved ${moved} stone${moved === 1 ? "" : "s"}` : "";
+}
+
+function applyChaosSwapPositionsEffect(state, rule, ruleDef, event) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, 2);
+  if (entries.length < 2) {
+    return "";
+  }
+  const first = entries[0];
+  const second = entries[1];
+  const firstCell = getCellAt(state, first.hex);
+  const secondCell = getCellAt(state, second.hex);
+  if (!firstCell || !secondCell) {
+    return "";
+  }
+  state.cells[keyOf(first.hex.q, first.hex.r)] = { ...secondCell };
+  state.cells[keyOf(second.hex.q, second.hex.r)] = { ...firstCell };
+  transformTrackedHexes(state, (hex) => {
+    if (equalHex(hex, first.hex)) return { ...second.hex };
+    if (equalHex(hex, second.hex)) return { ...first.hex };
+    return { ...hex };
+  });
+  return "swapped 2 stone positions";
+}
+
+function applyChaosSwapOwnersEffect(state, rule, ruleDef, event) {
+  const entries = selectChaosEntries(state, rule, ruleDef, event, 2);
+  if (entries.length < 2) {
+    return "";
+  }
+  const firstCell = getCellAt(state, entries[0].hex);
+  const secondCell = getCellAt(state, entries[1].hex);
+  if (!firstCell || !secondCell || firstCell.owner === secondCell.owner) {
+    return "";
+  }
+  [firstCell.owner, secondCell.owner] = [secondCell.owner, firstCell.owner];
+  firstCell.serial = ++state.moveSerial;
+  secondCell.serial = ++state.moveSerial;
+  return "swapped 2 stone owners";
+}
+
+function applyChaosRuleEffectForOwner(state, rule, ruleDef, event = {}) {
+  if (!ruleDef || Math.random() > Math.max(0, Math.min(1, Number(ruleDef.chance) || 1))) {
+    return "";
+  }
+  if (ruleDef.effect === "remove") {
+    return applyChaosRemoveEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "convert") {
+    return applyChaosConvertEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "spawn") {
+    return applyChaosSpawnEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "shield") {
+    return applyChaosShieldEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "shieldPlaced") {
+    const hex = event.placementHex;
+    const cell = hex ? getCellAt(state, hex) : null;
+    if (cell && cell.kind === "stone" && !cell.chaosShield) {
+      cell.chaosShield = true;
+      cell.serial = ++state.moveSerial;
+      return "shielded the placed stone";
+    }
+    return "";
+  }
+  if (ruleDef.effect === "move") {
+    return applyChaosMoveEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "swapPositions") {
+    return applyChaosSwapPositionsEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "swapOwners") {
+    return applyChaosSwapOwnersEffect(state, rule, ruleDef, event);
+  }
+  if (ruleDef.effect === "shieldAndSpawn") {
+    const entries = selectChaosEntries(state, rule, ruleDef, event, 1);
+    if (entries.length === 0) {
+      return "";
+    }
+    const shieldText = applyChaosShieldEffect(state, rule, ruleDef, event, ruleDef.target, ruleDef.selector);
+    const spawnText = applyChaosSpawnEffect(state, rule, { ...ruleDef, count: 1, spawnNear: "selectedTarget" }, event, entries[0]);
+    return [shieldText, spawnText].filter(Boolean).join(" and ");
+  }
+  if (ruleDef.effect === "shieldAndRemove") {
+    const shieldText = applyChaosShieldEffect(state, rule, ruleDef, event, ruleDef.target, ruleDef.selector);
+    const removeText = applyChaosRemoveEffect(state, rule, { ...ruleDef, target: ruleDef.removeTarget, selector: ruleDef.removeSelector || "oldest", count: 1 }, event);
+    return [shieldText, removeText].filter(Boolean).join(" and ");
+  }
+  if (ruleDef.effect === "shieldAndMove") {
+    const shieldText = applyChaosShieldEffect(state, rule, ruleDef, event);
+    const moveText = applyChaosMoveEffect(state, rule, ruleDef, event);
+    return [shieldText, moveText].filter(Boolean).join(" and ");
+  }
+  if (ruleDef.effect === "spawnFromSelectedOwner") {
+    const entry = selectChaosEntries(state, rule, ruleDef, event, 1)[0];
+    return entry ? applyChaosSpawnEffect(state, rule, ruleDef, event, entry) : "";
+  }
+  return "";
+}
+
+function applyChaosRuleEffect(state, rule, ruleDef, event = {}) {
+  if (!ruleDef) {
+    return "";
+  }
+  if (ruleDef.eachPlayer) {
+    const messages = [];
+    for (const owner of getPlayerNumbers(state)) {
+      const message = applyChaosRuleEffectForOwner(state, { ...rule, owner }, ruleDef, event);
+      if (message) {
+        messages.push(`P${owner} ${message}`);
+      }
+    }
+    return messages.join("; ");
+  }
+  return applyChaosRuleEffectForOwner(state, rule, ruleDef, event);
+}
+
+function applyChaosAfterPlacementEffects(state, placedHex, owner) {
+  if (!usesChaosVoteMode(state)) {
+    return [];
+  }
+  const chaos = ensureChaosState(state);
+  if (!chaos) {
+    return [];
+  }
+  const messages = [];
+  const triggerOwner = normalisePlayerNumber(owner, state);
+  for (const rule of chaos.activeRules) {
+    const ruleDef = getChaosRuleDef(rule.id);
+    if (!ruleDef || ruleDef.trigger !== "afterPlacement" || !shouldChaosRuleTriggerForOwner(rule, ruleDef, triggerOwner, state)) {
+      continue;
+    }
+    const message = applyChaosRuleEffect(state, rule, ruleDef, {
+      trigger: "afterPlacement",
+      triggerOwner,
+      placementHex: { ...placedHex }
+    });
+    if (message) {
+      messages.push(`${ruleDef.title}: ${message}.`);
+    }
+  }
+  return messages;
+}
+
+function resolveChaosTurnEnd(state, previousPlayer) {
+  if (!usesChaosVoteMode(state)) {
+    return;
+  }
+  const chaos = ensureChaosState(state);
+  if (!chaos) {
+    return;
+  }
+  const triggerOwner = normalisePlayerNumber(previousPlayer, state);
+  for (const rule of chaos.activeRules) {
+    const ruleDef = getChaosRuleDef(rule.id);
+    if (!ruleDef || ruleDef.trigger !== "endTurn") {
+      continue;
+    }
+    const message = applyChaosRuleEffect(state, rule, ruleDef, {
+      trigger: "endTurn",
+      triggerOwner
+    });
+    if (message) {
+      pushLog(`${ruleDef.title}: ${message}.`);
+    }
+  }
+
+  const stillActive = [];
+  for (const rule of chaos.activeRules) {
+    const nextTurnsLeft = Math.max(0, Math.trunc(Number(rule.turnsLeft) || 0) - 1);
+    if (nextTurnsLeft > 0) {
+      stillActive.push({ ...rule, turnsLeft: nextTurnsLeft });
+    } else {
+      const ruleDef = getChaosRuleDef(rule.id);
+      if (ruleDef) {
+        pushLog(`${ruleDef.title} expired.`);
+      }
+    }
+  }
+  chaos.activeRules = stillActive;
+}
+
+function applyChaosChosenRule(state, choice) {
+  const chaos = ensureChaosState(state);
+  const ruleDef = getChaosRuleDef(choice?.id);
+  if (!chaos || !ruleDef) {
+    return false;
+  }
+  const chooser = normalisePlayerNumber(chaos.pendingVote?.chooser || state.turnPlayer, state);
+  chaos.recentRuleIds.push(ruleDef.id);
+  chaos.recentRuleIds = chaos.recentRuleIds.slice(-CHAOS_RECENT_RULE_MEMORY);
+
+  if (ruleDef.trigger === "instant") {
+    const instantRule = {
+      id: ruleDef.id,
+      title: ruleDef.title,
+      description: ruleDef.description,
+      owner: chooser,
+      turnsLeft: 0,
+      totalTurns: 0,
+      serial: chaos.serial + 1
+    };
+    chaos.serial += 1;
+    const message = applyChaosRuleEffect(state, instantRule, ruleDef, {
+      trigger: "instant",
+      triggerOwner: chooser
+    });
+    pushLog(`${ruleDef.title} chosen by Player ${chooser}.${message ? ` Result: ${message}.` : ""}`);
+    return true;
+  }
+
+  const duration = getChaosRuleDuration(ruleDef);
+  chaos.serial += 1;
+  chaos.activeRules.push({
+    id: ruleDef.id,
+    title: ruleDef.title,
+    description: ruleDef.description,
+    owner: chooser,
+    turnsLeft: duration,
+    totalTurns: duration,
+    serial: chaos.serial
+  });
+  pushLog(`${ruleDef.title} chosen by Player ${chooser} for ${duration} turn${duration === 1 ? "" : "s"}.`);
+  return true;
+}
+
+function chooseChaosRule(choiceIndex) {
+  const state = game.state;
+  if (!canChooseChaosRule(state)) {
+    return;
+  }
+  const chaos = ensureChaosState(state);
+  const pending = chaos?.pendingVote;
+  const index = Math.max(0, Math.min((pending?.choices?.length || 1) - 1, Math.trunc(Number(choiceIndex) || 0)));
+  const choice = pending?.choices?.[index];
+  if (!choice) {
+    return;
+  }
+
+  applyClockElapsedIfNeeded();
+  saveHistory();
+  const chooser = normalisePlayerNumber(pending.chooser, state);
+  applyChaosChosenRule(state, choice);
+  chaos.pendingVote = null;
+
+  if (checkForWinner(state)) {
+    updateStatus();
+    syncClockTickerFromState();
+    render();
+    broadcastOnlineState();
+    return;
+  }
+
+  finishTurnRotation(state, chooser);
+  updateStatus();
+  syncClockTickerFromState();
+  render();
+  broadcastOnlineState();
+}
+
+function matchesChaosBlockPattern(state, hex, pattern = {}) {
+  const distance = getDistanceForMode(state, hex);
+  if (pattern.ignoreOrigin && distance === 0) {
+    return false;
+  }
+  if (pattern.type === "centerRadius") {
+    return distance <= Math.max(0, Number(pattern.radius) || 0);
+  }
+  if (pattern.type === "outerRadius") {
+    return distance >= Math.max(0, Number(pattern.radius) || 0);
+  }
+  if (pattern.type === "distanceEquals") {
+    return distance === Math.max(0, Number(pattern.distance) || 0);
+  }
+  if (pattern.type === "distanceMod") {
+    const modulus = Math.max(1, Math.trunc(Number(pattern.modulus) || 1));
+    return positiveMod(distance, modulus) === positiveMod(Math.trunc(Number(pattern.remainder) || 0), modulus);
+  }
+  if (pattern.type === "axisMod") {
+    const modulus = Math.max(1, Math.trunc(Number(pattern.modulus) || 1));
+    const q = Math.trunc(Number(hex.q) || 0);
+    const r = Math.trunc(Number(hex.r) || 0);
+    const axisValue = pattern.axis === "r" ? r : (pattern.axis === "s" ? -q - r : q);
+    return positiveMod(axisValue, modulus) === positiveMod(Math.trunc(Number(pattern.remainder) || 0), modulus);
+  }
+  if (pattern.type === "sumMod") {
+    const modulus = Math.max(1, Math.trunc(Number(pattern.modulus) || 1));
+    return positiveMod(Math.trunc(Number(hex.q) || 0) + Math.trunc(Number(hex.r) || 0), modulus) === positiveMod(Math.trunc(Number(pattern.remainder) || 0), modulus);
+  }
+  if (pattern.type === "diffMod") {
+    const modulus = Math.max(1, Math.trunc(Number(pattern.modulus) || 1));
+    return positiveMod(Math.trunc(Number(hex.q) || 0) - Math.trunc(Number(hex.r) || 0), modulus) === positiveMod(Math.trunc(Number(pattern.remainder) || 0), modulus);
+  }
+  if (pattern.type === "quadrant") {
+    const q = Math.trunc(Number(hex.q) || 0);
+    const r = Math.trunc(Number(hex.r) || 0);
+    const qOk = Number(pattern.qSign) < 0 ? q < 0 : q > 0;
+    const rOk = Number(pattern.rSign) < 0 ? r < 0 : r > 0;
+    return qOk && rOk;
+  }
+  if (pattern.type === "diagonalEquals") {
+    return Math.trunc(Number(hex.q) || 0) === Math.trunc(Number(hex.r) || 0);
+  }
+  return false;
+}
+
+function isChaosBlockedHex(state, hex) {
+  if (!usesChaosVoteMode(state)) {
+    return false;
+  }
+  return getChaosActiveRules(state).some((rule) => {
+    const ruleDef = getChaosRuleDef(rule.id);
+    return ruleDef?.effect === "block" && matchesChaosBlockPattern(state, hex, ruleDef.pattern);
+  });
 }
 
 function moveBird(state, hex, birdMoveKind = "duck") {
@@ -6540,6 +7400,20 @@ function checkForWinner(state) {
   return winner;
 }
 
+function finishTurnRotation(state, previousPlayer) {
+  const nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
+  switchClockTurn(state.clock, nextPlayer);
+  state.turnPlayer = nextPlayer;
+  state.movesLeftInTurn = 2;
+  state.duckPhase = false;
+  state.birdMovesPending = [];
+  state.currentBirdMoveKind = null;
+  state.egyptianRemoval = null;
+  state.egyptianRemovalsThisTurn = createPlayerMap(getPlayerCount(state), () => 0);
+  state.lastPlacedThisTurn = [];
+  syncClockTickerFromState();
+}
+
 function endTurn(state) {
   ensureClockState(state);
   applyClockElapsedIfNeeded();
@@ -6558,23 +7432,18 @@ function endTurn(state) {
   resolveArmoryTurnEnd(state);
   resolveBedSiegeTurnEnd(state, previousPlayer);
   resolveFactoryTurnEnd(state, previousPlayer);
+  resolveChaosTurnEnd(state, previousPlayer);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
     return;
   }
 
-  const nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
-  switchClockTurn(state.clock, nextPlayer);
-  state.turnPlayer = nextPlayer;
-  state.movesLeftInTurn = 2;
-  state.duckPhase = false;
-  state.birdMovesPending = [];
-  state.currentBirdMoveKind = null;
-  state.egyptianRemoval = null;
-  state.egyptianRemovalsThisTurn = createPlayerMap(getPlayerCount(state), () => 0);
-  state.lastPlacedThisTurn = [];
-  syncClockTickerFromState();
+  if (openChaosRuleVoteIfNeeded(state, previousPlayer)) {
+    return;
+  }
+
+  finishTurnRotation(state, previousPlayer);
 }
 
 function finishSubmove(state) {
@@ -6627,6 +7496,7 @@ function placeTurnTile(state, hex, owner) {
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
   const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
   const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
+  const chaosMessages = applyChaosAfterPlacementEffects(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
@@ -6640,6 +7510,7 @@ function placeTurnTile(state, hex, owner) {
     armoryAbilityMessage,
     ...bedSiegeMessages,
     ...bagelMessages,
+    ...chaosMessages,
     powderMessage
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
@@ -7813,6 +8684,11 @@ function clickPlacement(hex) {
     return;
   }
 
+  if (hasChaosPendingVote(state)) {
+    updateStatus();
+    return;
+  }
+
   if (hasEgyptianRemovalPhase(state)) {
     if (!canSelectEgyptianRemovalHex(state, hex)) {
       return;
@@ -7938,7 +8814,7 @@ function canUseArmoryControls(state = game.state) {
   if (!canActForCurrentTurn()) {
     return false;
   }
-  if (hasEgyptianRemovalPhase(state) || state.duckPhase) {
+  if (hasEgyptianRemovalPhase(state) || state.duckPhase || hasChaosPendingVote(state)) {
     return false;
   }
   return true;
@@ -8160,7 +9036,7 @@ function canUseBedSiegeControls(state = game.state) {
   if (isBrowsingHistory() || !canActForCurrentTurn()) {
     return false;
   }
-  if (hasEgyptianRemovalPhase(state) || state.duckPhase) {
+  if (hasEgyptianRemovalPhase(state) || state.duckPhase || hasChaosPendingVote(state)) {
     return false;
   }
   return canBedSiegePlayerAct(state, state.turnPlayer);
@@ -8284,7 +9160,7 @@ function canUseFactoryControls(state = game.state) {
   if (isBrowsingHistory() || !canActForCurrentTurn()) {
     return false;
   }
-  if (hasEgyptianRemovalPhase(state) || state.duckPhase) {
+  if (hasEgyptianRemovalPhase(state) || state.duckPhase || hasChaosPendingVote(state)) {
     return false;
   }
   return canFactoryPlayerAct(state, state.turnPlayer);
@@ -8411,6 +9287,88 @@ function renderEverythingBagelPanel() {
   }
 }
 
+function renderChaosPanel() {
+  if (!ui.chaosControls) {
+    return;
+  }
+  const state = game.state;
+  if (!state || !usesChaosVoteMode(state)) {
+    ui.chaosControls.hidden = true;
+    return;
+  }
+
+  ui.chaosControls.hidden = false;
+  const chaos = ensureChaosState(state);
+  const pending = chaos?.pendingVote;
+  const canChoose = canChooseChaosRule(state);
+
+  if (ui.chaosVoteText) {
+    if (pending) {
+      ui.chaosVoteText.textContent = `Player ${pending.chooser} chooses the next rule.`;
+    } else {
+      const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
+      ui.chaosVoteText.textContent = `Next vote in ${untilVote} completed turn${untilVote === 1 ? "" : "s"}.`;
+    }
+  }
+
+  if (ui.chaosVoteOptions) {
+    ui.chaosVoteOptions.innerHTML = "";
+    if (pending) {
+      pending.choices.forEach((choice, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `modeToggle chaosVoteOption${canChoose ? " active" : ""}`;
+        button.disabled = !canChoose;
+        button.title = choice.description;
+
+        const title = document.createElement("span");
+        title.className = "chaosRuleTitle";
+        title.textContent = choice.title;
+        const meta = document.createElement("span");
+        meta.className = "chaosRuleMeta";
+        meta.textContent = choice.durationText;
+        const description = document.createElement("span");
+        description.className = "chaosRuleDescription";
+        description.textContent = choice.description;
+
+        button.appendChild(title);
+        button.appendChild(meta);
+        button.appendChild(description);
+        button.addEventListener("click", () => chooseChaosRule(index));
+        ui.chaosVoteOptions.appendChild(button);
+      });
+    }
+  }
+
+  if (ui.chaosActiveRules) {
+    ui.chaosActiveRules.innerHTML = "";
+    const activeRules = getChaosActiveRules(state);
+    if (activeRules.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "small chaosEmpty";
+      empty.textContent = "No active voted rules yet.";
+      ui.chaosActiveRules.appendChild(empty);
+    } else {
+      for (const rule of activeRules) {
+        const ruleDef = getChaosRuleDef(rule.id);
+        const item = document.createElement("div");
+        item.className = "chaosActiveRule";
+
+        const title = document.createElement("div");
+        title.className = "chaosActiveRuleTitle";
+        title.textContent = `${ruleDef?.title || rule.title} | ${ruleDef?.eachPlayer ? "All players" : `P${rule.owner}`} | ${rule.turnsLeft} left`;
+        const description = document.createElement("div");
+        description.className = "small chaosActiveRuleDescription";
+        description.textContent = ruleDef ? getChaosRuleDescription(ruleDef) : (rule.description || "");
+
+        item.appendChild(title);
+        item.appendChild(description);
+        ui.chaosActiveRules.appendChild(item);
+      }
+    }
+  }
+}
+
 function updateStatus() {
   const state = game.state;
   ensureClockState(state);
@@ -8441,6 +9399,9 @@ function updateStatus() {
     ui.subturnText.textContent = `Egyptian: Player ${owner} choose ${remaining} stone${remaining === 1 ? "" : "s"} to remove (not the one just placed)`;
   } else if (state.duckPhase) {
     ui.subturnText.textContent = getBirdActionPrompt(state.currentBirdMoveKind);
+  } else if (hasChaosPendingVote(state)) {
+    const pending = ensureChaosState(state)?.pendingVote;
+    ui.subturnText.textContent = `Rule Vote: Player ${pending?.chooser || state.turnPlayer} choose one of ${pending?.choices?.length || 3} rules`;
   } else {
     ui.subturnText.textContent = `${state.movesLeftInTurn} placement${state.movesLeftInTurn === 1 ? "" : "s"} left this turn`;
   }
@@ -8478,6 +9439,10 @@ function updateStatus() {
     const movedText = powder.lastReport?.moved ? `, ${powder.lastReport.moved} steps` : "";
     ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${controlled} claimed${movedText}`;
   }
+  if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
+    const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
+    ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
+  }
 
   updateClockUI();
   updateTurnOrderSummary(getPlayerCount(state));
@@ -8487,6 +9452,7 @@ function updateStatus() {
   renderBedSiegePanel();
   renderFactoryPanel();
   renderEverythingBagelPanel();
+  renderChaosPanel();
 }
 
 function resizeCanvas() {
@@ -10134,6 +11100,17 @@ function drawPieces() {
       1.5,
       hex
     );
+    if (cell.chaosShield && showInnerDots) {
+      drawBoardShape(
+        screen.x,
+        screen.y,
+        size * 0.9,
+        "rgba(255, 215, 94, 0.05)",
+        "rgba(255, 215, 94, 0.86)",
+        Math.max(1.4, size * 0.055),
+        hex
+      );
+    }
     if (showInnerDots && !bedSiegeBlockType) {
       ctx.fillStyle = "rgba(6, 12, 23, 0.52)";
       ctx.beginPath();
@@ -11069,6 +12046,8 @@ window.HexTicTacToeInternals = {
   broadcastOnlineState,
   makeInitialState,
   getSelectedModeKeys,
+  chooseChaosRule,
+  getChaosRuleDefinitions,
   formatClock,
   updateClockUI,
   updateStatus
