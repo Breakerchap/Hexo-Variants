@@ -28,6 +28,10 @@ const ui = {
   egyptianCapControls: document.getElementById("egyptianCapControls"),
   egyptianCapInput: document.getElementById("egyptianCapInput"),
   egyptianCapSummaryText: document.getElementById("egyptianCapSummaryText"),
+  secretRuleControls: document.getElementById("secretRuleControls"),
+  placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
+  winLengthInput: document.getElementById("winLengthInput"),
+  secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
   armoryControls: document.getElementById("armoryControls"),
   armoryClassP1Select: document.getElementById("armoryClassP1Select"),
   armoryClassP2Select: document.getElementById("armoryClassP2Select"),
@@ -108,7 +112,12 @@ const ui = {
 const SQRT3 = Math.sqrt(3);
 const COS_22_5 = Math.cos(Math.PI / 8);
 const SIN_22_5 = Math.sin(Math.PI / 8);
-const WIN_LENGTH = 6;
+const DEFAULT_WIN_LENGTH = 6;
+const MIN_WIN_LENGTH = 3;
+const MAX_WIN_LENGTH = 12;
+const DEFAULT_PLACEMENTS_PER_TURN = 2;
+const MIN_PLACEMENTS_PER_TURN = 1;
+const MAX_PLACEMENTS_PER_TURN = 8;
 const MAX_PLACEMENT_DISTANCE = 8;
 const CLOCK_TICK_MS = 100;
 const GRID_HINT_MIN_HEX_SIZE = 9;
@@ -740,32 +749,32 @@ const MODES = {
   threePlayer: {
     name: "3 Players",
     summary: "Adds Player 3 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
-    hint: "Three-player game: turns rotate P1, P2, P3. Connect 6 to win."
+    hint: "Three-player game: turns rotate P1, P2, P3. Connect the target line length to win."
   },
   fourPlayer: {
     name: "4 Players",
     summary: "Adds Players 3 and 4 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
-    hint: "Four-player game: turns rotate P1, P2, P3, P4. Connect 6 to win."
+    hint: "Four-player game: turns rotate P1, P2, P3, P4. Connect the target line length to win."
   },
   triangleGrid: {
     name: "Triangle Grid",
-    summary: "Replaces hex tiles with triangle tiles while keeping the same placement range and connect-6 win condition.",
-    hint: "Board switches to triangle cells. Place inside triangles and connect 6 in a straight line."
+    summary: "Replaces hex tiles with triangle tiles while keeping the same placement range and line win condition.",
+    hint: "Board switches to triangle cells. Place inside triangles and connect the target line length."
   },
   squareGrid: {
     name: "Square Grid",
-    summary: "Replaces hex tiles with square tiles while keeping connect-6 wins and all other mode rules intact.",
-    hint: "Board switches to square cells. Place inside squares and connect 6 in a straight line."
+    summary: "Replaces hex tiles with square tiles while keeping line wins and all other mode rules intact.",
+    hint: "Board switches to square cells. Place inside squares and connect the target line length."
   },
   octagonGrid: {
     name: "Octagon Grid",
-    summary: "Replaces hex tiles with an octagon tiling that includes the small diamond tiles while keeping connect-6 wins and all other mode rules intact.",
-    hint: "Board switches to octagons and diamonds. Place in either tile type and connect 6 in a straight line."
+    summary: "Replaces hex tiles with an octagon tiling that includes the small diamond tiles while keeping line wins and all other mode rules intact.",
+    hint: "Board switches to octagons and diamonds. Place in either tile type and connect the target line length."
   },
   radialGrid: {
     name: "Radial Grid",
-    summary: "Replaces hex tiles with a polar board. Connect 6 along a ring or straight outward along a spoke.",
-    hint: "Board switches to rings and spokes. Connect 6 around a ring or outward from the centre."
+    summary: "Replaces hex tiles with a polar board. Connect the target line length along a ring or straight outward along a spoke.",
+    hint: "Board switches to rings and spokes. Connect the target line length around a ring or outward from the centre."
   },
   duck: {
     name: "Duck",
@@ -824,13 +833,13 @@ const MODES = {
   everythingBagel: {
     name: "Everything Bagel",
     summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, schmear slides them, sesame spreads receipts, poppy stamps flip rivals, deli queues advance, and paperwork mutates the board.",
-    hint: "Still connect 6, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
+    hint: "Still line wins, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
     secret: true
   },
   powderCascade: {
     name: "Powder Cascade",
-    summary: "Secret powder-sim mode: each placement bursts into 16 small grid-shaped grains that fall onto a floor. A cell counts when one player settles at least 8 grains inside it; connect 6 counted cells to win. Only player-count and grid modes can stack with it.",
-    hint: "Each clicked cell turns into 16 falling grains. Settled grains claim cells by density, and the first player to connect 6 claimed cells wins.",
+    summary: "Secret powder-sim mode: each placement bursts into 16 small grid-shaped grains that fall onto a floor. A cell counts when one player settles at least 8 grains inside it; connect the target number of counted cells to win. Only player-count and grid modes can stack with it.",
+    hint: "Each clicked cell turns into 16 falling grains. Settled grains claim cells by density, and the first player to connect the target line length wins.",
     secret: true
   }
 };
@@ -2602,6 +2611,8 @@ const game = {
   performanceModeLevel: 0,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
+  placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
+  winLength: DEFAULT_WIN_LENGTH,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
   turnOrder: "random",
   clockRuntime: {
@@ -2690,6 +2701,14 @@ function refreshEgyptianCapControls(modeKeys) {
   ui.egyptianCapControls.hidden = !modeUsesEgyptianCap(modeKeys);
 }
 
+function refreshSecretRuleControls(modeKeys) {
+  if (!ui.secretRuleControls) {
+    return;
+  }
+  ui.secretRuleControls.hidden = !game.secretModesUnlocked;
+  refreshSecretRuleSummaryFromInputs(modeKeys);
+}
+
 function refreshArmoryControls(modeKeys) {
   if (!ui.armoryControls) {
     return;
@@ -2752,6 +2771,7 @@ function refreshSecretModeVisibility() {
   if (ui.secretModesBtn) {
     ui.secretModesBtn.setAttribute("aria-pressed", game.secretModesUnlocked ? "true" : "false");
   }
+  refreshSecretRuleControls(getSelectedModeKeys());
 }
 
 function setSecretModesUnlocked(unlocked) {
@@ -2768,20 +2788,28 @@ function modeKeySignature(modeKeys) {
 
 function getModeConfig(modeKeys) {
   const keys = normaliseModeKeys(modeKeys);
-  if (keys.length === 0) {
-    return BASE_MODE;
-  }
-
   const activeModes = keys.map((key) => MODES[key]);
-  return {
-    name: activeModes.map((mode) => mode.name).join(" + "),
-    summary: activeModes.length === 1
-      ? activeModes[0].summary
-      : activeModes.map((mode) => `${mode.name}: ${mode.summary}`).join(" "),
-    hint: activeModes.length === 1
-      ? activeModes[0].hint
-      : activeModes.map((mode) => `${mode.name}: ${mode.hint}`).join(" | ")
-  };
+  const config = keys.length === 0
+    ? { ...BASE_MODE }
+    : {
+      name: activeModes.map((mode) => mode.name).join(" + "),
+      summary: activeModes.length === 1
+        ? activeModes[0].summary
+        : activeModes.map((mode) => `${mode.name}: ${mode.summary}`).join(" "),
+      hint: activeModes.length === 1
+        ? activeModes[0].hint
+        : activeModes.map((mode) => `${mode.name}: ${mode.hint}`).join(" | ")
+    };
+  if (game.secretModesUnlocked) {
+    const settings = getGameRuleSettings({
+      placementsPerTurn: getPlacementsPerTurnFromInputs(),
+      winLength: getWinLengthFromInputs()
+    });
+    const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
+    config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
+    config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
+  }
+  return config;
 }
 
 function hasMode(state, modeKey) {
@@ -3595,13 +3623,16 @@ function setSelectedModeKeys(modeKeys) {
   refreshSecretModeVisibility();
 }
 
-function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap) {
+function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap, secretRuleSettings = {}) {
   const activeModeKeys = normaliseModeKeys(modeKeys);
   const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
+  const appliedGameRules = getGameRuleSettings(secretRuleSettings);
   const state = {
     modeKeys: activeModeKeys,
     playerCount,
     egyptianStoneCap: normaliseEgyptianStoneCap(egyptianStoneCap),
+    placementsPerTurn: appliedGameRules.placementsPerTurn,
+    winLength: appliedGameRules.winLength,
     cells: {},
     turnPlayer: 1,
     movesLeftInTurn: 1,
@@ -3646,14 +3677,14 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
   if (usesBedSiegeMode(state)) {
     state.bedSiege = createBedSiegeStateForGame(state);
     placeBedSiegeBedCells(state);
-    state.movesLeftInTurn = 2;
+    state.movesLeftInTurn = getPlacementsPerTurn(state);
     state.openingMoveDone = true;
     state.log[0] = "Bed Siege started: bridge, shop, defend your bed, and break enemy beds.";
   }
   if (usesFactoryMode(state)) {
     state.factory = createFactoryStateForGame(state);
     placeFactoryCoreCells(state);
-    state.movesLeftInTurn = 2;
+    state.movesLeftInTurn = getPlacementsPerTurn(state);
     state.openingMoveDone = true;
     state.log[0] = "Foundry War started: control the farther Ore nodes and the center Flux node, route them home for capped points, and keep your core alive.";
   }
@@ -3664,12 +3695,12 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     }
   }
   if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
-    state.log[0] = "Everything Bagel started: read the docket, dodge the paperwork, and connect 6 if the filings allow it.";
+    state.log[0] = `Everything Bagel started: read the docket, dodge the paperwork, and connect ${getWinLength(state)} if the filings allow it.`;
   }
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
     if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
-      state.log[0] = "Powder Cascade started: each placement pours 16 grains. Settle enough grains into connected cells to claim a connect-6 line.";
+      state.log[0] = `Powder Cascade started: each placement pours 16 grains. Settle enough grains into connected cells to claim a connect-${getWinLength(state)} line.`;
     }
   }
   return state;
@@ -3683,6 +3714,7 @@ function setModeUI(modeKeys) {
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
   refreshEgyptianCapControls(modeKeys);
+  refreshSecretRuleControls(modeKeys);
   refreshArmoryControls(modeKeys);
   refreshBedSiegeControls(modeKeys);
   refreshFactoryControls(modeKeys);
@@ -3828,6 +3860,72 @@ function setEgyptianCapInput(value) {
   if (ui.egyptianCapSummaryText) {
     ui.egyptianCapSummaryText.textContent = `Cap: ${cap} stones/player`;
   }
+}
+
+function normalisePlacementsPerTurn(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_PLACEMENTS_PER_TURN;
+  }
+  return Math.max(MIN_PLACEMENTS_PER_TURN, Math.min(MAX_PLACEMENTS_PER_TURN, parsed));
+}
+
+function normaliseWinLength(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_WIN_LENGTH;
+  }
+  return Math.max(MIN_WIN_LENGTH, Math.min(MAX_WIN_LENGTH, parsed));
+}
+
+function getPlacementsPerTurnFromInputs() {
+  return normalisePlacementsPerTurn(ui.placementsPerTurnInput?.value);
+}
+
+function getWinLengthFromInputs() {
+  return normaliseWinLength(ui.winLengthInput?.value);
+}
+
+function setSecretRuleInputs(settings = {}) {
+  const placementsPerTurn = normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn);
+  const winLength = normaliseWinLength(settings.winLength ?? game.winLength);
+  if (ui.placementsPerTurnInput) {
+    ui.placementsPerTurnInput.value = String(placementsPerTurn);
+  }
+  if (ui.winLengthInput) {
+    ui.winLengthInput.value = String(winLength);
+  }
+  refreshSecretRuleSummaryFromInputs();
+}
+
+function refreshSecretRuleSummaryFromInputs() {
+  if (!ui.secretRuleSummaryText) {
+    return;
+  }
+  const placementsPerTurn = getPlacementsPerTurnFromInputs();
+  const winLength = getWinLengthFromInputs();
+  ui.secretRuleSummaryText.textContent = `${placementsPerTurn} per turn | connect ${winLength}`;
+}
+
+function getGameRuleSettings(settings = {}) {
+  return {
+    placementsPerTurn: normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn),
+    winLength: normaliseWinLength(settings.winLength ?? game.winLength)
+  };
+}
+
+function getPlacementsPerTurn(state) {
+  if (!state) {
+    return DEFAULT_PLACEMENTS_PER_TURN;
+  }
+  return normalisePlacementsPerTurn(state.placementsPerTurn);
+}
+
+function getWinLength(state) {
+  if (!state) {
+    return DEFAULT_WIN_LENGTH;
+  }
+  return normaliseWinLength(state.winLength);
 }
 
 function ensureClockState(state) {
@@ -4037,6 +4135,12 @@ function updateOnlineControls() {
   }
   if (ui.egyptianCapInput) {
     ui.egyptianCapInput.disabled = inRoom && !admin;
+  }
+  if (ui.placementsPerTurnInput) {
+    ui.placementsPerTurnInput.disabled = inRoom && !admin;
+  }
+  if (ui.winLengthInput) {
+    ui.winLengthInput.disabled = inRoom && !admin;
   }
   for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
     const select = getArmoryClassSelectForPlayer(player);
@@ -6016,6 +6120,7 @@ function getRadialRingRunCells(state, start, owner) {
 }
 
 function getRadialWinningLine(state, start, owner) {
+  const winLength = getWinLength(state);
   const startCell = normaliseRadialCell(start);
   if (!countsForOwnerAt(state, startCell, owner)) {
     return null;
@@ -6024,7 +6129,7 @@ function getRadialWinningLine(state, start, owner) {
   if (startCell.q === 0) {
     for (let sector = 0; sector < RADIAL_SECTOR_COUNT; sector += 1) {
       const spokeCells = getRadialSpokeRunCells(state, startCell, owner, sector);
-      if (spokeCells.length >= WIN_LENGTH) {
+      if (spokeCells.length >= winLength) {
         return { kind: "spoke", cells: spokeCells };
       }
     }
@@ -6032,12 +6137,12 @@ function getRadialWinningLine(state, start, owner) {
   }
 
   const ringCells = getRadialRingRunCells(state, startCell, owner);
-  if (ringCells.length >= WIN_LENGTH) {
+  if (ringCells.length >= winLength) {
     return { kind: "ring", cells: ringCells };
   }
 
   const spokeCells = getRadialSpokeRunCells(state, startCell, owner);
-  if (spokeCells.length >= WIN_LENGTH) {
+  if (spokeCells.length >= winLength) {
     return { kind: "spoke", cells: spokeCells };
   }
 
@@ -6060,13 +6165,14 @@ function auditRadialBoardForWinner(state) {
 }
 
 function auditTriangleBoardForWinner(state) {
+  const winLength = getWinLength(state);
   for (const [key, cell] of Object.entries(state.cells)) {
     const pos = parseKey(key);
     const owners = getOwnersForCell(state, cell);
 
     for (const owner of owners) {
       for (const lineKind of triangleLineKinds) {
-        if (getTriangleLineCount(state, pos, owner, lineKind) >= WIN_LENGTH) {
+        if (getTriangleLineCount(state, pos, owner, lineKind) >= winLength) {
           return owner;
         }
       }
@@ -6096,6 +6202,7 @@ function getLineCount(state, start, owner, dir) {
 }
 
 function checkWinnerFrom(state, hex) {
+  const winLength = getWinLength(state);
   if (usesTriangleGridMode(state)) {
     const cell = getCellAt(state, hex);
     if (!cell) {
@@ -6105,7 +6212,7 @@ function checkWinnerFrom(state, hex) {
 
     for (const owner of owners) {
       for (const lineKind of triangleLineKinds) {
-        if (getTriangleLineCount(state, hex, owner, lineKind) >= WIN_LENGTH) {
+        if (getTriangleLineCount(state, hex, owner, lineKind) >= winLength) {
           return owner;
         }
       }
@@ -6137,7 +6244,7 @@ function checkWinnerFrom(state, hex) {
 
   for (const owner of owners) {
     for (const dir of getLineAxesForMode(state)) {
-      if (getLineCount(state, hex, owner, dir) >= WIN_LENGTH) {
+      if (getLineCount(state, hex, owner, dir) >= winLength) {
         return owner;
       }
     }
@@ -7404,7 +7511,7 @@ function finishTurnRotation(state, previousPlayer) {
   const nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
   switchClockTurn(state.clock, nextPlayer);
   state.turnPlayer = nextPlayer;
-  state.movesLeftInTurn = 2;
+  state.movesLeftInTurn = getPlacementsPerTurn(state);
   state.duckPhase = false;
   state.birdMovesPending = [];
   state.currentBirdMoveKind = null;
@@ -9443,6 +9550,9 @@ function updateStatus() {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
   }
+  if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
+    ui.subturnText.textContent += ` | Connect ${getWinLength(state)}`;
+  }
 
   updateClockUI();
   updateTurnOrderSummary(getPlayerCount(state));
@@ -11399,6 +11509,7 @@ function getTriangleWinningLineCells(state, start, owner, lineKind) {
 }
 
 function findTriangleWinningLine(state, owner, preferredHex = null) {
+  const winLength = getWinLength(state);
   const candidates = [];
   if (preferredHex && countsForOwnerAt(state, preferredHex, owner)) {
     candidates.push(preferredHex);
@@ -11415,7 +11526,7 @@ function findTriangleWinningLine(state, owner, preferredHex = null) {
   for (const candidate of candidates) {
     for (const lineKind of triangleLineKinds) {
       const cells = getTriangleWinningLineCells(state, candidate, owner, lineKind);
-      if (cells.length >= WIN_LENGTH) {
+      if (cells.length >= winLength) {
         return cells;
       }
     }
@@ -11454,6 +11565,7 @@ function drawWinnerLineHint() {
     }
   }
   const size = currentHexSize();
+  const winLength = getWinLength(game.state);
   const last = game.state.lastPlacement;
   const lastCell = last ? getCellAt(game.state, last) : null;
 
@@ -11468,7 +11580,7 @@ function drawWinnerLineHint() {
 
     for (const owner of owners) {
       const cells = findTriangleWinningLine(game.state, owner, last);
-      if (cells.length >= WIN_LENGTH) {
+      if (cells.length >= winLength) {
         drawStraightWinnerLineCells(cells, size);
         return;
       }
@@ -11507,7 +11619,7 @@ function drawWinnerLineHint() {
 
   for (const owner of owners) {
     for (const dir of getLineAxesForMode(game.state)) {
-      if (getLineCount(game.state, last, owner, dir) < WIN_LENGTH) {
+      if (getLineCount(game.state, last, owner, dir) < winLength) {
         continue;
       }
 
@@ -11615,10 +11727,19 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.timerConfig = normaliseTimerConfig(timerConfig);
   game.turnOrder = normaliseTurnOrder(turnOrder, playerCount);
   game.egyptianStoneCap = getEgyptianStoneCapFromInputs();
+  game.placementsPerTurn = getPlacementsPerTurnFromInputs();
+  game.winLength = getWinLengthFromInputs();
   setTimerInputs(game.timerConfig);
   setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
-  game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap);
+  setSecretRuleInputs({
+    placementsPerTurn: game.placementsPerTurn,
+    winLength: game.winLength
+  });
+  game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
+    placementsPerTurn: game.placementsPerTurn,
+    winLength: game.winLength
+  });
   game.factoryAnimationDisabled = false;
   game.factoryAnimationFramePending = false;
   game.lastFactoryAnimationAt = 0;
@@ -11974,6 +12095,16 @@ ui.timerSecondsInput?.addEventListener("input", refreshTimerSummaryFromInputs);
 ui.timerIncrementInput.addEventListener("input", refreshTimerSummaryFromInputs);
 ui.timerEnabledInput.addEventListener("change", refreshTimerSummaryFromInputs);
 ui.egyptianCapInput?.addEventListener("input", refreshEgyptianCapSummaryFromInputs);
+ui.placementsPerTurnInput?.addEventListener("input", () => {
+  game.placementsPerTurn = getPlacementsPerTurnFromInputs();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
+ui.winLengthInput?.addEventListener("input", () => {
+  game.winLength = getWinLengthFromInputs();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
 ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
@@ -12025,6 +12156,10 @@ ui.appRoot.addEventListener("transitionend", (event) => {
 fillModePicker();
 setTimerInputs(game.timerConfig);
 setEgyptianCapInput(game.egyptianStoneCap);
+setSecretRuleInputs({
+  placementsPerTurn: game.placementsPerTurn,
+  winLength: game.winLength
+});
 getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
 updatePerformanceModeUI();

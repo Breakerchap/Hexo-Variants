@@ -14,7 +14,7 @@
     <aside class="sidebar">
       <section class="titleCard">
         <h1>Infinite Hex Tic-Tac-Toe</h1>
-        <p>Connect 6 in a straight line. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. The starting player opens with 1 move, then every turn uses 2.</p>
+        <p>Connect 6 in a straight line by default. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. The starting player opens with 1 move, then normal turns use the current placements-per-turn setting.</p>
       </section>
 
       <section class="section">
@@ -27,6 +27,21 @@
             <input id="egyptianCapInput" type="number" min="5" max="999" step="1" value="12" aria-label="Egyptian stone cap" />
             <div class="small" id="egyptianCapSummaryText" style="align-self: center;">Cap: 12 stones/player</div>
           </div>
+        </div>
+        <div id="secretRuleControls" hidden>
+          <div style="height: 8px"></div>
+          <div class="small" style="margin-bottom: 6px; color: var(--text);">Secret rules</div>
+          <div class="grid2 secretRuleGrid">
+            <label class="small secretRuleField" for="placementsPerTurnInput">
+              Placements / turn
+              <input id="placementsPerTurnInput" type="number" min="1" max="8" step="1" value="2" aria-label="Placements per turn" />
+            </label>
+            <label class="small secretRuleField" for="winLengthInput">
+              In a row to win
+              <input id="winLengthInput" type="number" min="3" max="12" step="1" value="6" aria-label="Number in a row to win" />
+            </label>
+          </div>
+          <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">2 per turn | connect 6</div>
         </div>
         <div class="footerNote">Choose one grid mode and any extra modes, then start a new game.</div>
         <div style="height: 10px"></div>
@@ -229,7 +244,7 @@
           <li>Later placements must be within 11 spaces of an existing board space.</li>
           <li>Drag with right mouse button or middle mouse to pan.</li>
           <li>Scroll to zoom.</li>
-          <li>Winning line length is always 6.</li>
+          <li>Winning line length uses the current in-a-row setting.</li>
           <li>The opening turn is always 1 placement, no matter who starts.</li>
         </ul>
       </section>

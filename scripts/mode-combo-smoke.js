@@ -234,6 +234,10 @@ function makeSandbox() {
     "egyptianCapControls",
     "egyptianCapInput",
     "egyptianCapSummaryText",
+    "secretRuleControls",
+    "placementsPerTurnInput",
+    "winLengthInput",
+    "secretRuleSummaryText",
     "chaosControls",
     "chaosVoteText",
     "chaosVoteOptions",
@@ -278,6 +282,8 @@ function makeSandbox() {
   document.getElementById("timerIncrementInput").value = "2";
   document.getElementById("timerEnabledInput").checked = true;
   document.getElementById("egyptianCapInput").value = "12";
+  document.getElementById("placementsPerTurnInput").value = "2";
+  document.getElementById("winLengthInput").value = "6";
   document.getElementById("turnOrderInput").value = "p1First";
   document.getElementById("boardClockP1").className = "boardClock boardClockP1";
   document.getElementById("boardClockP2").className = "boardClock boardClockP2";
