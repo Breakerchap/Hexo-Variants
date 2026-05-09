@@ -145,15 +145,20 @@ const BAGEL_EFFECT_TILE_PHASE = 0;
 const CHAOS_VOTE_INTERVAL = 3;
 const CHAOS_RULE_CHOICE_COUNT = 3;
 const CHAOS_RECENT_RULE_MEMORY = 12;
-const POWDER_GRAINS_PER_CELL = 16;
-const POWDER_PHYSICS_STEPS_PER_TURN = 10;
-const POWDER_MAX_GRAINS = 2200;
-const POWDER_GRAVITY = 0.32;
-const POWDER_MAX_FALL_SPEED = 3.8;
-const POWDER_GRAIN_RADIUS = 2.8;
+const POWDER_GRAINS_PER_CELL = 20;
+const POWDER_PHYSICS_STEPS_AFTER_PLACE = 18;
+const POWDER_PHYSICS_STEPS_PER_TURN = 30;
+const POWDER_MAX_GRAINS = 2600;
+const POWDER_GRAVITY = 0.42;
+const POWDER_MAX_FALL_SPEED = 5.2;
+const POWDER_GRAIN_RADIUS = 2.6;
 const POWDER_COLLISION_DISTANCE = POWDER_GRAIN_RADIUS * 1.95;
-const POWDER_FLOOR_CELL_Y = 9;
-const POWDER_WIN_CELL_GRAINS = 8;
+const POWDER_FLOOR_CELL_Y = 7;
+const POWDER_WIN_CELL_GRAINS = 7;
+const POWDER_CONTROL_MIN_LEAD = 2;
+const POWDER_PRESSURE_GRAINS_PER_SOURCE = 3;
+const POWDER_MAX_PRESSURE_SOURCES = 4;
+const POWDER_NEAR_CLAIM_GRAINS = 4;
 const BED_SIEGE_BRIDGE_RANGE = 3;
 const BED_SIEGE_PEARL_RANGE = 6;
 const BED_SIEGE_FIREBALL_RANGE = 5;
@@ -838,8 +843,8 @@ const MODES = {
   },
   powderCascade: {
     name: "Powder Cascade",
-    summary: "Secret powder-sim mode: each placement bursts into 16 small grid-shaped grains that fall onto a floor. A cell counts when one player settles at least 8 grains inside it; connect the target number of counted cells to win. Only player-count and grid modes can stack with it.",
-    hint: "Each clicked cell turns into 16 falling grains. Settled grains claim cells by density, and the first player to connect the target line length wins.",
+    summary: "Secret powder-sim territory mode: each placement becomes a source pad that pours 20 grains, then your newest source pads drip pressure at turn end. A cell is claimed when one player settles 7 grains there with a clear lead; connect the target number of claimed cells to win.",
+    hint: "Place source pads above the lanes you want to flood. Settled grains claim cells by density, ties stay contested, and source pads keep dripping pressure on later turns.",
     secret: true
   }
 };
@@ -3050,6 +3055,7 @@ function createPowderStateForGame() {
     grains: [],
     sources: {},
     nextId: 1,
+    cellStats: {},
     controlledCells: {},
     lastReport: null
   };
@@ -3082,8 +3088,19 @@ function ensurePowderState(state) {
   if (!powder.sources || typeof powder.sources !== "object" || Array.isArray(powder.sources)) {
     powder.sources = {};
   }
+  powder.sources = Object.fromEntries(Object.entries(powder.sources).map(([key, source]) => ([
+    key,
+    {
+      owner: normalisePlayerNumber(source?.owner, state),
+      serial: Math.max(0, Math.trunc(Number(source?.serial) || 0)),
+      pressure: Math.max(0, Math.trunc(Number(source?.pressure) || 0))
+    }
+  ])));
   if (!powder.controlledCells || typeof powder.controlledCells !== "object" || Array.isArray(powder.controlledCells)) {
     powder.controlledCells = {};
+  }
+  if (!powder.cellStats || typeof powder.cellStats !== "object" || Array.isArray(powder.cellStats)) {
+    powder.cellStats = {};
   }
   powder.nextId = Math.max(1, Math.trunc(Number(powder.nextId) || 1));
   powder.grains = powder.grains
@@ -3179,7 +3196,7 @@ function getPowderGridOffsets(state, hex) {
   const unit = size * 0.18;
   if (usesSquareGridMode(state)) {
     return [-1.5, -0.5, 0.5, 1.5].flatMap((row) => (
-      [-1.5, -0.5, 0.5, 1.5].map((col) => ({ x: col * unit * 1.28, y: row * unit * 1.28 }))
+      [-2, -1, 0, 1, 2].map((col) => ({ x: col * unit * 1.12, y: row * unit * 1.28 }))
     ));
   }
 
@@ -3202,6 +3219,10 @@ function getPowderGridOffsets(state, hex) {
       }
     }
     offsets.push({ x: 0, y: 0 });
+    offsets.push({ x: -unit * 0.8, y: unit * 0.6 });
+    offsets.push({ x: unit * 0.8, y: unit * 0.6 });
+    offsets.push({ x: -unit * 0.8, y: -unit * 0.6 });
+    offsets.push({ x: unit * 0.8, y: -unit * 0.6 });
     return offsets.slice(0, POWDER_GRAINS_PER_CELL);
   }
 
@@ -3242,7 +3263,11 @@ function getPowderGridOffsets(state, hex) {
     { x: 0, y: unit * 2.0 },
     { x: unit * 1.2, y: unit * 2.0 },
     { x: -unit * 0.4, y: 0 },
-    { x: unit * 0.4, y: 0 }
+    { x: unit * 0.4, y: 0 },
+    { x: -unit * 1.2, y: 0 },
+    { x: unit * 1.2, y: 0 },
+    { x: -unit * 0.7, y: unit * 1.35 },
+    { x: unit * 0.7, y: unit * 1.35 }
   ];
 }
 
@@ -3256,44 +3281,111 @@ function trimPowderGrainsToLimit(powder) {
   return overflow;
 }
 
+function addPowderGrainsFromHex(state, hex, owner, count, options = {}) {
+  const powder = ensurePowderState(state);
+  if (!powder || !hex) {
+    return 0;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const safeCount = Math.max(0, Math.trunc(Number(count) || 0));
+  if (safeCount <= 0) {
+    return 0;
+  }
+  const center = boardCellToPowderWorld(hex, state);
+  const offsets = getPowderGridOffsets(state, hex);
+  const spread = Math.max(0.35, Number(options.spread) || 1);
+  const lift = Math.max(0, Number(options.lift) || 0);
+  const initialVy = Number.isFinite(Number(options.initialVy)) ? Number(options.initialVy) : 0;
+  const velocityScale = Math.max(0.5, Number(options.velocityScale) || 1);
+  let emitted = 0;
+
+  for (let index = 0; index < safeCount; index += 1) {
+    const offset = offsets[index % offsets.length] || { x: 0, y: 0 };
+    const wiggle = positiveMod(powder.nextId + safeOwner + index, 13) - 6;
+    const drift = wiggle * (options.pressure ? 0.035 : 0.022) * velocityScale;
+    powder.grains.push({
+      id: powder.nextId,
+      owner: safeOwner,
+      x: center.x + (offset.x * spread),
+      y: center.y + (offset.y * spread) - lift,
+      vx: drift,
+      vy: initialVy,
+      settled: false,
+      source: { ...hex }
+    });
+    powder.nextId += 1;
+    emitted += 1;
+  }
+
+  return emitted;
+}
+
+function getPowderSourceEntriesForOwner(state, owner) {
+  const powder = ensurePowderState(state);
+  if (!powder) {
+    return [];
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  return Object.entries(powder.sources)
+    .map(([key, source]) => ({ hex: parseKey(key), source }))
+    .filter((entry) => entry.source.owner === safeOwner)
+    .sort((a, b) => (
+      (b.source.serial || 0) - (a.source.serial || 0)
+      || getDistanceForMode(state, b.hex) - getDistanceForMode(state, a.hex)
+      || a.hex.q - b.hex.q
+      || a.hex.r - b.hex.r
+    ));
+}
+
+function emitPowderPressure(state, owner) {
+  const powder = ensurePowderState(state);
+  if (!powder) {
+    return { emitted: 0, sources: 0 };
+  }
+  const selected = getPowderSourceEntriesForOwner(state, owner).slice(0, POWDER_MAX_PRESSURE_SOURCES);
+  let emitted = 0;
+  const lift = getPowderBaseSize() * 0.34;
+  for (const entry of selected) {
+    emitted += addPowderGrainsFromHex(state, entry.hex, entry.source.owner, POWDER_PRESSURE_GRAINS_PER_SOURCE, {
+      pressure: true,
+      spread: 0.72,
+      lift,
+      initialVy: 0.22,
+      velocityScale: 1.25
+    });
+    entry.source.pressure = (entry.source.pressure || 0) + 1;
+  }
+  return { emitted, sources: selected.length };
+}
+
 function spawnPowderCell(state, hex, owner) {
   const powder = ensurePowderState(state);
   if (!powder || isPowderSourceHex(state, hex)) {
     return null;
   }
   const safeOwner = normalisePlayerNumber(owner, state);
-  const center = boardCellToPowderWorld(hex, state);
-  const offsets = getPowderGridOffsets(state, hex);
   state.moveSerial += 1;
   powder.sources[keyOf(hex.q, hex.r)] = {
     owner: safeOwner,
-    serial: state.moveSerial
+    serial: state.moveSerial,
+    pressure: 0
   };
-  for (let index = 0; index < POWDER_GRAINS_PER_CELL; index += 1) {
-    const offset = offsets[index % offsets.length];
-    const drift = ((positiveMod(state.moveSerial + index + safeOwner, 7) - 3) * 0.015);
-    powder.grains.push({
-      id: powder.nextId,
-      owner: safeOwner,
-      x: center.x + offset.x,
-      y: center.y + offset.y,
-      vx: drift,
-      vy: 0,
-      settled: false,
-      source: { ...hex }
-    });
-    powder.nextId += 1;
-  }
+  const emitted = addPowderGrainsFromHex(state, hex, safeOwner, POWDER_GRAINS_PER_CELL, {
+    lift: getPowderBaseSize() * 0.16,
+    initialVy: 0.12
+  });
   state.lastPlacement = { ...hex };
   if (!state.lastPlacedByPlayer || typeof state.lastPlacedByPlayer !== "object") {
     state.lastPlacedByPlayer = createPlayerMap(getPlayerCount(state), () => null);
   }
   state.lastPlacedByPlayer[safeOwner] = { ...hex };
   state.lastPlacedThisTurn.push({ ...hex });
-  const trimmed = trimPowderGrainsToLimit(powder);
+  const settleReport = simulatePowderCascade(state, POWDER_PHYSICS_STEPS_AFTER_PLACE);
   return {
-    spawned: POWDER_GRAINS_PER_CELL,
-    trimmed
+    spawned: emitted,
+    trimmed: settleReport.trimmed,
+    settled: settleReport.newSettled || 0,
+    claimed: settleReport.newClaims || 0
   };
 }
 
@@ -3308,15 +3400,49 @@ function getPowderSpatialKey(x, y, bucketSize = POWDER_COLLISION_DISTANCE) {
 function buildPowderSpatialIndex(grains) {
   const index = new Map();
   for (const grain of grains) {
-    const key = getPowderSpatialKey(grain.x, grain.y);
-    const list = index.get(key);
-    if (list) {
-      list.push(grain);
-    } else {
-      index.set(key, [grain]);
-    }
+    addPowderToSpatialIndex(index, grain);
   }
   return index;
+}
+
+function addPowderToSpatialIndex(index, grain) {
+  const key = getPowderSpatialKey(grain.x, grain.y);
+  const list = index.get(key);
+  if (list) {
+    list.push(grain);
+  } else {
+    index.set(key, [grain]);
+  }
+}
+
+function removePowderFromSpatialIndex(index, grain) {
+  const key = getPowderSpatialKey(grain.x, grain.y);
+  const list = index.get(key);
+  if (!list) {
+    return;
+  }
+  const next = list.filter((entry) => entry.id !== grain.id);
+  if (next.length > 0) {
+    index.set(key, next);
+  } else {
+    index.delete(key);
+  }
+}
+
+function movePowderGrain(index, grain, x, y, options = {}) {
+  removePowderFromSpatialIndex(index, grain);
+  grain.x = x;
+  grain.y = y;
+  if (options.vx != null) {
+    grain.vx = options.vx;
+  }
+  if (options.vy != null) {
+    grain.vy = options.vy;
+  }
+  if (options.settled != null) {
+    grain.settled = Boolean(options.settled);
+  }
+  addPowderToSpatialIndex(index, grain);
 }
 
 function hasPowderCollision(index, grain, x, y) {
@@ -3365,28 +3491,51 @@ function stepPowderGrain(grain, index) {
   let nextY = grain.y + grain.vy;
 
   if (nextY >= floorY) {
-    grain.y = floorY;
-    grain.vx = 0;
-    grain.vy = 0;
-    grain.settled = true;
+    nextY = floorY;
+    if (!canPowderOccupy(index, grain, nextX, nextY)) {
+      nextY = grain.y + Math.max(0.25, grain.vy * 0.35);
+    } else {
+      movePowderGrain(index, grain, nextX, floorY, { vx: 0, vy: 0, settled: true });
+      return Math.abs(oldY - grain.y) > 0.1;
+    }
+  }
+
+  if (nextY >= floorY && canPowderOccupy(index, grain, nextX, floorY)) {
+    movePowderGrain(index, grain, nextX, floorY, { vx: 0, vy: 0, settled: true });
     return Math.abs(oldY - grain.y) > 0.1;
   }
 
   if (canPowderOccupy(index, grain, nextX, nextY)) {
-    grain.x = nextX;
-    grain.y = nextY;
+    movePowderGrain(index, grain, nextX, nextY);
     return Math.abs(oldX - grain.x) > 0.1 || Math.abs(oldY - grain.y) > 0.1;
   }
 
-  const slideDirection = positiveMod(grain.id, 2) === 0 ? -1 : 1;
-  for (const direction of [slideDirection, -slideDirection]) {
-    nextX = grain.x + direction * POWDER_GRAIN_RADIUS * 0.8;
-    nextY = grain.y + Math.max(0.4, grain.vy * 0.35);
-    if (canPowderOccupy(index, grain, nextX, nextY)) {
-      grain.x = nextX;
-      grain.y = nextY;
-      grain.vx = direction * 0.16;
-      grain.vy *= 0.35;
+  const slideDirection = positiveMod(grain.id + Math.trunc(grain.y), 2) === 0 ? -1 : 1;
+  const fall = Math.max(0.55, grain.vy * 0.48);
+  const candidates = [slideDirection, -slideDirection].flatMap((direction) => ([
+    {
+      x: grain.x + direction * POWDER_GRAIN_RADIUS * 0.95,
+      y: grain.y + fall,
+      vx: direction * 0.22,
+      vy: grain.vy * 0.42
+    },
+    {
+      x: grain.x + direction * POWDER_GRAIN_RADIUS * 1.55,
+      y: grain.y + Math.max(0.25, fall * 0.55),
+      vx: direction * 0.30,
+      vy: grain.vy * 0.28
+    }
+  ]));
+
+  for (const candidate of candidates) {
+    const targetY = Math.min(candidate.y, floorY);
+    if (canPowderOccupy(index, grain, candidate.x, targetY)) {
+      const atFloor = targetY >= floorY;
+      movePowderGrain(index, grain, candidate.x, targetY, {
+        vx: atFloor ? 0 : candidate.vx,
+        vy: atFloor ? 0 : candidate.vy,
+        settled: atFloor
+      });
       return true;
     }
   }
@@ -3399,12 +3548,16 @@ function stepPowderGrain(grain, index) {
 
 function simulatePowderCascade(state, stepCount = POWDER_PHYSICS_STEPS_PER_TURN) {
   const powder = ensurePowderState(state);
+  const previousControlled = powder ? { ...(powder.controlledCells || {}) } : {};
   const report = {
     moved: 0,
     settled: 0,
     active: 0,
     total: 0,
-    trimmed: 0
+    trimmed: 0,
+    newClaims: 0,
+    controlled: 0,
+    contested: 0
   };
   if (!powder) {
     return report;
@@ -3420,20 +3573,27 @@ function simulatePowderCascade(state, stepCount = POWDER_PHYSICS_STEPS_PER_TURN)
     }
   }
   report.trimmed = trimPowderGrainsToLimit(powder);
-  refreshPowderControl(state);
+  const controlled = refreshPowderControl(state);
   report.total = powder.grains.length;
   report.settled = powder.grains.filter((grain) => grain.settled).length;
   report.active = Math.max(0, report.total - report.settled);
   report.newSettled = Math.max(0, report.settled - previousSettled);
+  report.controlled = Object.keys(controlled).length;
+  report.contested = Object.values(powder.cellStats || {}).filter((stat) => (
+    !stat.controlled && stat.leader && stat.bestCount >= POWDER_NEAR_CLAIM_GRAINS
+  )).length;
+  report.newClaims = Object.entries(controlled).filter(([key, control]) => (
+    previousControlled[key]?.owner !== control.owner
+  )).length;
   powder.lastReport = report;
   return report;
 }
 
-function getPowderCellControlMap(state) {
+function getPowderCellStats(state) {
   const powder = ensurePowderState(state);
-  const controlled = {};
+  const stats = {};
   if (!powder) {
-    return controlled;
+    return stats;
   }
   const countsByCell = {};
   for (const grain of powder.grains) {
@@ -3454,16 +3614,45 @@ function getPowderCellControlMap(state) {
   for (const [key, counts] of Object.entries(countsByCell)) {
     let bestOwner = 0;
     let bestCount = 0;
+    let secondCount = 0;
+    let total = 0;
     for (const owner of getPlayerNumbers(state)) {
-      if (counts[owner] > bestCount) {
+      const count = Math.max(0, counts[owner] || 0);
+      total += count;
+      if (count > bestCount) {
+        secondCount = bestCount;
         bestOwner = owner;
-        bestCount = counts[owner];
+        bestCount = count;
+      } else if (count > secondCount) {
+        secondCount = count;
       }
     }
-    if (bestOwner && bestCount >= POWDER_WIN_CELL_GRAINS) {
+    const lead = bestCount - secondCount;
+    const controlled = Boolean(bestOwner && bestCount >= POWDER_WIN_CELL_GRAINS && lead >= POWDER_CONTROL_MIN_LEAD);
+    stats[key] = {
+      leader: bestOwner,
+      owner: controlled ? bestOwner : 0,
+      bestCount,
+      secondCount,
+      lead,
+      total,
+      controlled,
+      counts
+    };
+  }
+  return stats;
+}
+
+function getPowderCellControlMap(state) {
+  const stats = getPowderCellStats(state);
+  const controlled = {};
+  for (const [key, stat] of Object.entries(stats)) {
+    if (stat.controlled) {
       controlled[key] = {
-        owner: bestOwner,
-        grains: bestCount
+        owner: stat.owner,
+        grains: stat.bestCount,
+        lead: stat.lead,
+        total: stat.total
       };
     }
   }
@@ -3475,11 +3664,22 @@ function refreshPowderControl(state) {
   if (!powder) {
     return {};
   }
-  powder.controlledCells = getPowderCellControlMap(state);
+  powder.cellStats = getPowderCellStats(state);
+  powder.controlledCells = {};
+  for (const [key, stat] of Object.entries(powder.cellStats)) {
+    if (stat.controlled) {
+      powder.controlledCells[key] = {
+        owner: stat.owner,
+        grains: stat.bestCount,
+        lead: stat.lead,
+        total: stat.total
+      };
+    }
+  }
   return powder.controlledCells;
 }
 
-function getPowderWinner(state) {
+function getPowderVirtualCells(state) {
   const controlled = refreshPowderControl(state);
   const virtualCells = {};
   let serial = 0;
@@ -3490,34 +3690,69 @@ function getPowderWinner(state) {
       serial: serial += 1
     };
   }
+  return virtualCells;
+}
+
+function getPowderVirtualBoardState(state) {
+  return {
+    ...state,
+    cells: getPowderVirtualCells(state)
+  };
+}
+
+function getPowderWinner(state) {
+  const virtualCells = getPowderVirtualCells(state);
   if (Object.keys(virtualCells).length === 0) {
     return 0;
   }
-  return auditWholeBoardForWinner({
-    ...state,
-    cells: virtualCells
-  });
+  return auditWholeBoardForWinner({ ...state, cells: virtualCells });
 }
 
-function resolvePowderCascade(state) {
+function getPowderClaimSummary(state) {
+  const controlled = refreshPowderControl(state);
+  const claimCounts = createPlayerMap(getPlayerCount(state), () => 0);
+  for (const control of Object.values(controlled)) {
+    if (isValidPlayerNumber(control.owner, state)) {
+      claimCounts[control.owner] += 1;
+    }
+  }
+  return getPlayerNumbers(state)
+    .map((owner) => `P${owner} ${claimCounts[owner]}`)
+    .join("/");
+}
+
+function resolvePowderCascade(state, previousPlayer = state?.turnPlayer) {
   if (!usesPowderMode(state)) {
     return;
   }
+  const pressure = emitPowderPressure(state, previousPlayer);
   const report = simulatePowderCascade(state);
-  if (report.moved <= 0 && report.newSettled <= 0 && report.trimmed <= 0) {
+  report.emitted = pressure.emitted;
+  report.pressureSources = pressure.sources;
+  const powder = ensurePowderState(state);
+  if (powder) {
+    powder.lastReport = report;
+  }
+  if (report.moved <= 0 && report.newSettled <= 0 && report.trimmed <= 0 && pressure.emitted <= 0 && report.newClaims <= 0) {
     return;
   }
   const parts = [];
+  if (pressure.emitted > 0) {
+    parts.push(`${pressure.emitted} pressure grains`);
+  }
   if (report.moved > 0) {
     parts.push(`${report.moved} grain-steps`);
   }
   if (report.newSettled > 0) {
     parts.push(`${report.newSettled} settled`);
   }
+  if (report.newClaims > 0) {
+    parts.push(`${report.newClaims} claimed`);
+  }
   if (report.trimmed > 0) {
     parts.push(`${report.trimmed} recycled`);
   }
-  pushLog(`Powder cascade: ${parts.join(", ")} | ${report.active} falling / ${report.settled} settled.`);
+  pushLog(`Powder cascade: ${parts.join(", ")} | ${report.active} falling / ${report.settled} settled / ${report.controlled} claimed.`);
 }
 
 function getGridDrawStep(size) {
@@ -3700,7 +3935,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
     if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
-      state.log[0] = `Powder Cascade started: each placement pours 16 grains. Settle enough grains into connected cells to claim a connect-${getWinLength(state)} line.`;
+      state.log[0] = `Powder Cascade started: source pads pour ${POWDER_GRAINS_PER_CELL} grains, newest pads drip pressure at turn end, and clear grain leads claim a connect-${getWinLength(state)} line.`;
     }
   }
   return state;
@@ -7742,7 +7977,7 @@ function endTurn(state) {
   resolveOrbit(state);
   resolveMeteorAccounting(state);
   resolveEverythingBagel(state, previousPlayer);
-  resolvePowderCascade(state);
+  resolvePowderCascade(state, previousPlayer);
   resolveArmoryTurnEnd(state);
   resolveBedSiegeTurnEnd(state, previousPlayer);
   resolveFactoryTurnEnd(state, previousPlayer);
@@ -7794,8 +8029,10 @@ function placeTurnTile(state, hex, owner) {
       return null;
     }
     const trimText = result.trimmed > 0 ? ` Recycled ${result.trimmed} old grain${result.trimmed === 1 ? "" : "s"} to keep the sim light.` : "";
+    const settleText = result.settled > 0 ? ` ${result.settled} settled.` : "";
+    const claimText = result.claimed > 0 ? ` ${result.claimed} cell${result.claimed === 1 ? "" : "s"} claimed.` : "";
     return {
-      log: `Player ${owner} poured ${result.spawned} grains at (${hex.q}, ${hex.r}).${trimText}`,
+      log: `Player ${owner} placed a powder source at (${hex.q}, ${hex.r}) and poured ${result.spawned} grains.${settleText}${claimText}${trimText}`,
       needsEgyptianChoice: false
     };
   }
@@ -9749,9 +9986,12 @@ function updateStatus() {
   if (usesPowderMode(state) && !state.winner) {
     const powder = ensurePowderState(state);
     const settled = powder.grains.filter((grain) => grain.settled).length;
-    const controlled = Object.keys(refreshPowderControl(state)).length;
+    refreshPowderControl(state);
+    const contested = Object.values(powder.cellStats || {}).filter((stat) => (
+      !stat.controlled && stat.leader && stat.bestCount >= POWDER_NEAR_CLAIM_GRAINS
+    )).length;
     const movedText = powder.lastReport?.moved ? `, ${powder.lastReport.moved} steps` : "";
-    ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${controlled} claimed${movedText}`;
+    ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${getPowderClaimSummary(state)} claimed, ${contested} contested${movedText}`;
   }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
@@ -11265,24 +11505,74 @@ function drawPowderClaimedCells() {
   const size = currentHexSize();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const controlled = refreshPowderControl(game.state);
-  for (const [key, control] of Object.entries(controlled)) {
+  refreshPowderControl(game.state);
+  for (const [key, stat] of Object.entries(powder.cellStats || {})) {
+    const owner = stat.controlled ? stat.owner : stat.leader;
+    if (!owner || (!stat.controlled && stat.bestCount < POWDER_NEAR_CLAIM_GRAINS)) {
+      continue;
+    }
     const hex = parseKey(key);
     const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
     if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
       continue;
     }
-    const ownerStyle = getPlayerStyle(control.owner);
+    const ownerStyle = getPlayerStyle(owner);
+    const rgb = hexToRgb(ownerStyle.hex);
+    const progress = Math.max(0, Math.min(1, stat.bestCount / POWDER_WIN_CELL_GRAINS));
+    const fillAlpha = stat.controlled ? 0.20 : 0.045 + (progress * 0.075);
+    const strokeAlpha = stat.controlled ? 0.68 : 0.16 + (progress * 0.22);
     drawBoardShape(
       screen.x,
       screen.y,
-      size * 0.84,
-      ownerStyle.softFill,
-      ownerStyle.echoStroke,
+      size * (stat.controlled ? 0.86 : 0.74),
+      rgbaFromRgb(rgb, fillAlpha),
+      rgbaFromRgb(rgb, strokeAlpha),
+      stat.controlled ? 1.8 : 1.15,
+      hex
+    );
+  }
+}
+
+function drawPowderSources() {
+  const powder = ensurePowderState(game.state);
+  if (!powder) {
+    return;
+  }
+  const size = currentHexSize();
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  for (const [key, source] of Object.entries(powder.sources || {})) {
+    const hex = parseKey(key);
+    const world = boardCellToPixel(hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2) {
+      continue;
+    }
+    const ownerStyle = getPlayerStyle(source.owner);
+    const rgb = hexToRgb(ownerStyle.hex);
+    drawBoardShape(
+      screen.x,
+      screen.y,
+      size * 0.58,
+      rgbaFromRgb(rgb, 0.13),
+      rgbaFromRgb(rgb, 0.62),
       1.5,
       hex
     );
+
+    ctx.save();
+    ctx.strokeStyle = rgbaFromRgb(rgb, 0.76);
+    ctx.fillStyle = rgbaFromRgb(rgb, 0.88);
+    ctx.lineWidth = Math.max(1.2, size * 0.035);
+    ctx.beginPath();
+    ctx.moveTo(screen.x, screen.y - size * 0.26);
+    ctx.lineTo(screen.x, screen.y + size * 0.18);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y - size * 0.28, Math.max(2.2, size * 0.075), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -11320,10 +11610,15 @@ function drawPowderGrains() {
     return;
   }
   const powder = ensurePowderState(game.state);
-  if (!powder || powder.grains.length === 0) {
+  if (!powder) {
     return;
   }
   drawPowderClaimedCells();
+  drawPowderSources();
+
+  if (powder.grains.length === 0) {
+    return;
+  }
 
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -11762,8 +12057,72 @@ function drawStraightWinnerLineCells(cells, size) {
   ctx.stroke();
 }
 
+function drawPowderWinnerLine(size) {
+  if (!usesPowderMode(game.state) || !game.state.winner) {
+    return false;
+  }
+  const powderState = getPowderVirtualBoardState(game.state);
+  const owner = game.state.winner;
+  const ownedKeys = Object.entries(powderState.cells)
+    .filter(([, cell]) => cell.owner === owner)
+    .map(([key]) => key);
+  if (ownedKeys.length === 0) {
+    return false;
+  }
+
+  if (usesTriangleGridMode(powderState)) {
+    const cells = findTriangleWinningLine(powderState, owner);
+    if (cells.length >= getWinLength(powderState)) {
+      drawStraightWinnerLineCells(cells, size);
+      return true;
+    }
+    return false;
+  }
+
+  if (usesRadialGridMode(powderState)) {
+    for (const key of ownedKeys) {
+      const line = getRadialWinningLine(powderState, parseKey(key), owner);
+      if (line) {
+        drawRadialWinnerLine(line, size);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const winLength = getWinLength(powderState);
+  for (const key of ownedKeys) {
+    const start = parseKey(key);
+    for (const dir of getLineAxesForMode(powderState)) {
+      if (getLineCount(powderState, start, owner, dir) < winLength) {
+        continue;
+      }
+
+      let minStep = 0;
+      let maxStep = 0;
+      while (countsForOwnerAt(powderState, { q: start.q + dir.q * (minStep - 1), r: start.r + dir.r * (minStep - 1) }, owner)) {
+        minStep -= 1;
+      }
+      while (countsForOwnerAt(powderState, { q: start.q + dir.q * (maxStep + 1), r: start.r + dir.r * (maxStep + 1) }, owner)) {
+        maxStep += 1;
+      }
+
+      drawStraightWinnerLineCells([
+        { q: start.q + dir.q * minStep, r: start.r + dir.r * minStep },
+        { q: start.q + dir.q * maxStep, r: start.r + dir.r * maxStep }
+      ], size);
+      return true;
+    }
+  }
+  return false;
+}
+
 function drawWinnerLineHint() {
   if (usesBedSiegeMode(game.state) || usesFactoryMode(game.state)) {
+    return;
+  }
+  const size = currentHexSize();
+  if (drawPowderWinnerLine(size)) {
     return;
   }
   if (!game.state.lastPlacement) {
@@ -11771,7 +12130,6 @@ function drawWinnerLineHint() {
       return;
     }
   }
-  const size = currentHexSize();
   const winLength = getWinLength(game.state);
   const last = game.state.lastPlacement;
   const lastCell = last ? getCellAt(game.state, last) : null;
