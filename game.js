@@ -890,6 +890,7 @@ const triangleLineKinds = [
 const BIRD_KINDS = ["duck", "kingDuck"];
 const BIRD_ACTION_MOVE = "moveBird";
 const GRID_MODE_KEYS = ["triangleGrid", "squareGrid", "octagonGrid", "radialGrid"];
+const HIDDEN_MODE_KEYS = new Set(["powderCascade"]);
 const LDM_DEVICE_PIXEL_RATIO_CAP = 1.5;
 const EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP = 1;
 const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
@@ -12325,6 +12326,9 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
 
 function fillModePicker() {
   for (const [key, mode] of Object.entries(MODES)) {
+    if (HIDDEN_MODE_KEYS.has(key)) {
+      continue;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = "modeToggle";

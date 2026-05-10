@@ -1048,6 +1048,7 @@ function main() {
   assert.ok(modeKeys.includes("chaosVote"), "chaos vote mode should exist");
   assert.ok(context.HexTicTacToeInternals.getChaosRuleDefinitions().length >= 50, "chaos vote should load at least 50 rules");
   assert.equal(modeKeys.includes("greek"), false, "greek mode should not exist");
+  assert.equal(modeKeys.includes("powderCascade"), false, "powder cascade mode should be hidden");
 
   // Legacy compatibility: old "greek" selection maps to "egyptian".
   context.window.newGame(["greek"], { enabled: false, initialMinutes: 5, incrementSeconds: 0 }, "p1First");
