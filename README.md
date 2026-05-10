@@ -75,8 +75,6 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.
-- **Bed Siege**: a Bedwars-style secret mode with starting islands, beds, generators, shop resources, defensive blocks, tools, bridge eggs, pearls, and bed-break win conditions.
-- **Foundry War**: a secret factory duel where each base has two farther Ore nodes, one center Flux node is contested, conveyors deliver capped node income home for points, and points buy blocks, cannons, blast charges, repairs, and attacks until only one core remains.
 
 ## Project Structure
 
