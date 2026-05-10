@@ -164,7 +164,11 @@ function createFakeContext2d() {
     fill: noop,
     stroke: noop,
     arc: noop,
+    ellipse: noop,
     fillText: noop,
+    strokeText: noop,
+    fillRect: noop,
+    strokeRect: noop,
     save: noop,
     restore: noop,
     setLineDash: noop
@@ -238,6 +242,17 @@ function makeSandbox() {
     "placementsPerTurnInput",
     "winLengthInput",
     "secretRuleSummaryText",
+    "tideKitchenControls",
+    "tideKitchenSummaryText",
+    "tideKitchenActiveText",
+    "tideKitchenCatchText",
+    "tideKitchenCastBtn",
+    "tideKitchenStrikeBtn",
+    "tideKitchenCookBtn",
+    "tideKitchenSellBtn",
+    "tideKitchenRodBtn",
+    "tideKitchenBoatBtn",
+    "tideKitchenEndBtn",
     "chaosControls",
     "chaosVoteText",
     "chaosVoteOptions",
@@ -572,6 +587,17 @@ function runScenario(sandbox, modeKeys, reverse = false) {
     const beforeIllegal = stateFingerprint(state);
     sandbox.clickPlacement({ q: 99, r: -99 });
     assert.equal(stateFingerprint(state), beforeIllegal, "illegal far placement should not mutate state");
+
+    if (sandbox.usesTideKitchenMode(state)) {
+      if (!state.tideKitchen.challenge) {
+        sandbox.startTideKitchenCastForCurrentPlayer("sprat");
+      } else {
+        state.tideKitchen.challenge.targetStart = 0;
+        state.tideKitchen.challenge.targetEnd = 1;
+        sandbox.resolveTideKitchenStrike("center");
+      }
+      continue;
+    }
 
     const legalHex = pickLegalPlacement(sandbox, state, candidateHexes);
     assert.ok(legalHex, "expected at least one legal placement");
@@ -1062,6 +1088,12 @@ function performSingleHistoryAction(context, modeKey) {
     return `bed siege build at ${keyOf(target)}`;
   }
 
+  if (context.usesTideKitchenMode(state)) {
+    assert.equal(typeof context.startTideKitchenCastForCurrentPlayer, "function", "expected tide kitchen cast helper");
+    context.startTideKitchenCastForCurrentPlayer("sprat");
+    return "godfish galley cast";
+  }
+
   const candidateHexes = state.modeKeys.includes("radialGrid")
     ? buildRadialCandidateHexes(44)
     : buildCandidateHexes(14);
@@ -1206,6 +1238,51 @@ function runBedSiegeGeneratorIncomeChecks(context) {
   }
 }
 
+function runTideKitchenChecks(context) {
+  assert.equal(typeof context.startTideKitchenCastForCurrentPlayer, "function", "expected tide kitchen cast helper");
+  assert.equal(typeof context.resolveTideKitchenStrike, "function", "expected tide kitchen rod-control helper");
+  assert.equal(typeof context.cookTideKitchenMealForCurrentPlayer, "function", "expected tide kitchen cook helper");
+  assert.equal(typeof context.sellTideKitchenMealForCurrentPlayer, "function", "expected tide kitchen sell helper");
+  assert.equal(typeof context.buyTideKitchenUpgrade, "function", "expected tide kitchen upgrade helper");
+  assert.equal(typeof context.getTideKitchenWinner, "function", "expected tide kitchen winner helper");
+  assert.equal(typeof context.checkForWinner, "function", "expected winner helper");
+
+  context.window.newGame(["tideKitchen"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  const state = context.HexTicTacToeInternals.game.state;
+  assert.ok(state.modeKeys.includes("tideKitchen"), "tide kitchen mode should be active");
+  assert.ok(state.tideKitchen, "tide kitchen state should be initialised");
+
+  context.startTideKitchenCastForCurrentPlayer("sprat");
+  assert.equal(state.tideKitchen.challenge.phase, "casting", "cast should start with rod power control");
+  context.resolveTideKitchenStrike("center");
+  assert.equal(state.tideKitchen.challenge.fishKey, "sprat", "rod control should put the forced fish on the line");
+  state.tideKitchen.challenge.targetStart = 0;
+  state.tideKitchen.challenge.targetEnd = 1;
+  context.resolveTideKitchenStrike("center");
+  assert.equal(state.tideKitchen.rawFish[1].sprat, 1, "successful timing catch should add raw fish");
+
+  state.turnPlayer = 1;
+  state.movesLeftInTurn = 3;
+  context.cookTideKitchenMealForCurrentPlayer();
+  assert.equal(state.tideKitchen.meals[1].length, 1, "cooking should convert raw fish into a meal");
+  const coinsBeforeSale = state.tideKitchen.coins[1];
+  state.turnPlayer = 1;
+  state.movesLeftInTurn = 3;
+  context.sellTideKitchenMealForCurrentPlayer();
+  assert.ok(state.tideKitchen.coins[1] > coinsBeforeSale, "serving a meal should pay coins");
+
+  state.tideKitchen.coins[1] = 999;
+  context.buyTideKitchenUpgrade("rod");
+  context.buyTideKitchenUpgrade("boat");
+  assert.equal(state.tideKitchen.rodLevel[1], 2, "rod upgrade should increase rod level");
+  assert.equal(state.tideKitchen.boatLevel[1], 2, "boat upgrade should increase boat level");
+
+  state.tideKitchen.godfishCaughtBy = 1;
+  assert.equal(context.getTideKitchenWinner(state), 1, "reaching the reputation target should win Tide Kitchen");
+  context.checkForWinner(state);
+  assert.equal(state.winner, 1, "winner check should apply the Tide Kitchen win");
+}
+
 function runChaosVoteChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -1262,6 +1339,7 @@ function main() {
   runChaosVoteChecks(context);
   runBedSiegeBedBreakChecks(context);
   runBedSiegeGeneratorIncomeChecks(context);
+  runTideKitchenChecks(context);
 
   if (process.argv.includes("--history-only")) {
     runHistoryReadOnlyChecks(context);
