@@ -35,6 +35,8 @@ const ui = {
   riftBloomControls: document.getElementById("riftBloomControls"),
   riftBloomCoverageInput: document.getElementById("riftBloomCoverageInput"),
   riftBloomCoverageSummaryText: document.getElementById("riftBloomCoverageSummaryText"),
+  riftBloomContestInput: document.getElementById("riftBloomContestInput"),
+  riftBloomContestSummaryText: document.getElementById("riftBloomContestSummaryText"),
   armoryControls: document.getElementById("armoryControls"),
   armoryClassP1Select: document.getElementById("armoryClassP1Select"),
   armoryClassP2Select: document.getElementById("armoryClassP2Select"),
@@ -142,6 +144,7 @@ const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const RIFT_BLOOM_GHOST_TURNS = 3;
+const RIFT_BLOOM_CONTEST_TURNS = 5;
 const RIFT_BLOOM_ANCHOR_FRIENDS = 2;
 const RIFT_BLOOM_CELL_MODULUS = 5;
 const MIN_RIFT_BLOOM_CELL_MODULUS = 1;
@@ -2634,6 +2637,7 @@ const game = {
   placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
   winLength: DEFAULT_WIN_LENGTH,
   riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
+  riftBloomContestClaim: false,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
   turnOrder: "random",
   clockRuntime: {
@@ -2739,6 +2743,7 @@ function refreshRiftBloomControls(modeKeys) {
   }
   ui.riftBloomControls.hidden = !normaliseModeKeys(modeKeys).includes("riftBloom");
   refreshRiftBloomCoverageSummaryFromInputs();
+  refreshRiftBloomContestSummaryFromInputs();
 }
 
 function refreshArmoryControls(modeKeys) {
@@ -2846,6 +2851,10 @@ function getModeConfig(modeKeys) {
     const riftStep = getRiftBloomCellModulusFromInputs();
     config.summary += ` Rift coverage: 1 in ${riftStep} cells (${formatRiftBloomCoveragePercent(riftStep)}).`;
     config.hint += ` | Rift coverage: 1 in ${riftStep} cells.`;
+    if (getRiftBloomContestClaimFromInputs()) {
+      config.summary += ` Majority claim: ghosts resolve after ${RIFT_BLOOM_CONTEST_TURNS} turns to the adjacent player with the most real stones.`;
+      config.hint += ` | Majority claim after ${RIFT_BLOOM_CONTEST_TURNS} turns.`;
+    }
   }
   return config;
 }
@@ -3910,7 +3919,8 @@ function makeInitialState(
   timerConfig = game.timerConfig,
   egyptianStoneCap = game.egyptianStoneCap,
   secretRuleSettings = {},
-  riftBloomCellModulus = game.riftBloomCellModulus
+  riftBloomCellModulus = game.riftBloomCellModulus,
+  riftBloomContestClaim = game.riftBloomContestClaim
 ) {
   const activeModeKeys = normaliseModeKeys(modeKeys);
   const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
@@ -3922,6 +3932,7 @@ function makeInitialState(
     placementsPerTurn: appliedGameRules.placementsPerTurn,
     winLength: appliedGameRules.winLength,
     riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
+    riftBloomContestClaim: Boolean(riftBloomContestClaim),
     cells: {},
     turnPlayer: 1,
     movesLeftInTurn: 1,
@@ -3987,7 +3998,10 @@ function makeInitialState(
     state.log[0] = `Everything Bagel started: read the docket, dodge the paperwork, and connect ${getWinLength(state)} if the filings allow it.`;
   }
   if (usesRiftBloomMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state)) {
-    state.log[0] = `Rift Bloom started: 1 in ${getRiftBloomCellModulus(state)} cells shimmer. Place on them to grow mirrored ghosts, then anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before they fade.`;
+    const riftRule = usesRiftBloomContestClaim(state)
+      ? `ghosts resolve after ${RIFT_BLOOM_CONTEST_TURNS} turns to the adjacent majority`
+      : `anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before they fade`;
+    state.log[0] = `Rift Bloom started: 1 in ${getRiftBloomCellModulus(state)} cells shimmer. Place on them to grow mirrored ghosts; ${riftRule}.`;
   }
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
@@ -4211,6 +4225,10 @@ function getRiftBloomCellModulusFromInputs() {
     : normaliseRiftBloomCellModulus(game.riftBloomCellModulus);
 }
 
+function getRiftBloomContestClaimFromInputs() {
+  return ui.riftBloomContestInput ? Boolean(ui.riftBloomContestInput.checked) : Boolean(game.riftBloomContestClaim);
+}
+
 function setRiftBloomCoverageInput(value) {
   const cellModulus = normaliseRiftBloomCellModulus(value);
   if (ui.riftBloomCoverageInput) {
@@ -4226,6 +4244,25 @@ function refreshRiftBloomCoverageSummaryFromInputs() {
     return;
   }
   setRiftBloomCoverageInput(getRiftBloomCellModulusFromInputs());
+}
+
+function setRiftBloomContestInput(value) {
+  const enabled = Boolean(value);
+  if (ui.riftBloomContestInput) {
+    ui.riftBloomContestInput.checked = enabled;
+  }
+  if (ui.riftBloomContestSummaryText) {
+    ui.riftBloomContestSummaryText.textContent = enabled
+      ? `Ghosts last ${RIFT_BLOOM_CONTEST_TURNS} turns; adjacent majority claims them.`
+      : `Ghosts anchor beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones.`;
+  }
+}
+
+function refreshRiftBloomContestSummaryFromInputs() {
+  if (!ui.riftBloomContestSummaryText) {
+    return;
+  }
+  setRiftBloomContestInput(getRiftBloomContestClaimFromInputs());
 }
 
 function setSecretRuleInputs(settings = {}) {
@@ -4258,6 +4295,14 @@ function getGameRuleSettings(settings = {}) {
 
 function getRiftBloomCellModulus(state) {
   return normaliseRiftBloomCellModulus(state?.riftBloomCellModulus ?? game.riftBloomCellModulus);
+}
+
+function usesRiftBloomContestClaim(state) {
+  return Boolean(state?.riftBloomContestClaim ?? game.riftBloomContestClaim);
+}
+
+function getRiftBloomGhostTurns(state) {
+  return usesRiftBloomContestClaim(state) ? RIFT_BLOOM_CONTEST_TURNS : RIFT_BLOOM_GHOST_TURNS;
 }
 
 function getPlacementsPerTurn(state) {
@@ -4490,6 +4535,9 @@ function updateOnlineControls() {
   }
   if (ui.riftBloomCoverageInput) {
     ui.riftBloomCoverageInput.disabled = inRoom && !admin;
+  }
+  if (ui.riftBloomContestInput) {
+    ui.riftBloomContestInput.disabled = inRoom && !admin;
   }
   for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
     const select = getArmoryClassSelectForPlayer(player);
@@ -5384,6 +5432,37 @@ function countRiftBloomAnchorFriends(state, hex, owner) {
   }).length;
 }
 
+function getRiftBloomAdjacentOwnerCounts(state, hex) {
+  const counts = createPlayerMap(getPlayerCount(state), () => 0);
+  for (const candidate of getAdjacentsForMode(state, hex)) {
+    const cell = getCellAt(state, candidate);
+    if (!cell || cell.kind !== "stone" || isRiftBloomGhostCell(cell)) {
+      continue;
+    }
+    const owner = normalisePlayerNumber(cell.owner, state);
+    counts[owner] += 1;
+  }
+  return counts;
+}
+
+function getRiftBloomMajorityOwner(state, hex) {
+  const counts = getRiftBloomAdjacentOwnerCounts(state, hex);
+  let bestOwner = 0;
+  let bestCount = 0;
+  let tied = false;
+  for (const owner of getPlayerNumbers(state)) {
+    const count = counts[owner] || 0;
+    if (count > bestCount) {
+      bestOwner = owner;
+      bestCount = count;
+      tied = false;
+    } else if (count === bestCount && count > 0) {
+      tied = true;
+    }
+  }
+  return bestCount > 0 && !tied ? bestOwner : 0;
+}
+
 function addRiftBloomGhost(state, hex, owner) {
   const safeOwner = normalisePlayerNumber(owner, state);
   clearPowderAt(state, hex);
@@ -5393,7 +5472,7 @@ function addRiftBloomGhost(state, hex, owner) {
     kind: "riftGhost",
     serial: state.moveSerial,
     riftBloomGhost: true,
-    riftTTL: RIFT_BLOOM_GHOST_TURNS
+    riftTTL: getRiftBloomGhostTurns(state)
   };
 }
 
@@ -5409,7 +5488,7 @@ function applyRiftBloomPlacementEffects(state, placedHex, owner) {
 
   const targetCell = getCellAt(state, target);
   if (isRiftBloomGhostCell(targetCell) && targetCell.owner === normalisePlayerNumber(owner, state)) {
-    targetCell.riftTTL = RIFT_BLOOM_GHOST_TURNS;
+    targetCell.riftTTL = getRiftBloomGhostTurns(state);
     targetCell.serial = ++state.moveSerial;
     return [`Rift Bloom refreshed the mirrored ghost at (${target.q}, ${target.r}).`];
   }
@@ -5419,23 +5498,28 @@ function applyRiftBloomPlacementEffects(state, placedHex, owner) {
   }
 
   addRiftBloomGhost(state, target, owner);
-  return [`Rift Bloom sprouted a mirrored ghost at (${target.q}, ${target.r}). Anchor it beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before it fades.`];
+  const ruleText = usesRiftBloomContestClaim(state)
+    ? `It resolves after ${RIFT_BLOOM_CONTEST_TURNS} turns to the adjacent majority.`
+    : `Anchor it beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before it fades.`;
+  return [`Rift Bloom sprouted a mirrored ghost at (${target.q}, ${target.r}). ${ruleText}`];
 }
 
 function resolveRiftBloom(state) {
   if (!usesRiftBloomMode(state)) {
-    return { anchored: 0, faded: 0, unstable: 0 };
+    return { anchored: 0, claimed: 0, faded: 0, unstable: 0 };
   }
 
   const entries = getRiftBloomGhostEntries(state);
   if (entries.length === 0) {
-    return { anchored: 0, faded: 0, unstable: 0 };
+    return { anchored: 0, claimed: 0, faded: 0, unstable: 0 };
   }
 
   let anchored = 0;
+  let claimed = 0;
   let faded = 0;
   let unstable = 0;
   const anchoredOwners = new Set();
+  const contestClaim = usesRiftBloomContestClaim(state);
 
   for (const entry of entries) {
     const cell = state.cells[entry.key];
@@ -5443,7 +5527,7 @@ function resolveRiftBloom(state) {
       continue;
     }
 
-    if (countRiftBloomAnchorFriends(state, entry.hex, cell.owner) >= RIFT_BLOOM_ANCHOR_FRIENDS) {
+    if (!contestClaim && countRiftBloomAnchorFriends(state, entry.hex, cell.owner) >= RIFT_BLOOM_ANCHOR_FRIENDS) {
       cell.kind = "stone";
       delete cell.riftBloomGhost;
       delete cell.riftTTL;
@@ -5453,10 +5537,21 @@ function resolveRiftBloom(state) {
       continue;
     }
 
-    const nextTtl = Math.max(0, Math.trunc(Number(cell.riftTTL) || RIFT_BLOOM_GHOST_TURNS) - 1);
+    const nextTtl = Math.max(0, Math.trunc(Number(cell.riftTTL) || getRiftBloomGhostTurns(state)) - 1);
     if (nextTtl <= 0) {
-      delete state.cells[entry.key];
-      faded += 1;
+      const claimOwner = contestClaim ? getRiftBloomMajorityOwner(state, entry.hex) : 0;
+      if (claimOwner) {
+        cell.owner = claimOwner;
+        cell.kind = "stone";
+        delete cell.riftBloomGhost;
+        delete cell.riftTTL;
+        cell.serial = ++state.moveSerial;
+        claimed += 1;
+        anchoredOwners.add(claimOwner);
+      } else {
+        delete state.cells[entry.key];
+        faded += 1;
+      }
     } else {
       cell.riftTTL = nextTtl;
       unstable += 1;
@@ -5467,10 +5562,13 @@ function resolveRiftBloom(state) {
     enforceStoneCapAfterPlacement(state, owner, { interactiveEgyptian: false });
   }
 
-  if (anchored || faded) {
+  if (anchored || claimed || faded) {
     const parts = [];
     if (anchored) {
       parts.push(`${anchored} anchored`);
+    }
+    if (claimed) {
+      parts.push(`${claimed} claimed`);
     }
     if (faded) {
       parts.push(`${faded} faded`);
@@ -5483,7 +5581,7 @@ function resolveRiftBloom(state) {
     pushLog(line);
   }
 
-  return { anchored, faded, unstable };
+  return { anchored, claimed, faded, unstable };
 }
 
 function getEgyptianStoneCap(state) {
@@ -10283,7 +10381,8 @@ function updateStatus() {
     const ghostCount = getRiftBloomGhostEntries(state).length;
     const activeLabel = isRiftBloomActiveCell(state, game.hoverHex) ? "live hover" : "rift cells live";
     const coverageStep = getRiftBloomCellModulus(state);
-    ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | 1/${coverageStep} ${activeLabel}`;
+    const claimLabel = usesRiftBloomContestClaim(state) ? "majority claim" : "anchor";
+    ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | 1/${coverageStep} ${activeLabel} | ${claimLabel}`;
   }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
@@ -12702,10 +12801,12 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.placementsPerTurn = getPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
+  game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
   setTimerInputs(game.timerConfig);
   setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
   setRiftBloomCoverageInput(game.riftBloomCellModulus);
+  setRiftBloomContestInput(game.riftBloomContestClaim);
   setSecretRuleInputs({
     placementsPerTurn: game.placementsPerTurn,
     winLength: game.winLength
@@ -12713,7 +12814,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
     placementsPerTurn: game.placementsPerTurn,
     winLength: game.winLength
-  }, game.riftBloomCellModulus);
+  }, game.riftBloomCellModulus, game.riftBloomContestClaim);
   game.factoryAnimationDisabled = false;
   game.factoryAnimationFramePending = false;
   game.lastFactoryAnimationAt = 0;
@@ -13088,6 +13189,11 @@ ui.riftBloomCoverageInput?.addEventListener("input", () => {
   setModeUI(getSelectedModeKeys());
   render();
 });
+ui.riftBloomContestInput?.addEventListener("change", () => {
+  game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
+  refreshRiftBloomContestSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
 ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
@@ -13140,6 +13246,7 @@ fillModePicker();
 setTimerInputs(game.timerConfig);
 setEgyptianCapInput(game.egyptianStoneCap);
 setRiftBloomCoverageInput(game.riftBloomCellModulus);
+setRiftBloomContestInput(game.riftBloomContestClaim);
 setSecretRuleInputs({
   placementsPerTurn: game.placementsPerTurn,
   winLength: game.winLength
