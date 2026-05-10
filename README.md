@@ -75,6 +75,7 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 - **Echo**: mirrors placements/bird moves after two full turns.
 - **Orbit**: stones move one orbit step per full turn (birds stay put).
 - **Meteor**: every 3 full turns, farthest occupied spaces are removed.
+- **Rift Bloom**: secret mode; shimmering rift cells move each turn. Placing on one grows a mirrored ghost that blocks space, then anchors into a real stone only if it has 2 adjacent friendly stones before it fades.
 
 ## Project Structure
 

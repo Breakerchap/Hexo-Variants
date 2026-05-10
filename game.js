@@ -138,6 +138,9 @@ const DEFAULT_EGYPTIAN_STONE_CAP = 12;
 const MIN_EGYPTIAN_STONE_CAP = 6;
 const MAX_EGYPTIAN_STONE_CAP = 999;
 const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
+const RIFT_BLOOM_GHOST_TURNS = 3;
+const RIFT_BLOOM_ANCHOR_FRIENDS = 2;
+const RIFT_BLOOM_CELL_MODULUS = 5;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
@@ -839,6 +842,12 @@ const MODES = {
     name: "Everything Bagel",
     summary: "Secret rules casserole: red tape blocks spaces, portals teleport stones, schmear slides them, sesame spreads receipts, poppy stamps flip rivals, deli queues advance, and paperwork mutates the board.",
     hint: "Still line wins, technically. Watch the docket: red tape blocks, portals link, schmear slides, sesame sprouts receipt stones, poppy stamps flip adjacent rivals, and end-turn filings move the queue.",
+    secret: true
+  },
+  riftBloom: {
+    name: "Rift Bloom",
+    summary: "Secret mirror-threat mode: shimmering rift cells move each turn. Place on one to sprout a mirrored ghost that blocks space, then anchor it beside 2 friendly stones before it fades into nothing.",
+    hint: "Shimmering rift cells are live this turn. A move on one creates a mirrored ghost; ghosts do not count for line wins until 2 adjacent friendly stones anchor them at turn end.",
     secret: true
   },
   powderCascade: {
@@ -2687,6 +2696,9 @@ function normaliseModeKeys(modeKeys) {
       }
     }
   }
+  if (requested.has("bedSiege")) {
+    requested.delete("riftBloom");
+  }
   const ordered = [];
   for (const key of Object.keys(MODES)) {
     if (requested.has(key)) {
@@ -3021,6 +3033,10 @@ function usesPowderMode(state) {
 
 function usesChaosVoteMode(state) {
   return Boolean(state && hasMode(state, "chaosVote"));
+}
+
+function usesRiftBloomMode(state) {
+  return Boolean(state && hasMode(state, "riftBloom"));
 }
 
 function normalisePerformanceModeLevel(level) {
@@ -3778,6 +3794,16 @@ function canDrawPlacementHints(state = game.state, size = currentHexSize()) {
   );
 }
 
+function applyRiftBloomGridStyle(state, hex, fill, stroke, muted = false) {
+  if (!isRiftBloomActiveCell(state, hex)) {
+    return { fill, stroke };
+  }
+  return {
+    fill: muted ? "rgba(82, 238, 218, 0.035)" : "rgba(82, 238, 218, 0.095)",
+    stroke: muted ? "rgba(82, 238, 218, 0.18)" : "rgba(255, 215, 94, 0.42)"
+  };
+}
+
 function canDrawDetailText(size) {
   return getPerformanceModeLevel() < 2 || size >= 22;
 }
@@ -3932,6 +3958,9 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
   }
   if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     state.log[0] = `Everything Bagel started: read the docket, dodge the paperwork, and connect ${getWinLength(state)} if the filings allow it.`;
+  }
+  if (usesRiftBloomMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state)) {
+    state.log[0] = `Rift Bloom started: place on shimmering cells to grow mirrored ghosts, then anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before they fade.`;
   }
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
@@ -5202,6 +5231,175 @@ function isLegalPlacement(state, hex) {
     return false;
   }
   return true;
+}
+
+function isRiftBloomGhostCell(cell) {
+  return Boolean(cell && (cell.kind === "riftGhost" || cell.riftBloomGhost));
+}
+
+function getRiftBloomPhase(state) {
+  const gridBias = usesTriangleGridMode(state)
+    ? 1
+    : (usesSquareGridMode(state)
+      ? 2
+      : (usesOctagonGridMode(state) ? 3 : (usesRadialGridMode(state) ? 4 : 0)));
+  return Math.trunc(Number(state?.turnCount) || 0) + gridBias;
+}
+
+function isRiftBloomActiveCell(state, hex) {
+  if (!usesRiftBloomMode(state) || !hex || !isCellSupportedForMode(state, hex)) {
+    return false;
+  }
+  const q = Math.trunc(Number(hex.q) || 0);
+  const r = Math.trunc(Number(hex.r) || 0);
+  if (q === 0 && r === 0) {
+    return false;
+  }
+  return positiveMod(q + (2 * r) + getRiftBloomPhase(state), RIFT_BLOOM_CELL_MODULUS) === 0;
+}
+
+function getRiftBloomMirrorTarget(state, hex) {
+  if (!hex) {
+    return null;
+  }
+  const target = getMirrorCellForMode(state, hex);
+  if (!target || equalHex(target, hex) || !isCellSupportedForMode(state, target)) {
+    return null;
+  }
+  return target;
+}
+
+function isRiftBloomGhostTargetOpen(state, hex) {
+  return Boolean(
+    hex
+      && isCellSupportedForMode(state, hex)
+      && !isOccupied(state, hex)
+      && !isHexBlockedBySpecials(state, hex)
+      && !isEverythingBagelRedTapeHex(state, hex)
+  );
+}
+
+function getRiftBloomGhostEntries(state) {
+  if (!state?.cells) {
+    return [];
+  }
+  return Object.entries(state.cells)
+    .filter(([, cell]) => isRiftBloomGhostCell(cell))
+    .map(([key, cell]) => ({
+      key,
+      hex: parseKey(key),
+      cell
+    }));
+}
+
+function countRiftBloomAnchorFriends(state, hex, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  return getAdjacentsForMode(state, hex).filter((candidate) => {
+    const cell = getCellAt(state, candidate);
+    return Boolean(cell && cell.kind === "stone" && !isRiftBloomGhostCell(cell) && cell.owner === safeOwner);
+  }).length;
+}
+
+function addRiftBloomGhost(state, hex, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  clearPowderAt(state, hex);
+  state.moveSerial += 1;
+  state.cells[keyOf(hex.q, hex.r)] = {
+    owner: safeOwner,
+    kind: "riftGhost",
+    serial: state.moveSerial,
+    riftBloomGhost: true,
+    riftTTL: RIFT_BLOOM_GHOST_TURNS
+  };
+}
+
+function applyRiftBloomPlacementEffects(state, placedHex, owner) {
+  if (!usesRiftBloomMode(state) || !placedHex || !isRiftBloomActiveCell(state, placedHex)) {
+    return [];
+  }
+
+  const target = getRiftBloomMirrorTarget(state, placedHex);
+  if (!target) {
+    return ["Rift Bloom folded back into itself."];
+  }
+
+  const targetCell = getCellAt(state, target);
+  if (isRiftBloomGhostCell(targetCell) && targetCell.owner === normalisePlayerNumber(owner, state)) {
+    targetCell.riftTTL = RIFT_BLOOM_GHOST_TURNS;
+    targetCell.serial = ++state.moveSerial;
+    return [`Rift Bloom refreshed the mirrored ghost at (${target.q}, ${target.r}).`];
+  }
+
+  if (!isRiftBloomGhostTargetOpen(state, target)) {
+    return [`Rift Bloom sparked, but the mirror at (${target.q}, ${target.r}) was blocked.`];
+  }
+
+  addRiftBloomGhost(state, target, owner);
+  return [`Rift Bloom sprouted a mirrored ghost at (${target.q}, ${target.r}). Anchor it beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before it fades.`];
+}
+
+function resolveRiftBloom(state) {
+  if (!usesRiftBloomMode(state)) {
+    return { anchored: 0, faded: 0, unstable: 0 };
+  }
+
+  const entries = getRiftBloomGhostEntries(state);
+  if (entries.length === 0) {
+    return { anchored: 0, faded: 0, unstable: 0 };
+  }
+
+  let anchored = 0;
+  let faded = 0;
+  let unstable = 0;
+  const anchoredOwners = new Set();
+
+  for (const entry of entries) {
+    const cell = state.cells[entry.key];
+    if (!isRiftBloomGhostCell(cell)) {
+      continue;
+    }
+
+    if (countRiftBloomAnchorFriends(state, entry.hex, cell.owner) >= RIFT_BLOOM_ANCHOR_FRIENDS) {
+      cell.kind = "stone";
+      delete cell.riftBloomGhost;
+      delete cell.riftTTL;
+      cell.serial = ++state.moveSerial;
+      anchored += 1;
+      anchoredOwners.add(normalisePlayerNumber(cell.owner, state));
+      continue;
+    }
+
+    const nextTtl = Math.max(0, Math.trunc(Number(cell.riftTTL) || RIFT_BLOOM_GHOST_TURNS) - 1);
+    if (nextTtl <= 0) {
+      delete state.cells[entry.key];
+      faded += 1;
+    } else {
+      cell.riftTTL = nextTtl;
+      unstable += 1;
+    }
+  }
+
+  for (const owner of anchoredOwners) {
+    enforceStoneCapAfterPlacement(state, owner, { interactiveEgyptian: false });
+  }
+
+  if (anchored || faded) {
+    const parts = [];
+    if (anchored) {
+      parts.push(`${anchored} anchored`);
+    }
+    if (faded) {
+      parts.push(`${faded} faded`);
+    }
+    if (unstable) {
+      parts.push(`${unstable} unstable`);
+    }
+    const line = `Rift Bloom resolved: ${parts.join(", ")}.`;
+    state.accountingEvents.push(line);
+    pushLog(line);
+  }
+
+  return { anchored, faded, unstable };
 }
 
 function getEgyptianStoneCap(state) {
@@ -7983,6 +8181,7 @@ function endTurn(state) {
   resolveBedSiegeTurnEnd(state, previousPlayer);
   resolveFactoryTurnEnd(state, previousPlayer);
   resolveChaosTurnEnd(state, previousPlayer);
+  resolveRiftBloom(state);
 
   if (checkForWinner(state)) {
     syncClockTickerFromState();
@@ -8049,6 +8248,7 @@ function placeTurnTile(state, hex, owner) {
   const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
   const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
   const chaosMessages = applyChaosAfterPlacementEffects(state, state.lastPlacement, owner);
+  const riftMessages = applyRiftBloomPlacementEffects(state, state.lastPlacement, owner);
 
   queueEcho(state, {
     kind: "stone",
@@ -8063,6 +8263,7 @@ function placeTurnTile(state, hex, owner) {
     ...bedSiegeMessages,
     ...bagelMessages,
     ...chaosMessages,
+    ...riftMessages,
     powderMessage
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
@@ -9994,6 +10195,11 @@ function updateStatus() {
     const movedText = powder.lastReport?.moved ? `, ${powder.lastReport.moved} steps` : "";
     ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${getPowderClaimSummary(state)} claimed, ${contested} contested${movedText}`;
   }
+  if (usesRiftBloomMode(state) && !state.winner) {
+    const ghostCount = getRiftBloomGhostEntries(state).length;
+    const activeLabel = isRiftBloomActiveCell(state, game.hoverHex) ? "live hover" : "rift cells live";
+    ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | ${activeLabel}`;
+  }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
@@ -10434,9 +10640,10 @@ function drawTriangleLatticeGrid(params) {
         stroke = "rgba(255, 179, 92, 0.56)";
       }
 
+      ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, fill, stroke, false));
+
       if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
-        fill = "rgba(255, 255, 255, 0.012)";
-        stroke = null;
+        ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, "rgba(255, 255, 255, 0.012)", null, true));
       }
 
       if (equalHex(hex, game.hoverHex)) {
@@ -10497,9 +10704,10 @@ function drawRadialLatticeGrid(params) {
         stroke = "rgba(255, 179, 92, 0.52)";
       }
 
+      ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, fill, stroke, false));
+
       if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
-        fill = "rgba(255, 255, 255, 0.012)";
-        stroke = null;
+        ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, "rgba(255, 255, 255, 0.012)", null, true));
       }
 
       if (equalHex(hex, game.hoverHex)) {
@@ -10689,8 +10897,10 @@ function drawGrid() {
         stroke = "rgba(255, 179, 92, 0.46)";
       }
 
+      ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, fill, stroke, false));
+
       if (showPlacementHints && !isLegalPlacement(game.state, hex)) {
-        stroke = null;
+        ({ fill, stroke } = applyRiftBloomGridStyle(game.state, hex, fill, null, true));
       }
 
       if (equalHex(hex, game.hoverHex)) {
@@ -11313,6 +11523,87 @@ function drawHoverEchoPreview() {
   }
 }
 
+function drawRiftBloomPreview() {
+  const state = game.state;
+  if (
+    usesExtremeLdmMode(state)
+    || !usesRiftBloomMode(state)
+    || !canActForCurrentTurn()
+    || isBrowsingHistory()
+    || state.winner
+    || state.duckPhase
+    || hasEgyptianRemovalPhase(state)
+    || hasChaosPendingVote(state)
+    || !isLegalPlacement(state, game.hoverHex)
+    || !isRiftBloomActiveCell(state, game.hoverHex)
+  ) {
+    return;
+  }
+
+  const target = getRiftBloomMirrorTarget(state, game.hoverHex);
+  if (!target) {
+    return;
+  }
+
+  const size = currentHexSize();
+  if (size < 8) {
+    return;
+  }
+
+  const fromWorld = boardCellToPixel(game.hoverHex, size, state);
+  const toWorld = boardCellToPixel(target, size, state);
+  const from = worldToScreen(fromWorld.x, fromWorld.y);
+  const to = worldToScreen(toWorld.x, toWorld.y);
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const fromVisible = isOnScreenWithMargin(from, size * 2, w, h);
+  const toVisible = isOnScreenWithMargin(to, size * 2, w, h);
+  if (!fromVisible && !toVisible) {
+    return;
+  }
+
+  const targetCell = getCellAt(state, target);
+  const canRefresh = isRiftBloomGhostCell(targetCell) && targetCell.owner === state.turnPlayer;
+  const targetOpen = canRefresh || isRiftBloomGhostTargetOpen(state, target);
+  const ownerStyle = getPlayerStyle(state.turnPlayer);
+
+  ctx.save();
+  ctx.setLineDash([Math.max(5, size * 0.24), Math.max(4, size * 0.18)]);
+  ctx.strokeStyle = targetOpen ? "rgba(82, 238, 218, 0.58)" : "rgba(255, 111, 97, 0.46)";
+  ctx.lineWidth = Math.max(1.2, size * 0.045);
+  ctx.lineCap = "round";
+  if (fromVisible || toVisible) {
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if (toVisible) {
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    drawBoardShape(
+      to.x,
+      to.y,
+      size * 0.72,
+      targetOpen ? ownerStyle.fill : "rgba(255, 74, 93, 0.08)",
+      targetOpen ? "rgba(82, 238, 218, 0.9)" : "rgba(255, 111, 97, 0.72)",
+      2,
+      target
+    );
+    ctx.restore();
+
+    if (canDrawDetailText(size)) {
+      ctx.fillStyle = targetOpen ? "rgba(218, 255, 249, 0.94)" : "rgba(255, 231, 238, 0.94)";
+      ctx.font = `${Math.max(9, Math.min(13, size * 0.38))}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(canRefresh ? "R" : (targetOpen ? "G" : "X"), to.x, to.y + 0.5);
+    }
+  }
+}
+
 function drawMeteorPreview() {
   if (!hasMode(game.state, "meteorAccounting")) {
     if (ui.meteorTimerBadge) {
@@ -11682,6 +11973,35 @@ function drawPieces() {
     }
 
     const ownerStyle = getPlayerStyle(cell.owner);
+    if (isRiftBloomGhostCell(cell)) {
+      drawBoardShape(
+        screen.x,
+        screen.y,
+        size * 0.76,
+        ownerStyle.fill,
+        "rgba(82, 238, 218, 0.86)",
+        Math.max(1.5, size * 0.055),
+        hex
+      );
+      drawBoardShape(
+        screen.x,
+        screen.y,
+        size * 0.48,
+        "rgba(255, 215, 94, 0.08)",
+        ownerStyle.strongStroke,
+        Math.max(1.1, size * 0.04),
+        hex
+      );
+      if (showDetailText) {
+        const ttl = Math.max(1, Math.trunc(Number(cell.riftTTL) || RIFT_BLOOM_GHOST_TURNS));
+        ctx.fillStyle = "rgba(236, 242, 255, 0.94)";
+        ctx.font = `${Math.max(8, Math.min(13, size * 0.4))}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(ttl), screen.x, screen.y + 0.5);
+      }
+      continue;
+    }
     const bedSiegeBlockType = usesBedSiegeMode(game.state) && isBedSiegeBlockCell(cell)
       ? getBedSiegeBlockType(cell)
       : null;
@@ -12252,6 +12572,7 @@ function renderNow() {
   drawPowderGrains();
   drawEchoTargets();
   drawHoverEchoPreview();
+  drawRiftBloomPreview();
   drawMeteorPreview();
   drawOrbitPreview();
   drawKingDuckRadius();
