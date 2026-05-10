@@ -32,6 +32,9 @@ const ui = {
   placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
   winLengthInput: document.getElementById("winLengthInput"),
   secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
+  riftBloomControls: document.getElementById("riftBloomControls"),
+  riftBloomCoverageInput: document.getElementById("riftBloomCoverageInput"),
+  riftBloomCoverageSummaryText: document.getElementById("riftBloomCoverageSummaryText"),
   armoryControls: document.getElementById("armoryControls"),
   armoryClassP1Select: document.getElementById("armoryClassP1Select"),
   armoryClassP2Select: document.getElementById("armoryClassP2Select"),
@@ -141,6 +144,8 @@ const MAX_EGYPTIAN_REMOVALS_PER_TURN = 1;
 const RIFT_BLOOM_GHOST_TURNS = 3;
 const RIFT_BLOOM_ANCHOR_FRIENDS = 2;
 const RIFT_BLOOM_CELL_MODULUS = 5;
+const MIN_RIFT_BLOOM_CELL_MODULUS = 1;
+const MAX_RIFT_BLOOM_CELL_MODULUS = 10;
 const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
@@ -2628,6 +2633,7 @@ const game = {
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
   winLength: DEFAULT_WIN_LENGTH,
+  riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
   timerConfig: normaliseTimerConfig(DEFAULT_TIMER_CONFIG),
   turnOrder: "random",
   clockRuntime: {
@@ -2727,6 +2733,14 @@ function refreshSecretRuleControls(modeKeys) {
   refreshSecretRuleSummaryFromInputs(modeKeys);
 }
 
+function refreshRiftBloomControls(modeKeys) {
+  if (!ui.riftBloomControls) {
+    return;
+  }
+  ui.riftBloomControls.hidden = !normaliseModeKeys(modeKeys).includes("riftBloom");
+  refreshRiftBloomCoverageSummaryFromInputs();
+}
+
 function refreshArmoryControls(modeKeys) {
   if (!ui.armoryControls) {
     return;
@@ -2790,6 +2804,7 @@ function refreshSecretModeVisibility() {
     ui.secretModesBtn.setAttribute("aria-pressed", game.secretModesUnlocked ? "true" : "false");
   }
   refreshSecretRuleControls(getSelectedModeKeys());
+  refreshRiftBloomControls(getSelectedModeKeys());
 }
 
 function setSecretModesUnlocked(unlocked) {
@@ -2826,6 +2841,11 @@ function getModeConfig(modeKeys) {
     const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
     config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
     config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
+  }
+  if (keys.includes("riftBloom")) {
+    const riftStep = getRiftBloomCellModulusFromInputs();
+    config.summary += ` Rift coverage: 1 in ${riftStep} cells (${formatRiftBloomCoveragePercent(riftStep)}).`;
+    config.hint += ` | Rift coverage: 1 in ${riftStep} cells.`;
   }
   return config;
 }
@@ -3885,7 +3905,13 @@ function setSelectedModeKeys(modeKeys) {
   refreshSecretModeVisibility();
 }
 
-function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianStoneCap = game.egyptianStoneCap, secretRuleSettings = {}) {
+function makeInitialState(
+  modeKeys,
+  timerConfig = game.timerConfig,
+  egyptianStoneCap = game.egyptianStoneCap,
+  secretRuleSettings = {},
+  riftBloomCellModulus = game.riftBloomCellModulus
+) {
   const activeModeKeys = normaliseModeKeys(modeKeys);
   const playerCount = getPlayerCountFromModeKeys(activeModeKeys);
   const appliedGameRules = getGameRuleSettings(secretRuleSettings);
@@ -3895,6 +3921,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     egyptianStoneCap: normaliseEgyptianStoneCap(egyptianStoneCap),
     placementsPerTurn: appliedGameRules.placementsPerTurn,
     winLength: appliedGameRules.winLength,
+    riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
     cells: {},
     turnPlayer: 1,
     movesLeftInTurn: 1,
@@ -3960,7 +3987,7 @@ function makeInitialState(modeKeys, timerConfig = game.timerConfig, egyptianSton
     state.log[0] = `Everything Bagel started: read the docket, dodge the paperwork, and connect ${getWinLength(state)} if the filings allow it.`;
   }
   if (usesRiftBloomMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state)) {
-    state.log[0] = `Rift Bloom started: place on shimmering cells to grow mirrored ghosts, then anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before they fade.`;
+    state.log[0] = `Rift Bloom started: 1 in ${getRiftBloomCellModulus(state)} cells shimmer. Place on them to grow mirrored ghosts, then anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones before they fade.`;
   }
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
@@ -3985,6 +4012,7 @@ function setModeUI(modeKeys) {
   refreshFactoryControls(modeKeys);
   refreshBagelControls(modeKeys);
   refreshChaosControls(modeKeys);
+  refreshRiftBloomControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
@@ -4143,12 +4171,61 @@ function normaliseWinLength(value) {
   return Math.max(MIN_WIN_LENGTH, Math.min(MAX_WIN_LENGTH, parsed));
 }
 
+function normaliseRiftBloomCellModulus(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return RIFT_BLOOM_CELL_MODULUS;
+  }
+  return Math.max(MIN_RIFT_BLOOM_CELL_MODULUS, Math.min(MAX_RIFT_BLOOM_CELL_MODULUS, parsed));
+}
+
+function formatRiftBloomCoveragePercent(cellModulus) {
+  const safeModulus = normaliseRiftBloomCellModulus(cellModulus);
+  return `${Math.round((1 / safeModulus) * 100)}%`;
+}
+
+function riftBloomSliderValueToCellModulus(value) {
+  const parsed = Math.trunc(Number(value));
+  const sliderValue = Number.isFinite(parsed)
+    ? Math.max(MIN_RIFT_BLOOM_CELL_MODULUS, Math.min(MAX_RIFT_BLOOM_CELL_MODULUS, parsed))
+    : (MIN_RIFT_BLOOM_CELL_MODULUS + MAX_RIFT_BLOOM_CELL_MODULUS - RIFT_BLOOM_CELL_MODULUS);
+  return normaliseRiftBloomCellModulus(MIN_RIFT_BLOOM_CELL_MODULUS + MAX_RIFT_BLOOM_CELL_MODULUS - sliderValue);
+}
+
+function riftBloomCellModulusToSliderValue(value) {
+  const cellModulus = normaliseRiftBloomCellModulus(value);
+  return MIN_RIFT_BLOOM_CELL_MODULUS + MAX_RIFT_BLOOM_CELL_MODULUS - cellModulus;
+}
+
 function getPlacementsPerTurnFromInputs() {
   return normalisePlacementsPerTurn(ui.placementsPerTurnInput?.value);
 }
 
 function getWinLengthFromInputs() {
   return normaliseWinLength(ui.winLengthInput?.value);
+}
+
+function getRiftBloomCellModulusFromInputs() {
+  return ui.riftBloomCoverageInput
+    ? riftBloomSliderValueToCellModulus(ui.riftBloomCoverageInput.value)
+    : normaliseRiftBloomCellModulus(game.riftBloomCellModulus);
+}
+
+function setRiftBloomCoverageInput(value) {
+  const cellModulus = normaliseRiftBloomCellModulus(value);
+  if (ui.riftBloomCoverageInput) {
+    ui.riftBloomCoverageInput.value = String(riftBloomCellModulusToSliderValue(cellModulus));
+  }
+  if (ui.riftBloomCoverageSummaryText) {
+    ui.riftBloomCoverageSummaryText.textContent = `Coverage: 1 in ${cellModulus} cells (${formatRiftBloomCoveragePercent(cellModulus)})`;
+  }
+}
+
+function refreshRiftBloomCoverageSummaryFromInputs() {
+  if (!ui.riftBloomCoverageSummaryText) {
+    return;
+  }
+  setRiftBloomCoverageInput(getRiftBloomCellModulusFromInputs());
 }
 
 function setSecretRuleInputs(settings = {}) {
@@ -4177,6 +4254,10 @@ function getGameRuleSettings(settings = {}) {
     placementsPerTurn: normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn),
     winLength: normaliseWinLength(settings.winLength ?? game.winLength)
   };
+}
+
+function getRiftBloomCellModulus(state) {
+  return normaliseRiftBloomCellModulus(state?.riftBloomCellModulus ?? game.riftBloomCellModulus);
 }
 
 function getPlacementsPerTurn(state) {
@@ -4406,6 +4487,9 @@ function updateOnlineControls() {
   }
   if (ui.winLengthInput) {
     ui.winLengthInput.disabled = inRoom && !admin;
+  }
+  if (ui.riftBloomCoverageInput) {
+    ui.riftBloomCoverageInput.disabled = inRoom && !admin;
   }
   for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
     const select = getArmoryClassSelectForPlayer(player);
@@ -5255,7 +5339,7 @@ function isRiftBloomActiveCell(state, hex) {
   if (q === 0 && r === 0) {
     return false;
   }
-  return positiveMod(q + (2 * r) + getRiftBloomPhase(state), RIFT_BLOOM_CELL_MODULUS) === 0;
+  return positiveMod(q + (2 * r) + getRiftBloomPhase(state), getRiftBloomCellModulus(state)) === 0;
 }
 
 function getRiftBloomMirrorTarget(state, hex) {
@@ -10198,7 +10282,8 @@ function updateStatus() {
   if (usesRiftBloomMode(state) && !state.winner) {
     const ghostCount = getRiftBloomGhostEntries(state).length;
     const activeLabel = isRiftBloomActiveCell(state, game.hoverHex) ? "live hover" : "rift cells live";
-    ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | ${activeLabel}`;
+    const coverageStep = getRiftBloomCellModulus(state);
+    ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | 1/${coverageStep} ${activeLabel}`;
   }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
@@ -12616,9 +12701,11 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.egyptianStoneCap = getEgyptianStoneCapFromInputs();
   game.placementsPerTurn = getPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
+  game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   setTimerInputs(game.timerConfig);
   setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
+  setRiftBloomCoverageInput(game.riftBloomCellModulus);
   setSecretRuleInputs({
     placementsPerTurn: game.placementsPerTurn,
     winLength: game.winLength
@@ -12626,7 +12713,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
     placementsPerTurn: game.placementsPerTurn,
     winLength: game.winLength
-  });
+  }, game.riftBloomCellModulus);
   game.factoryAnimationDisabled = false;
   game.factoryAnimationFramePending = false;
   game.lastFactoryAnimationAt = 0;
@@ -12995,6 +13082,12 @@ ui.winLengthInput?.addEventListener("input", () => {
   refreshSecretRuleSummaryFromInputs();
   setModeUI(getSelectedModeKeys());
 });
+ui.riftBloomCoverageInput?.addEventListener("input", () => {
+  game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
+  refreshRiftBloomCoverageSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+  render();
+});
 ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
@@ -13046,6 +13139,7 @@ ui.appRoot.addEventListener("transitionend", (event) => {
 fillModePicker();
 setTimerInputs(game.timerConfig);
 setEgyptianCapInput(game.egyptianStoneCap);
+setRiftBloomCoverageInput(game.riftBloomCellModulus);
 setSecretRuleInputs({
   placementsPerTurn: game.placementsPerTurn,
   winLength: game.winLength
