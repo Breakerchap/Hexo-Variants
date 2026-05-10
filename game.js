@@ -2149,6 +2149,34 @@ function isBedSiegeBedExposed(state, owner) {
   });
 }
 
+function hasBedSiegeAdjacentAttackBlock(state, owner, bedOwner) {
+  const bed = getBedSiegeBed(state, bedOwner);
+  if (!bed?.alive) {
+    return false;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  return getAdjacentsForMode(state, bed.hex).some((hex) => {
+    const cell = getCellAt(state, hex);
+    return cell
+      && cell.kind === "stone"
+      && cell.owner === safeOwner
+      && isBedSiegeBlockCell(cell);
+  });
+}
+
+function canBedSiegeBreakBed(state, owner, bedOwner) {
+  if (!usesBedSiegeMode(state) || !canBedSiegePlayerAct(state, owner)) {
+    return false;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const safeBedOwner = normalisePlayerNumber(bedOwner, state);
+  if (safeOwner === safeBedOwner) {
+    return false;
+  }
+  return hasBedSiegeAdjacentAttackBlock(state, safeOwner, safeBedOwner)
+    && isBedSiegeBedExposed(state, safeBedOwner);
+}
+
 function getBedSiegeBlockBreakFailure(state, owner, targetCell) {
   const blockType = getBedSiegeBlockType(targetCell);
   const bedSiege = ensureBedSiegeState(state);
@@ -2262,11 +2290,16 @@ function getBedSiegeGeneratorControl(state, generatorHex) {
     }
     blockCountsByOwner.set(owner, (blockCountsByOwner.get(owner) || 0) + 1);
   }
-  const controlledEntries = Array.from(blockCountsByOwner.entries()).filter(([, count]) => count > 0);
-  if (controlledEntries.length !== 1) {
+  const controlledEntries = Array.from(blockCountsByOwner.entries())
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  if (controlledEntries.length <= 0) {
     return { controller: 0, blockCount: 0 };
   }
   const [controller, blockCount] = controlledEntries[0];
+  if (controlledEntries[1]?.[1] === blockCount) {
+    return { controller: 0, blockCount: 0 };
+  }
   return { controller, blockCount };
 }
 
@@ -2315,6 +2348,28 @@ function getScaledBedSiegeGeneratorIncome(state, generator, owner, blockCount) {
   return income;
 }
 
+function getBedSiegeBaseGeneratorEffectiveBlockCount(blockCount) {
+  const adjacentBlocks = Math.max(0, Math.round(Number(blockCount) || 0));
+  if (adjacentBlocks <= 0) {
+    return 0;
+  }
+  return 1 + Math.floor(Math.max(0, adjacentBlocks - 1) / 2);
+}
+
+function getFlatBedSiegeGeneratorIncome(generator) {
+  const income = {};
+  for (const [resource, amount] of Object.entries(generator.income || {})) {
+    if (!BED_SIEGE_RESOURCE_TYPES.includes(resource)) {
+      continue;
+    }
+    const wholeAmount = Math.floor(Math.max(0, Number(amount) || 0));
+    if (wholeAmount > 0) {
+      income[resource] = wholeAmount;
+    }
+  }
+  return income;
+}
+
 function formatBedSiegeResourceGain(gain = {}) {
   return Object.entries(gain)
     .filter(([, amount]) => amount > 0)
@@ -2333,6 +2388,7 @@ function resolveBedSiegeTurnEnd(state, owner) {
   if (bedSiege.beds[safeOwner]?.alive) {
     const baseGeneratorHex = getBedSiegeBaseGeneratorHexForOwner(state, safeOwner);
     const baseBlockCount = getBedSiegeAdjacentGeneratorBlockCount(state, baseGeneratorHex, safeOwner);
+    const effectiveBaseBlockCount = getBedSiegeBaseGeneratorEffectiveBlockCount(baseBlockCount);
     const baseIncome = getScaledBedSiegeGeneratorIncome(
       state,
       {
@@ -2340,7 +2396,7 @@ function resolveBedSiegeTurnEnd(state, owner) {
         income: { iron: 4, gold: state.turnCount % 2 === 0 ? 2 : 1 }
       },
       safeOwner,
-      baseBlockCount
+      effectiveBaseBlockCount
     );
     const baseGainText = formatBedSiegeResourceGain(baseIncome);
     if (baseGainText) {
@@ -2358,7 +2414,7 @@ function resolveBedSiegeTurnEnd(state, owner) {
     if (!controller) {
       continue;
     }
-    const generatorIncome = getScaledBedSiegeGeneratorIncome(state, generator, controller, blockCount);
+    const generatorIncome = getFlatBedSiegeGeneratorIncome(generator);
     const gainText = formatBedSiegeResourceGain(generatorIncome);
     if (gainText) {
       gainBedSiegeResources(state, controller, generatorIncome);
@@ -8654,11 +8710,15 @@ function handleBedSiegeAttackAction(state, hex, owner, targetCell) {
   const targetOwner = normalisePlayerNumber(targetCell.owner, state);
   const targetBedOwner = getBedSiegeBedOwnerAt(state, hex, true);
   if (targetBedOwner && targetBedOwner !== owner) {
-    if (!canBedSiegeReachHex(state, owner, hex, 1)) {
+    if (!hasBedSiegeAdjacentAttackBlock(state, owner, targetBedOwner)) {
+      showBedSiegeNotice(`Place one of your blocks next to Player ${targetBedOwner}'s bed before breaking it.`);
       return;
     }
     if (!isBedSiegeBedExposed(state, targetBedOwner)) {
       showBedSiegeNotice(`Player ${targetBedOwner}'s bed is still defended.`);
+      return;
+    }
+    if (!canBedSiegeBreakBed(state, owner, targetBedOwner)) {
       return;
     }
     saveHistory();

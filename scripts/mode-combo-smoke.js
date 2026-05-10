@@ -1100,6 +1100,112 @@ function runFactoryActionHistoryChecks(context) {
   assertHistoryRoundTrip(context, "factory action selection");
 }
 
+function runBedSiegeBedBreakChecks(context) {
+  assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
+  assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+  assert.equal(typeof context.canBedSiegeBreakBed, "function", "expected bed siege bed-break helper");
+
+  context.window.newGame(["bedSiege"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  const state = context.HexTicTacToeInternals.game.state;
+  const targetBed = context.getBedSiegeBed(state, 2);
+  assert.ok(targetBed?.hex, "expected Player 2 bed");
+
+  const adjacentHexes = context.getAdjacentsForMode(state, targetBed.hex)
+    .filter((hex) => (
+      context.isCellSupportedForMode(state, hex)
+      && !context.getCellAt(state, hex)
+      && !context.isBedSiegeGeneratorHex(state, hex)
+    ));
+  assert.ok(adjacentHexes.length >= 2, "expected empty spaces beside Player 2 bed");
+
+  context.clickPlacement(targetBed.hex);
+  assert.equal(context.getBedSiegeBed(state, 2).alive, true, "bed should require an adjacent attacking block");
+  assert.equal(state.winner, 0, "clicking a remote bed should not win");
+
+  context.placeBedSiegeBlock(state, adjacentHexes[0], 1, "wool");
+  context.placeBedSiegeBlock(state, adjacentHexes[1], 2, "wool");
+  assert.equal(context.canBedSiegeBreakBed(state, 1, 2), false, "defended bed should not be breakable");
+  context.clickPlacement(targetBed.hex);
+  assert.equal(context.getBedSiegeBed(state, 2).alive, true, "defended bed should stay alive");
+  assert.equal(state.winner, 0, "defended bed should not award a win");
+
+  context.removeStone(state, adjacentHexes[1]);
+  assert.equal(context.canBedSiegeBreakBed(state, 1, 2), true, "exposed bed beside an attacking block should be breakable");
+  context.clickPlacement(targetBed.hex);
+  assert.equal(context.getBedSiegeBed(state, 2).alive, false, "clicking the exposed bed should break it");
+  assert.equal(state.winner, 1, "breaking the last enemy bed should win Bed Siege");
+}
+
+function getOpenGeneratorAdjacentHexes(context, state, generatorHex) {
+  return context.getAdjacentsForMode(state, generatorHex)
+    .filter((hex) => (
+      context.isCellSupportedForMode(state, hex)
+      && !context.getCellAt(state, hex)
+      && !context.isBedSiegeGeneratorHex(state, hex)
+    ));
+}
+
+function runBedSiegeGeneratorIncomeChecks(context) {
+  assert.equal(typeof context.resolveBedSiegeTurnEnd, "function", "expected bed siege turn-end helper");
+  assert.equal(typeof context.getBedSiegeGeneratorControl, "function", "expected bed siege generator control helper");
+  assert.equal(typeof context.getBedSiegeNeutralGenerators, "function", "expected bed siege neutral generator helper");
+
+  context.window.newGame(["bedSiege"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  let state = context.HexTicTacToeInternals.game.state;
+  let diamondGenerator = context.getBedSiegeNeutralGenerators(state).find((generator) => generator.type === "diamond");
+  assert.ok(diamondGenerator?.hex, "expected a diamond generator");
+  let adjacentHexes = getOpenGeneratorAdjacentHexes(context, state, diamondGenerator.hex);
+  assert.ok(adjacentHexes.length >= 4, "expected enough open spaces around diamond generator");
+  for (const hex of adjacentHexes.slice(0, 4)) {
+    context.placeBedSiegeBlock(state, hex, 1, "wool");
+  }
+  state.turnCount = 1;
+  context.resolveBedSiegeTurnEnd(state, 1);
+  assert.equal(state.bedSiege.resources[1].diamond, 1, "one controlled diamond gen should pay exactly one diamond");
+
+  context.window.newGame(["bedSiege"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  state = context.HexTicTacToeInternals.game.state;
+  diamondGenerator = context.getBedSiegeNeutralGenerators(state).find((generator) => generator.type === "diamond");
+  adjacentHexes = getOpenGeneratorAdjacentHexes(context, state, diamondGenerator.hex);
+  assert.ok(adjacentHexes.length >= 5, "expected enough open spaces around contested diamond generator");
+  for (const hex of adjacentHexes.slice(0, 3)) {
+    context.placeBedSiegeBlock(state, hex, 1, "wool");
+  }
+  for (const hex of adjacentHexes.slice(3, 5)) {
+    context.placeBedSiegeBlock(state, hex, 2, "wool");
+  }
+  const control = context.getBedSiegeGeneratorControl(state, diamondGenerator.hex);
+  assert.equal(control.controller, 1, "majority surrounding a neutral generator should control it");
+  assert.equal(control.blockCount, 3, "control should report the majority player's adjacent block count");
+  state.turnCount = 1;
+  context.resolveBedSiegeTurnEnd(state, 1);
+  assert.equal(state.bedSiege.resources[1].diamond, 1, "majority-controlled diamond gen should pay one diamond");
+  assert.equal(state.bedSiege.resources[2].diamond, 0, "minority player should not receive neutral generator income");
+
+  const baseIncomeCases = [
+    { extraBlocks: 0, expectedIron: 2 },
+    { extraBlocks: 1, expectedIron: 2 },
+    { extraBlocks: 2, expectedIron: 4 }
+  ];
+  for (const incomeCase of baseIncomeCases) {
+    context.window.newGame(["bedSiege"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+    state = context.HexTicTacToeInternals.game.state;
+    const baseGeneratorHex = context.getBedSiegeBaseGeneratorHexForOwner(state, 1);
+    adjacentHexes = getOpenGeneratorAdjacentHexes(context, state, baseGeneratorHex);
+    assert.ok(adjacentHexes.length >= incomeCase.extraBlocks, "expected enough open spaces around base generator");
+    for (const hex of adjacentHexes.slice(0, incomeCase.extraBlocks)) {
+      context.placeBedSiegeBlock(state, hex, 1, "wool");
+    }
+    state.turnCount = 1;
+    context.resolveBedSiegeTurnEnd(state, 1);
+    assert.equal(
+      state.bedSiege.resources[1].iron,
+      incomeCase.expectedIron,
+      `base generator with ${incomeCase.extraBlocks} extra block${incomeCase.extraBlocks === 1 ? "" : "s"} should pay ${incomeCase.expectedIron} iron`
+    );
+  }
+}
+
 function runChaosVoteChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -1154,6 +1260,8 @@ function main() {
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
   runChaosVoteChecks(context);
+  runBedSiegeBedBreakChecks(context);
+  runBedSiegeGeneratorIncomeChecks(context);
 
   if (process.argv.includes("--history-only")) {
     runHistoryReadOnlyChecks(context);
