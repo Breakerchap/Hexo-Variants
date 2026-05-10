@@ -10206,7 +10206,12 @@ function selectFactoryActionForCurrentPlayer(actionKey) {
   }
   const owner = state.turnPlayer;
   const factory = ensureFactoryState(state);
-  factory.selectedAction[owner] = normaliseFactoryAction(actionKey);
+  const nextAction = normaliseFactoryAction(actionKey);
+  if (factory.selectedAction[owner] === nextAction) {
+    return;
+  }
+  saveHistory();
+  factory.selectedAction[owner] = nextAction;
   updateStatus();
   render();
   broadcastOnlineState();

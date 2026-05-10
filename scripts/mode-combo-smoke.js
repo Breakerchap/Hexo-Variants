@@ -1005,6 +1005,101 @@ function runHistoryReadOnlyChecks(context) {
   assert.equal(stateFingerprint(game.state), liveFingerprint, "forward should restore the live game state exactly");
 }
 
+function assertHistoryRoundTrip(context, label) {
+  const game = context.HexTicTacToeInternals.game;
+  const liveFingerprint = stateFingerprint(game.state);
+  const backButton = context.document.getElementById("historyBackBtn");
+  const forwardButton = context.document.getElementById("historyForwardBtn");
+
+  assert.ok(game.history.length > 0, `${label}: expected a previous timeline snapshot`);
+  assert.equal(backButton.disabled, false, `${label}: back button should be enabled after a state change`);
+
+  context.navigateHistoryBack();
+  assert.equal(context.isBrowsingHistory(), true, `${label}: back should enter timeline browsing`);
+  assert.equal(forwardButton.disabled, false, `${label}: forward button should be enabled while browsing`);
+
+  context.navigateHistoryForward();
+  assert.equal(context.isBrowsingHistory(), false, `${label}: forward should return to the live state`);
+  assert.equal(stateFingerprint(game.state), liveFingerprint, `${label}: forward should restore the live state exactly`);
+  assert.equal(forwardButton.disabled, true, `${label}: forward button should disable at the live state`);
+}
+
+function pickFactoryBuildHex(sandbox, state) {
+  const core = sandbox.getFactoryCore(state, state.turnPlayer);
+  assert.ok(core?.hex, "expected current factory core");
+  return sandbox.getAdjacentsForMode(state, core.hex).find((hex) => (
+    sandbox.isCellSupportedForMode(state, hex)
+    && !sandbox.getCellAt(state, hex)
+    && !sandbox.getFactoryDepositAt(state, hex)
+    && sandbox.getFactoryNearestConnectedAnchor(state, state.turnPlayer, hex, 1)
+  )) || null;
+}
+
+function pickBedSiegeBuildHex(sandbox, state) {
+  const bed = sandbox.getBedSiegeBed(state, state.turnPlayer);
+  assert.ok(bed?.hex, "expected current bed siege bed");
+  const candidates = [
+    ...sandbox.getAdjacentsForMode(state, bed.hex),
+    ...buildCandidateHexes(14)
+  ];
+  return candidates.find((hex) => sandbox.isLegalBedSiegePlacement(state, hex)) || null;
+}
+
+function performSingleHistoryAction(context, modeKey) {
+  const state = context.HexTicTacToeInternals.game.state;
+
+  if (context.usesFactoryMode(state)) {
+    const target = pickFactoryBuildHex(context, state);
+    assert.ok(target, `${modeKey}: expected a buildable factory cell`);
+    context.clickPlacement(target);
+    return `factory build at ${keyOf(target)}`;
+  }
+
+  if (context.usesBedSiegeMode(state)) {
+    const target = pickBedSiegeBuildHex(context, state);
+    assert.ok(target, `${modeKey}: expected a buildable bed siege cell`);
+    context.clickPlacement(target);
+    return `bed siege build at ${keyOf(target)}`;
+  }
+
+  const candidateHexes = state.modeKeys.includes("radialGrid")
+    ? buildRadialCandidateHexes(44)
+    : buildCandidateHexes(14);
+  const target = pickLegalPlacement(context, state, candidateHexes);
+  assert.ok(target, `${modeKey}: expected a legal placement`);
+  context.clickPlacement(target);
+  return `placement at ${keyOf(target)}`;
+}
+
+function runSingleModeHistoryRoundTripChecks(context, modeKeys) {
+  const modesToProbe = Array.from(new Set([...modeKeys, "powderCascade"]));
+  for (const modeKey of modesToProbe) {
+    context.window.newGame([modeKey], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+    const before = stateFingerprint(context.HexTicTacToeInternals.game.state);
+    const actionLabel = performSingleHistoryAction(context, modeKey);
+    assert.notEqual(
+      stateFingerprint(context.HexTicTacToeInternals.game.state),
+      before,
+      `${modeKey}: ${actionLabel} should mutate state`
+    );
+    assertHistoryRoundTrip(context, `${modeKey}: ${actionLabel}`);
+  }
+}
+
+function runFactoryActionHistoryChecks(context) {
+  assert.equal(typeof context.selectFactoryActionForCurrentPlayer, "function", "expected factory action selector helper");
+  context.window.newGame(["factoryFoundry"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+
+  const before = stateFingerprint(context.HexTicTacToeInternals.game.state);
+  context.selectFactoryActionForCurrentPlayer("wall");
+  assert.notEqual(
+    stateFingerprint(context.HexTicTacToeInternals.game.state),
+    before,
+    "factory action selection should mutate state"
+  );
+  assertHistoryRoundTrip(context, "factory action selection");
+}
+
 function runChaosVoteChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -1062,7 +1157,9 @@ function main() {
 
   if (process.argv.includes("--history-only")) {
     runHistoryReadOnlyChecks(context);
-    console.log("History read-only smoke test passed.");
+    runSingleModeHistoryRoundTripChecks(context, modeKeys);
+    runFactoryActionHistoryChecks(context);
+    console.log("History timeline smoke tests passed.");
     return;
   }
 
