@@ -10231,16 +10231,22 @@ function getFactoryWallet(state, owner) {
 
 function canAffordFactoryCost(state, owner, cost = {}) {
   const wallet = getFactoryWallet(state, owner);
-  return Object.entries(cost).every(([resource, amount]) => wallet[resource] >= Math.max(0, Number(amount) || 0));
+  return Object.entries(cost).every(([resource, amount]) => (
+    !FACTORY_RESOURCE_TYPES.includes(resource)
+    || wallet[resource] >= Math.max(0, Math.round(Number(amount) || 0))
+  ));
 }
 
 function spendFactoryResources(state, owner, cost = {}) {
-  const wallet = getFactoryWallet(state, owner);
   if (!canAffordFactoryCost(state, owner, cost)) {
     return false;
   }
+  const wallet = getFactoryWallet(state, owner);
   for (const [resource, amount] of Object.entries(cost)) {
-    wallet[resource] -= Math.max(0, Number(amount) || 0);
+    if (!FACTORY_RESOURCE_TYPES.includes(resource)) {
+      continue;
+    }
+    wallet[resource] = Math.max(0, wallet[resource] - Math.max(0, Math.round(Number(amount) || 0)));
   }
   return true;
 }

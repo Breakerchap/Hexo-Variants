@@ -1132,6 +1132,64 @@ function runFactoryActionHistoryChecks(context) {
   assertHistoryRoundTrip(context, "factory action selection");
 }
 
+function getFactoryPoints(context, state, owner) {
+  return context.getFactoryWallet(state, owner).points;
+}
+
+function runFactoryCostChecks(context) {
+  assert.equal(typeof context.spendFactoryResources, "function", "expected factory spending helper");
+  assert.equal(typeof context.selectFactoryActionForCurrentPlayer, "function", "expected factory action selector helper");
+  assert.equal(typeof context.placeFactoryModule, "function", "expected factory module placement helper");
+  assert.equal(typeof context.getFactoryModuleDef, "function", "expected factory module definitions helper");
+  assert.equal(typeof context.getFactoryCommandDef, "function", "expected factory command definitions helper");
+
+  context.window.newGame(["factoryFoundry"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  let state = context.HexTicTacToeInternals.game.state;
+  assert.equal(context.spendFactoryResources(state, 1, { points: 4 }), true, "direct point spend should succeed");
+  assert.equal(getFactoryPoints(context, state, 1), 10, "direct point spend should remove the exact point cost");
+  assert.equal(context.spendFactoryResources(state, 1, { points: 999 }), false, "unaffordable point spend should fail");
+  assert.equal(getFactoryPoints(context, state, 1), 10, "failed point spend should not mutate points");
+
+  context.window.newGame(["factoryFoundry"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  state = context.HexTicTacToeInternals.game.state;
+  const beltHex = pickFactoryBuildHex(context, state);
+  assert.ok(beltHex, "expected a valid conveyor build hex");
+  const beltCost = context.getFactoryModuleDef("belt").cost.points;
+  const beforeBuildPoints = getFactoryPoints(context, state, 1);
+  context.clickPlacement(beltHex);
+  assert.equal(getFactoryPoints(context, state, 1), beforeBuildPoints - beltCost, "building a Conveyor should spend its listed point cost");
+
+  const forgeCost = context.getFactoryModuleDef("forge").cost.points;
+  const beforeUpgradePoints = getFactoryPoints(context, state, 1);
+  context.clickPlacement(beltHex);
+  assert.equal(getFactoryPoints(context, state, 1), beforeUpgradePoints - forgeCost, "upgrading a Conveyor should spend the Upgraded Conveyor cost");
+
+  context.window.newGame(["factoryFoundry"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  state = context.HexTicTacToeInternals.game.state;
+  const repairHex = pickFactoryBuildHex(context, state);
+  assert.ok(repairHex, "expected a valid repair test hex");
+  context.placeFactoryModule(state, repairHex, 1, "forge");
+  state.cells[keyOf(repairHex)].factoryHp = 1;
+  state.factory.resources[1].points = 20;
+  const beforeRepairPoints = getFactoryPoints(context, state, 1);
+  context.clickPlacement(repairHex);
+  assert.equal(getFactoryPoints(context, state, 1), beforeRepairPoints - 6, "repairing a damaged module should spend the 6pt repair cost");
+
+  context.window.newGame(["factoryFoundry"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  state = context.HexTicTacToeInternals.game.state;
+  const core = context.getFactoryCore(state, 1);
+  const enemyHex = context.getAdjacentsForMode(state, core.hex)
+    .find((hex) => context.isCellSupportedForMode(state, hex) && !context.getCellAt(state, hex));
+  assert.ok(enemyHex, "expected an enemy target hex beside the connected line");
+  context.placeFactoryModule(state, enemyHex, 2, "wall");
+  state.factory.resources[1].points = 20;
+  context.selectFactoryActionForCurrentPlayer("strike");
+  const strikeCost = context.getFactoryCommandDef("strike").cost.points;
+  const beforeStrikePoints = getFactoryPoints(context, state, 1);
+  context.clickPlacement(enemyHex);
+  assert.equal(getFactoryPoints(context, state, 1), beforeStrikePoints - strikeCost, "Strike Crew should spend its listed point cost");
+}
+
 function runBedSiegeBedBreakChecks(context) {
   assert.equal(typeof context.window.newGame, "function", "expected newGame helper");
   assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
@@ -1520,6 +1578,13 @@ function main() {
     runTideKitchenChecks(context);
     runTideKitchenFocusedChecks(context);
     console.log("Godfish Galley standalone smoke tests passed.");
+    return;
+  }
+
+  if (process.argv.includes("--factory-only")) {
+    runFactoryCostChecks(context);
+    runFactoryActionHistoryChecks(context);
+    console.log("Foundry War cost smoke tests passed.");
     return;
   }
 
