@@ -952,6 +952,7 @@ const TIDE_KITCHEN_RESOURCE_TYPES = ["fish", "kelp", "spice", "heat"];
 const TIDE_KITCHEN_ACTIONS_PER_TURN = 3;
 const TIDE_KITCHEN_STARTING_COINS = 12;
 const TIDE_KITCHEN_MAX_UPGRADE_LEVEL = 4;
+const TIDE_KITCHEN_GODFISH_FAME_TARGET = 80;
 const TIDE_KITCHEN_ROD_COSTS = { 2: 18, 3: 45, 4: 95 };
 const TIDE_KITCHEN_BOAT_COSTS = { 2: 22, 3: 55, 4: 120 };
 const TIDE_KITCHEN_GODFISH_KEY = "godfish";
@@ -2911,6 +2912,97 @@ function createTideKitchenFishInventory(source = {}) {
   return inventory;
 }
 
+function normaliseTideKitchenFishKey(fishKey) {
+  return Object.prototype.hasOwnProperty.call(TIDE_KITCHEN_FISH_DEFS, fishKey) ? fishKey : "sprat";
+}
+
+function getTideKitchenFishDef(fishKey) {
+  return TIDE_KITCHEN_FISH_DEFS[normaliseTideKitchenFishKey(fishKey)];
+}
+
+function getTideKitchenTimingWindow(fishDef) {
+  const difficulty = Math.max(0, Math.min(1, Number(fishDef?.difficulty) || 0));
+  const halfWidth = Math.max(0.06, 0.20 - difficulty * 0.08);
+  return {
+    targetStart: Math.max(0.08, 0.50 - halfWidth),
+    targetEnd: Math.min(0.92, 0.50 + halfWidth)
+  };
+}
+
+function createTideKitchenDefaultRhythm(fishKey) {
+  return ["left", "center", "right", "center", "left"].slice(0, normaliseTideKitchenFishKey(fishKey) === TIDE_KITCHEN_GODFISH_KEY ? 5 : 3);
+}
+
+function normaliseTideKitchenMeal(meal = {}) {
+  const fishKey = normaliseTideKitchenFishKey(meal.fishKey);
+  const fishDef = getTideKitchenFishDef(fishKey);
+  const value = Number(meal.value);
+  const rarity = Object.values(TIDE_KITCHEN_FISH_DEFS).some((candidate) => candidate.rarity === meal.rarity)
+    ? meal.rarity
+    : fishDef.rarity;
+  return {
+    fishKey,
+    name: String(meal.name || `${fishDef.name} Plate`),
+    rarity,
+    value: Number.isFinite(value) ? Math.max(0, Math.round(value)) : fishDef.mealValue + 2
+  };
+}
+
+function normaliseTideKitchenChallenge(current, state) {
+  if (!current || typeof current !== "object") {
+    return null;
+  }
+  const owner = normalisePlayerNumber(current.owner || state?.turnPlayer, state);
+  const startedAt = Number(current.startedAt);
+  if (current.phase === "casting") {
+    const forceFishKey = current.forceFishKey == null ? null : normaliseTideKitchenFishKey(current.forceFishKey);
+    return {
+      owner,
+      phase: "casting",
+      startedAt: Number.isFinite(startedAt) ? startedAt : getTideKitchenNow(),
+      forceFishKey
+    };
+  }
+
+  const fishKey = normaliseTideKitchenFishKey(current.fishKey);
+  const fishDef = getTideKitchenFishDef(fishKey);
+  const defaultWindow = getTideKitchenTimingWindow(fishDef);
+  const defaultRhythm = createTideKitchenDefaultRhythm(fishKey);
+  const rhythm = Array.isArray(current.rhythm)
+    ? current.rhythm.filter((lane) => lane === "left" || lane === "center" || lane === "right")
+    : [];
+  const targetStartValue = Number(current.targetStart);
+  const targetEndValue = Number(current.targetEnd);
+  const targetStart = Math.max(0, Math.min(0.98, Number.isFinite(targetStartValue) ? targetStartValue : defaultWindow.targetStart));
+  const targetEnd = Math.max(targetStart + 0.01, Math.min(1, Number.isFinite(targetEndValue) ? targetEndValue : defaultWindow.targetEnd));
+  const quality = Number(current.quality);
+  const progress = Number(current.progress);
+  const tension = Number(current.tension);
+  const misses = Number(current.misses);
+  const safeRhythm = rhythm.length > 0 ? rhythm : defaultRhythm;
+  const rhythmIndex = Math.max(0, Math.min(safeRhythm.length, Math.round(Number(current.rhythmIndex) || 0)));
+  const godStage = fishDef.minigame === "godfish" && ["timing", "rhythm", "tension"].includes(current.godStage)
+    ? current.godStage
+    : (fishDef.minigame === "godfish" ? "timing" : null);
+
+  return {
+    owner,
+    phase: "hook",
+    fishKey,
+    minigame: fishDef.minigame,
+    quality: Number.isFinite(quality) ? Math.max(0, Math.min(1, quality)) : 0.5,
+    startedAt: Number.isFinite(startedAt) ? startedAt : getTideKitchenNow(),
+    progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+    tension: Number.isFinite(tension) ? Math.max(0, Math.min(100, tension)) : 34 + Math.round(fishDef.difficulty * 20),
+    misses: Number.isFinite(misses) ? Math.max(0, Math.round(misses)) : 0,
+    rhythmIndex,
+    rhythm: safeRhythm,
+    godStage,
+    targetStart,
+    targetEnd
+  };
+}
+
 function createTideKitchenStateForGame(state) {
   return {
     coins: createPlayerMap(getPlayerCount(state), () => TIDE_KITCHEN_STARTING_COINS),
@@ -2944,19 +3036,15 @@ function ensureTideKitchenState(state) {
     rodLevel: createPlayerMap(getPlayerCount(state), (owner) => Math.max(1, Math.min(TIDE_KITCHEN_MAX_UPGRADE_LEVEL, Math.round(Number(current.rodLevel?.[owner]) || 1)))),
     boatLevel: createPlayerMap(getPlayerCount(state), (owner) => Math.max(1, Math.min(TIDE_KITCHEN_MAX_UPGRADE_LEVEL, Math.round(Number(current.boatLevel?.[owner]) || 1)))),
     rawFish: createPlayerMap(getPlayerCount(state), (owner) => createTideKitchenFishInventory(current.rawFish?.[owner])),
-    meals: createPlayerMap(getPlayerCount(state), (owner) => Array.isArray(current.meals?.[owner]) ? current.meals[owner].map((meal) => ({ ...meal })) : []),
+    meals: createPlayerMap(getPlayerCount(state), (owner) => Array.isArray(current.meals?.[owner]) ? current.meals[owner].map((meal) => normaliseTideKitchenMeal(meal)) : []),
     score: createPlayerMap(getPlayerCount(state), (owner) => Math.max(0, Math.round(Number(current.score?.[owner]) || 0))),
     customerIndex: createPlayerMap(getPlayerCount(state), (owner) => Math.max(0, Math.round(Number(current.customerIndex?.[owner]) || (owner - 1)))),
-    challenge: current.challenge && typeof current.challenge === "object" ? { ...current.challenge } : null,
+    challenge: normaliseTideKitchenChallenge(current.challenge, state),
     godfishCaughtBy: isValidPlayerNumber(current.godfishCaughtBy, state) ? normalisePlayerNumber(current.godfishCaughtBy, state) : 0,
     lastCatch: current.lastCatch || null,
     lastSale: current.lastSale || null
   };
   return state.tideKitchen;
-}
-
-function getTideKitchenFishDef(fishKey) {
-  return TIDE_KITCHEN_FISH_DEFS[fishKey] || TIDE_KITCHEN_FISH_DEFS.sprat;
 }
 
 function getTideKitchenCustomer(state, owner) {
@@ -2968,6 +3056,11 @@ function getTideKitchenCustomer(state, owner) {
 
 function getTideKitchenNow() {
   return window.performance?.now ? window.performance.now() : Date.now();
+}
+
+function getTideKitchenElapsed(challenge, now = getTideKitchenNow()) {
+  const startedAt = Number(challenge?.startedAt);
+  return Math.max(0, now - (Number.isFinite(startedAt) ? startedAt : now));
 }
 
 function getTideKitchenAvailableFishKeys(state, owner) {
@@ -2984,7 +3077,7 @@ function pickTideKitchenFishKey(state, owner, castQuality = 0.5) {
   const available = getTideKitchenAvailableFishKeys(state, owner);
   const tideKitchen = ensureTideKitchenState(state);
   const safeOwner = normalisePlayerNumber(owner, state);
-  if (available.includes(TIDE_KITCHEN_GODFISH_KEY) && tideKitchen.score[safeOwner] >= 80 && castQuality >= 0.82) {
+  if (available.includes(TIDE_KITCHEN_GODFISH_KEY) && tideKitchen.score[safeOwner] >= TIDE_KITCHEN_GODFISH_FAME_TARGET && castQuality >= 0.82) {
     return TIDE_KITCHEN_GODFISH_KEY;
   }
   const nonGod = available.filter((fishKey) => fishKey !== TIDE_KITCHEN_GODFISH_KEY);
@@ -3002,9 +3095,15 @@ function pickTideKitchenFishKey(state, owner, castQuality = 0.5) {
 
 function createTideKitchenChallenge(state, owner, fishKey = null, quality = 0.5) {
   const safeOwner = normalisePlayerNumber(owner, state);
-  const chosenFishKey = fishKey || pickTideKitchenFishKey(state, safeOwner, quality);
+  const forcedFishKey = fishKey == null ? null : normaliseTideKitchenFishKey(fishKey);
+  const available = getTideKitchenAvailableFishKeys(state, safeOwner);
+  const forcedIsEligible = forcedFishKey
+    && available.includes(forcedFishKey)
+    && (forcedFishKey !== TIDE_KITCHEN_GODFISH_KEY || (ensureTideKitchenState(state).score[safeOwner] >= TIDE_KITCHEN_GODFISH_FAME_TARGET && quality >= 0.82));
+  const chosenFishKey = forcedIsEligible ? forcedFishKey : pickTideKitchenFishKey(state, safeOwner, quality);
   const fishDef = getTideKitchenFishDef(chosenFishKey);
   const now = getTideKitchenNow();
+  const timingWindow = getTideKitchenTimingWindow(fishDef);
   const challenge = {
     owner: safeOwner,
     phase: "hook",
@@ -3016,10 +3115,10 @@ function createTideKitchenChallenge(state, owner, fishKey = null, quality = 0.5)
     tension: 34 + Math.round(fishDef.difficulty * 20),
     misses: 0,
     rhythmIndex: 0,
-    rhythm: ["left", "center", "right", "center", "left"].slice(0, chosenFishKey === TIDE_KITCHEN_GODFISH_KEY ? 5 : 3),
+    rhythm: createTideKitchenDefaultRhythm(chosenFishKey),
     godStage: chosenFishKey === TIDE_KITCHEN_GODFISH_KEY ? "timing" : null,
-    targetStart: Math.max(0.08, 0.50 - Math.max(0.06, 0.20 - fishDef.difficulty * 0.08)),
-    targetEnd: Math.min(0.92, 0.50 + Math.max(0.06, 0.20 - fishDef.difficulty * 0.08))
+    targetStart: timingWindow.targetStart,
+    targetEnd: timingWindow.targetEnd
   };
   return challenge;
 }
@@ -3047,32 +3146,33 @@ function startTideKitchenCastForCurrentPlayer(forceFishKey = null) {
 }
 
 function getTideKitchenCastPower(challenge, now = getTideKitchenNow()) {
-  const elapsed = Math.max(0, now - (challenge?.startedAt || now));
+  const elapsed = getTideKitchenElapsed(challenge, now);
   return 0.5 + (Math.sin(elapsed / 320) * 0.5);
 }
 
 function getTideKitchenTimingMarker(challenge, now = getTideKitchenNow()) {
-  const elapsed = Math.max(0, now - (challenge?.startedAt || now));
+  const elapsed = getTideKitchenElapsed(challenge, now);
   return 0.5 + (Math.sin(elapsed / 260) * 0.5);
 }
 
 function getTideKitchenCurrentTension(challenge, now = getTideKitchenNow()) {
-  const elapsed = Math.max(0, now - (challenge?.startedAt || now));
+  const elapsed = getTideKitchenElapsed(challenge, now);
   return Math.max(0, Math.min(100, (challenge?.tension || 0) + (Math.sin(elapsed / 410) * 18)));
 }
 
 function completeTideKitchenCatch(state, owner, fishKey, quality = 0.5) {
   const tideKitchen = ensureTideKitchenState(state);
   const safeOwner = normalisePlayerNumber(owner, state);
-  const fishDef = getTideKitchenFishDef(fishKey);
+  const safeFishKey = normaliseTideKitchenFishKey(fishKey);
+  const fishDef = getTideKitchenFishDef(safeFishKey);
   tideKitchen.challenge = null;
-  tideKitchen.lastCatch = { owner: safeOwner, fishKey, quality };
+  tideKitchen.lastCatch = { owner: safeOwner, fishKey: safeFishKey, quality };
   if (fishDef.god) {
     tideKitchen.godfishCaughtBy = safeOwner;
     appendStateLog(state, `Godfish Galley: Player ${safeOwner} caught the Godfish.`);
     return `Player ${safeOwner} caught the Godfish.`;
   }
-  tideKitchen.rawFish[safeOwner][fishKey] += 1;
+  tideKitchen.rawFish[safeOwner][safeFishKey] += 1;
   appendStateLog(state, `Godfish Galley: Player ${safeOwner} caught ${fishDef.name}.`);
   return `Player ${safeOwner} caught ${fishDef.name}.`;
 }
@@ -3115,7 +3215,8 @@ function resolveTideKitchenStrike(lane = null) {
   if (challenge.phase === "casting") {
     saveHistory();
     const quality = getTideKitchenCastPower(challenge);
-    tideKitchen.challenge = createTideKitchenChallenge(state, state.turnPlayer, challenge.forceFishKey, quality);
+    const nextChallenge = createTideKitchenChallenge(state, state.turnPlayer, challenge.forceFishKey, quality);
+    ensureTideKitchenState(state).challenge = nextChallenge;
     pushLog(`Godfish Galley: Player ${state.turnPlayer} cast at ${Math.round(quality * 100)}% power.`);
     updateStatus();
     render();
@@ -3214,7 +3315,7 @@ function getBestTideKitchenRawFishKey(state, owner) {
   const tideKitchen = ensureTideKitchenState(state);
   const inventory = tideKitchen.rawFish[normalisePlayerNumber(owner, state)];
   return Object.keys(inventory)
-    .filter((fishKey) => inventory[fishKey] > 0)
+    .filter((fishKey) => inventory[fishKey] > 0 && !getTideKitchenFishDef(fishKey).god)
     .sort((a, b) => getTideKitchenFishDef(b).mealValue - getTideKitchenFishDef(a).mealValue)[0] || null;
 }
 
@@ -3223,7 +3324,7 @@ function cookTideKitchenMealForCurrentPlayer() {
   if (!canUseTideKitchenControls(state)) {
     return;
   }
-  const tideKitchen = ensureTideKitchenState(state);
+  let tideKitchen = ensureTideKitchenState(state);
   if (tideKitchen.challenge) {
     return;
   }
@@ -3235,6 +3336,7 @@ function cookTideKitchenMealForCurrentPlayer() {
     render();
     return;
   }
+  tideKitchen = ensureTideKitchenState(state);
   saveHistory();
   const fishDef = getTideKitchenFishDef(fishKey);
   tideKitchen.rawFish[owner][fishKey] -= 1;
@@ -3255,12 +3357,12 @@ function sellTideKitchenMealForCurrentPlayer() {
   if (!canUseTideKitchenControls(state)) {
     return;
   }
-  const tideKitchen = ensureTideKitchenState(state);
+  let tideKitchen = ensureTideKitchenState(state);
   if (tideKitchen.challenge) {
     return;
   }
   const owner = state.turnPlayer;
-  const meals = tideKitchen.meals[owner];
+  let meals = tideKitchen.meals[owner];
   if (!meals.length) {
     pushLog("Godfish Galley: no cooked meals to serve.");
     updateStatus();
@@ -3268,6 +3370,8 @@ function sellTideKitchenMealForCurrentPlayer() {
     return;
   }
   const customer = getTideKitchenCustomer(state, owner);
+  tideKitchen = ensureTideKitchenState(state);
+  meals = tideKitchen.meals[owner];
   const bestIndex = meals
     .map((meal, index) => ({
       index,
@@ -3291,7 +3395,13 @@ function buyTideKitchenUpgrade(type) {
   if (!canUseTideKitchenControls(state)) {
     return;
   }
+  if (type !== "rod" && type !== "boat") {
+    return;
+  }
   const tideKitchen = ensureTideKitchenState(state);
+  if (tideKitchen.challenge) {
+    return;
+  }
   const owner = state.turnPlayer;
   const levelMap = type === "boat" ? tideKitchen.boatLevel : tideKitchen.rodLevel;
   const costMap = type === "boat" ? TIDE_KITCHEN_BOAT_COSTS : TIDE_KITCHEN_ROD_COSTS;
@@ -3313,9 +3423,7 @@ function buyTideKitchenUpgrade(type) {
   tideKitchen.coins[owner] -= cost;
   levelMap[owner] = nextLevel;
   pushLog(`Godfish Galley: Player ${owner} upgraded ${type} to level ${nextLevel}.`);
-  updateStatus();
-  render();
-  broadcastOnlineState();
+  finishTideKitchenAction(state);
 }
 
 function passTideKitchenAction() {
@@ -3395,7 +3503,7 @@ function getTideKitchenScoreSummary(state) {
   }
   const tideKitchen = ensureTideKitchenState(state);
   return getPlayerNumbers(state)
-    .map((owner) => `P${owner} ${tideKitchen.coins[owner]}c ${tideKitchen.score[owner]}f R${tideKitchen.rodLevel[owner]}/B${tideKitchen.boatLevel[owner]}`)
+    .map((owner) => `P${owner} ${tideKitchen.coins[owner]}c ${tideKitchen.score[owner]}/${TIDE_KITCHEN_GODFISH_FAME_TARGET}f R${tideKitchen.rodLevel[owner]}/B${tideKitchen.boatLevel[owner]}`)
     .join(" | ");
 }
 
@@ -10541,16 +10649,22 @@ function getFactoryWallet(state, owner) {
 
 function canAffordFactoryCost(state, owner, cost = {}) {
   const wallet = getFactoryWallet(state, owner);
-  return Object.entries(cost).every(([resource, amount]) => wallet[resource] >= Math.max(0, Number(amount) || 0));
+  return Object.entries(cost).every(([resource, amount]) => (
+    !FACTORY_RESOURCE_TYPES.includes(resource)
+    || wallet[resource] >= Math.max(0, Math.round(Number(amount) || 0))
+  ));
 }
 
 function spendFactoryResources(state, owner, cost = {}) {
-  const wallet = getFactoryWallet(state, owner);
   if (!canAffordFactoryCost(state, owner, cost)) {
     return false;
   }
+  const wallet = getFactoryWallet(state, owner);
   for (const [resource, amount] of Object.entries(cost)) {
-    wallet[resource] -= Math.max(0, Number(amount) || 0);
+    if (!FACTORY_RESOURCE_TYPES.includes(resource)) {
+      continue;
+    }
+    wallet[resource] = Math.max(0, wallet[resource] - Math.max(0, Math.round(Number(amount) || 0)));
   }
   return true;
 }
@@ -11848,12 +11962,12 @@ function renderTideKitchenPanel() {
   }
   if (ui.tideKitchenRodBtn) {
     const cost = TIDE_KITCHEN_ROD_COSTS[rodNext];
-    ui.tideKitchenRodBtn.disabled = !canControl || !cost || tideKitchen.coins[owner] < cost;
+    ui.tideKitchenRodBtn.disabled = !canControl || Boolean(challenge) || !cost || tideKitchen.coins[owner] < cost;
     ui.tideKitchenRodBtn.textContent = cost ? `Rod L${rodNext} (${cost}c)` : "Rod Max";
   }
   if (ui.tideKitchenBoatBtn) {
     const cost = TIDE_KITCHEN_BOAT_COSTS[boatNext];
-    ui.tideKitchenBoatBtn.disabled = !canControl || !cost || tideKitchen.coins[owner] < cost;
+    ui.tideKitchenBoatBtn.disabled = !canControl || Boolean(challenge) || !cost || tideKitchen.coins[owner] < cost;
     ui.tideKitchenBoatBtn.textContent = cost ? `Boat L${boatNext} (${cost}c)` : "Boat Max";
   }
   if (ui.tideKitchenEndBtn) {
