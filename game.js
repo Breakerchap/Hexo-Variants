@@ -174,6 +174,11 @@ const BAGEL_EFFECT_TILE_PHASE = 0;
 const CHAOS_VOTE_INTERVAL = 3;
 const CHAOS_RULE_CHOICE_COUNT = 3;
 const CHAOS_RECENT_RULE_MEMORY = 12;
+const PIG_ESCAPE_BOUNDS_PADDING = 2;
+const PIG_ESCAPE_SEARCH_LIMIT = 12000;
+const PIG_STARTLE_DISTANCE = 1;
+const PIG_STARTLE_MIN_ESCAPE_OPTIONS = 3;
+const PIG_MAX_REACTIONS_PER_TURN = 2;
 const POWDER_GRAINS_PER_CELL = 20;
 const POWDER_PHYSICS_STEPS_AFTER_PLACE = 18;
 const POWDER_PHYSICS_STEPS_PER_TURN = 30;
@@ -874,6 +879,12 @@ const MODES = {
     name: "Rift Bloom",
     summary: "Secret mirror-threat mode: shimmering rift cells move each turn. Place on one to sprout a mirrored ghost that blocks space, then anchor it beside 2 friendly stones before it fades into nothing.",
     hint: "Shimmering rift cells are live this turn. A move on one creates a mirrored ghost; ghosts do not count for line wins until 2 adjacent friendly stones anchor them at turn end.",
+    secret: true
+  },
+  pig: {
+    name: "Pig",
+    summary: "Secret escape puzzle: a pig starts at the origin, blocks placement, pathfinds one tile toward open space after the first stone placement each turn, and can startle once more only if an adjacent later stone lands while it still has room. Click an occupied tile to destroy it instead of placing.",
+    hint: "Trap the pig to win. You may place a stone or destroy any stone as your move; the pig reacts after the first placement each turn, with one extra adjacent-stone startle only while it still has several escapes.",
     secret: true
   },
   powderCascade: {
@@ -3735,6 +3746,15 @@ function normaliseModeKeys(modeKeys) {
       }
     }
   }
+  if (requested.has("pig")) {
+    for (const key of Array.from(requested)) {
+      const mode = MODES[key];
+      const allowed = key === "pig" || key === "riftBloom" || !mode?.secret;
+      if (!allowed) {
+        requested.delete(key);
+      }
+    }
+  }
   if (requested.has("factoryFoundry")) {
     for (const key of Array.from(requested)) {
       if (key !== "factoryFoundry" && key !== "threePlayer" && key !== "fourPlayer") {
@@ -3896,8 +3916,13 @@ function getModeConfig(modeKeys) {
       winLength: getWinLengthFromInputs()
     });
     const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
-    config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
-    config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
+    if (keys.includes("pig")) {
+      config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; line wins are disabled in Pig.`;
+      config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn; trap the pig instead of connecting ${settings.winLength}.`;
+    } else {
+      config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
+      config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
+    }
   }
   if (keys.includes("riftBloom")) {
     const riftStep = getRiftBloomCellModulusFromInputs();
@@ -4122,6 +4147,10 @@ function usesChaosVoteMode(state) {
 
 function usesRiftBloomMode(state) {
   return Boolean(state && hasMode(state, "riftBloom"));
+}
+
+function usesPigMode(state) {
+  return Boolean(state && hasMode(state, "pig"));
 }
 
 function usesTideKitchenMode(state) {
@@ -5034,6 +5063,7 @@ function makeInitialState(
     factory: null,
     chaos: null,
     powder: null,
+    pig: null,
     tideKitchen: null
   };
   if (usesArmoryMode(state)) {
@@ -5068,6 +5098,12 @@ function makeInitialState(
       ? `ghosts resolve after ${turns} turn${turns === 1 ? "" : "s"} to the adjacent majority`
       : `anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones within ${turns} turn${turns === 1 ? "" : "s"}`;
     state.log[0] = `Rift Bloom started: 1 in ${getRiftBloomCellModulus(state)} cells shimmer. Place on them to grow mirrored ghosts; ${riftRule}.`;
+  }
+  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state) && !usesTideKitchenMode(state)) {
+    state.pig = createPigStateForGame(state);
+    state.log[0] = usesRiftBloomMode(state)
+      ? "Pig + Rift Bloom started: the pig blocks the origin, rift cells still sprout mirrored ghosts, and only the player who places the trapping stone wins. The pig can startle once from an adjacent later stone while it still has room."
+      : "Pig started: the pig blocks the origin, pathfinds after your first stone placement each turn, can startle once from an adjacent later stone while it still has room, and only the player who places the trapping stone wins.";
   }
   if (usesPowderMode(state)) {
     state.powder = createPowderStateForGame();
@@ -6383,6 +6419,9 @@ function isHexOpenForBird(state, hex, birdKind) {
   if (isStoneOccupied(state, hex)) {
     return false;
   }
+  if (getPigAt(state, hex)) {
+    return false;
+  }
   if (safeBirdKind === "kingDuck" && state.panicZones?.[keyOf(hex.q, hex.r)]) {
     return false;
   }
@@ -6399,10 +6438,372 @@ function isHexOpenForBird(state, hex, birdKind) {
   return true;
 }
 
+function normalisePigHexForMode(state, hex) {
+  if (usesRadialGridMode(state)) {
+    return normaliseRadialCell(hex);
+  }
+  return {
+    q: Math.trunc(Number(hex?.q) || 0),
+    r: Math.trunc(Number(hex?.r) || 0)
+  };
+}
+
+function getPigStartHex(state) {
+  return normalisePigHexForMode(state, { q: 0, r: 0 });
+}
+
+function createPigStateForGame(state) {
+  return {
+    hex: getPigStartHex(state),
+    trappedBy: 0,
+    lastMove: null,
+    lastTrappingHex: null,
+    lastStuckTurn: null,
+    reactionsThisTurn: 0,
+    movedThisTurn: false
+  };
+}
+
+function ensurePigState(state) {
+  if (!usesPigMode(state)) {
+    return null;
+  }
+  if (!state.pig || typeof state.pig !== "object") {
+    state.pig = createPigStateForGame(state);
+  }
+  state.pig.hex = normalisePigHexForMode(state, state.pig.hex || getPigStartHex(state));
+  state.pig.trappedBy = isValidPlayerNumber(state.pig.trappedBy, state) ? Math.trunc(Number(state.pig.trappedBy)) : 0;
+  const reactionCount = Math.trunc(Number(state.pig.reactionsThisTurn));
+  state.pig.reactionsThisTurn = Number.isFinite(reactionCount) && reactionCount > 0
+    ? Math.min(PIG_MAX_REACTIONS_PER_TURN, reactionCount)
+    : (state.pig.movedThisTurn ? 1 : 0);
+  state.pig.movedThisTurn = state.pig.reactionsThisTurn > 0;
+  if (state.pig.lastTrappingHex) {
+    state.pig.lastTrappingHex = normalisePigHexForMode(state, state.pig.lastTrappingHex);
+  }
+  return state.pig;
+}
+
+function getPigHex(state) {
+  return ensurePigState(state)?.hex || null;
+}
+
+function getPigAt(state, hex) {
+  const pigHex = getPigHex(state);
+  if (!pigHex || !hex) {
+    return false;
+  }
+  return equalHex(normalisePigHexForMode(state, pigHex), normalisePigHexForMode(state, hex));
+}
+
+function isPigMoveTargetOpen(state, hex) {
+  return Boolean(
+    hex
+      && isCellSupportedForMode(state, hex)
+      && !isStoneOccupied(state, hex)
+      && !getBirdAt(state, hex)
+      && !getBirdEchoCopyAt(state, hex)
+  );
+}
+
+function comparePigMoveTargets(state, a, b) {
+  const distanceDiff = getDistanceForMode(state, b) - getDistanceForMode(state, a);
+  if (distanceDiff !== 0) {
+    return distanceDiff;
+  }
+  const aq = Math.trunc(Number(a.q) || 0);
+  const bq = Math.trunc(Number(b.q) || 0);
+  if (aq !== bq) {
+    return aq - bq;
+  }
+  return Math.trunc(Number(a.r) || 0) - Math.trunc(Number(b.r) || 0);
+}
+
+function getUniquePigAdjacents(state, hex) {
+  return getAdjacentsForMode(state, hex)
+    .map((candidate) => normalisePigHexForMode(state, candidate))
+    .filter((candidate, index, all) => all.findIndex((other) => equalHex(other, candidate)) === index);
+}
+
+function getPigLegalMoves(state) {
+  const pigHex = getPigHex(state);
+  if (!pigHex) {
+    return [];
+  }
+  return getUniquePigAdjacents(state, pigHex)
+    .filter((hex) => isPigMoveTargetOpen(state, hex))
+    .sort((a, b) => comparePigMoveTargets(state, a, b));
+}
+
+function isPigEscapeBlocked(state, hex) {
+  const cell = getCellAt(state, hex);
+  return Boolean(cell && (cell.kind === "stone" || isRiftBloomGhostCell(cell)));
+}
+
+function isPigEscapePassable(state, hex) {
+  return Boolean(hex && isCellSupportedForMode(state, hex) && !isPigEscapeBlocked(state, hex));
+}
+
+function getPigEscapeBounds(state, pigHex) {
+  const blockerHexes = Object.keys(state.cells || {})
+    .map((key) => parseKey(key))
+    .filter((hex) => isPigEscapeBlocked(state, hex));
+  if (blockerHexes.length === 0) {
+    return null;
+  }
+
+  if (usesRadialGridMode(state)) {
+    const maxRing = Math.max(
+      normaliseRadialCell(pigHex).q,
+      ...blockerHexes.map((hex) => normaliseRadialCell(hex).q)
+    );
+    return {
+      radial: true,
+      origin: normalisePigHexForMode(state, pigHex),
+      maxPigDistance: blockerHexes.length + PIG_ESCAPE_BOUNDS_PADDING,
+      maxRing: maxRing + PIG_ESCAPE_BOUNDS_PADDING
+    };
+  }
+
+  const allHexes = [pigHex, ...blockerHexes].map((hex) => normalisePigHexForMode(state, hex));
+  return {
+    radial: false,
+    origin: normalisePigHexForMode(state, pigHex),
+    maxPigDistance: blockerHexes.length + PIG_ESCAPE_BOUNDS_PADDING,
+    minQ: Math.min(...allHexes.map((hex) => hex.q)) - PIG_ESCAPE_BOUNDS_PADDING,
+    maxQ: Math.max(...allHexes.map((hex) => hex.q)) + PIG_ESCAPE_BOUNDS_PADDING,
+    minR: Math.min(...allHexes.map((hex) => hex.r)) - PIG_ESCAPE_BOUNDS_PADDING,
+    maxR: Math.max(...allHexes.map((hex) => hex.r)) + PIG_ESCAPE_BOUNDS_PADDING
+  };
+}
+
+function isOutsidePigEscapeBounds(state, hex, bounds) {
+  if (!bounds) {
+    return true;
+  }
+  const cell = normalisePigHexForMode(state, hex);
+  if (getDistanceForMode(state, bounds.origin, cell) > bounds.maxPigDistance) {
+    return true;
+  }
+  if (bounds.radial) {
+    return cell.q > bounds.maxRing;
+  }
+  return cell.q < bounds.minQ
+    || cell.q > bounds.maxQ
+    || cell.r < bounds.minR
+    || cell.r > bounds.maxR;
+}
+
+function canPigReachUnboundedSpace(state) {
+  const pigHex = getPigHex(state);
+  if (!pigHex || !isPigEscapePassable(state, pigHex)) {
+    return false;
+  }
+  const bounds = getPigEscapeBounds(state, pigHex);
+  if (!bounds) {
+    return true;
+  }
+
+  const queue = [normalisePigHexForMode(state, pigHex)];
+  const seen = new Set([keyOf(queue[0].q, queue[0].r)]);
+  let index = 0;
+
+  while (index < queue.length) {
+    const current = queue[index];
+    index += 1;
+
+    if (isOutsidePigEscapeBounds(state, current, bounds)) {
+      return true;
+    }
+    if (seen.size > PIG_ESCAPE_SEARCH_LIMIT) {
+      return true;
+    }
+
+    for (const adjacent of getAdjacentsForMode(state, current)) {
+      const next = normalisePigHexForMode(state, adjacent);
+      const nextKey = keyOf(next.q, next.r);
+      if (seen.has(nextKey)) {
+        continue;
+      }
+      if (!isPigEscapePassable(state, next)) {
+        continue;
+      }
+      seen.add(nextKey);
+      queue.push(next);
+    }
+  }
+
+  return false;
+}
+
+function getPigEscapeRoute(state) {
+  const pigHex = getPigHex(state);
+  if (!pigHex || !isPigEscapePassable(state, pigHex)) {
+    return null;
+  }
+  const legalMoves = getPigLegalMoves(state);
+  if (legalMoves.length === 0) {
+    return null;
+  }
+  const bounds = getPigEscapeBounds(state, pigHex);
+  if (!bounds) {
+    return {
+      firstStep: { ...legalMoves[0] },
+      distance: 1
+    };
+  }
+
+  const legalMoveKeys = new Set(legalMoves.map((hex) => keyOf(hex.q, hex.r)));
+  const start = normalisePigHexForMode(state, pigHex);
+  const queue = [{
+    hex: start,
+    firstStep: null,
+    distance: 0
+  }];
+  const seen = new Set([keyOf(start.q, start.r)]);
+  let index = 0;
+
+  while (index < queue.length) {
+    const current = queue[index];
+    index += 1;
+
+    if (seen.size > PIG_ESCAPE_SEARCH_LIMIT) {
+      return {
+        firstStep: { ...legalMoves[0] },
+        distance: Infinity
+      };
+    }
+
+    const nextHexes = getUniquePigAdjacents(state, current.hex)
+      .sort((a, b) => comparePigMoveTargets(state, a, b));
+    for (const next of nextHexes) {
+      const nextKey = keyOf(next.q, next.r);
+      if (seen.has(nextKey)) {
+        continue;
+      }
+      const firstStep = current.firstStep || next;
+      if (!current.firstStep && !legalMoveKeys.has(nextKey)) {
+        continue;
+      }
+      if (!isPigEscapePassable(state, next)) {
+        continue;
+      }
+      if (isOutsidePigEscapeBounds(state, next, bounds)) {
+        return {
+          firstStep: { ...firstStep },
+          distance: current.distance + 1
+        };
+      }
+      seen.add(nextKey);
+      queue.push({
+        hex: next,
+        firstStep,
+        distance: current.distance + 1
+      });
+    }
+  }
+
+  return null;
+}
+
+function isPigTrapped(state) {
+  return usesPigMode(state) && !canPigReachUnboundedSpace(state);
+}
+
+function applyPigTrapAfterPlacement(state, owner, wasPigTrappedBefore) {
+  if (!usesPigMode(state) || wasPigTrappedBefore || state.winner) {
+    return null;
+  }
+  const pig = ensurePigState(state);
+  if (!pig || !isPigTrapped(state)) {
+    return null;
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  pig.trappedBy = safeOwner;
+  pig.lastTrappingHex = state.lastPlacement ? { ...state.lastPlacement } : null;
+  return `Pig trapped by Player ${safeOwner}.`;
+}
+
+function isPigStartledByLastPlacement(state, pig) {
+  if (!state.lastPlacement || !pig?.hex) {
+    return false;
+  }
+  return getDistanceForMode(
+    state,
+    normalisePigHexForMode(state, pig.hex),
+    normalisePigHexForMode(state, state.lastPlacement)
+  ) <= PIG_STARTLE_DISTANCE;
+}
+
+function canPigReactAfterPlacement(state, pig) {
+  if (!pig || pig.trappedBy) {
+    return false;
+  }
+  if (pig.reactionsThisTurn <= 0) {
+    return true;
+  }
+  if (pig.reactionsThisTurn >= PIG_MAX_REACTIONS_PER_TURN) {
+    return false;
+  }
+  return isPigStartledByLastPlacement(state, pig)
+    && getPigLegalMoves(state).length >= PIG_STARTLE_MIN_ESCAPE_OPTIONS;
+}
+
+function movePigAfterPlacement(state) {
+  if (!usesPigMode(state) || state.winner) {
+    return null;
+  }
+  const pig = ensurePigState(state);
+  if (!pig) {
+    return null;
+  }
+  if (pig.trappedBy) {
+    return null;
+  }
+  if (!canPigReactAfterPlacement(state, pig)) {
+    return null;
+  }
+  pig.reactionsThisTurn += 1;
+  pig.movedThisTurn = true;
+  const from = { ...pig.hex };
+  const route = getPigEscapeRoute(state);
+  if (!route?.firstStep) {
+    pig.lastMove = null;
+    pig.lastStuckTurn = state.turnCount;
+    const line = "The pig cannot find a path out.";
+    state.accountingEvents.push(line);
+    return line;
+  }
+  const to = { ...route.firstStep };
+  pig.hex = to;
+  pig.lastMove = {
+    from,
+    to,
+    turn: state.turnCount,
+    escapeDistance: route.distance
+  };
+  pig.lastStuckTurn = null;
+  const moveVerb = pig.reactionsThisTurn > 1 ? "startled and moved" : "moved";
+  const line = `The pig ${moveVerb} from (${from.q}, ${from.r}) to (${to.q}, ${to.r}).`;
+  state.accountingEvents.push(line);
+  return line;
+}
+
+function getPigTrapWinner(state) {
+  const pig = ensurePigState(state);
+  return pig && isValidPlayerNumber(pig.trappedBy, state) ? pig.trappedBy : 0;
+}
+
+function canPigDestroyCell(state, hex, cell = getCellAt(state, hex)) {
+  return Boolean(usesPigMode(state) && cell && (cell.kind === "stone" || isRiftBloomGhostCell(cell)));
+}
+
 function getPlacementAnchorHexes(state) {
+  const pigHex = getPigHex(state);
   return [
     ...Object.keys(state.cells).map((key) => parseKey(key)),
     ...getPowderSourceHexes(state),
+    ...(pigHex ? [{ ...pigHex }] : []),
     ...getBirdEntries(state).map((entry) => ({ ...entry.hex })),
     ...getBirdEchoCopyEntries(state).map((entry) => ({ ...entry.hex }))
   ];
@@ -6438,6 +6839,9 @@ function isHexBlockedBySpecials(state, hex) {
   if (getBirdAt(state, hex)) {
     return true;
   }
+  if (getPigAt(state, hex)) {
+    return true;
+  }
   if (state.panicZones[keyOf(hex.q, hex.r)]) {
     return true;
   }
@@ -6454,7 +6858,7 @@ function isHexBlockedBySpecials(state, hex) {
 }
 
 function isOccupied(state, hex) {
-  return isStoneOccupied(state, hex) || Boolean(getBirdAt(state, hex)) || Boolean(getBirdEchoCopyAt(state, hex));
+  return isStoneOccupied(state, hex) || Boolean(getBirdAt(state, hex)) || Boolean(getBirdEchoCopyAt(state, hex)) || Boolean(getPigAt(state, hex));
 }
 
 function isWithinPlacementRange(state, hex) {
@@ -8294,7 +8698,7 @@ function resolveEchoes(state) {
 
 function getOrbitDestination(state, fromHex) {
   const rotated = orbitStepForMode(state, fromHex);
-  return (getBirdAt(state, rotated) || getBirdEchoCopyAt(state, rotated)) ? { ...fromHex } : rotated;
+  return (getBirdAt(state, rotated) || getBirdEchoCopyAt(state, rotated) || getPigAt(state, rotated)) ? { ...fromHex } : rotated;
 }
 
 function resolveOrbit(state) {
@@ -9471,7 +9875,9 @@ function checkForWinner(state) {
     ? getFactoryWinner(state)
     : (usesBedSiegeMode(state)
       ? getBedSiegeWinner(state)
-      : (usesPowderMode(state) ? getPowderWinner(state) : (tideKitchenWinner || auditWholeBoardForWinner(state))));
+      : (usesPowderMode(state)
+        ? getPowderWinner(state)
+        : (usesPigMode(state) ? getPigTrapWinner(state) : (tideKitchenWinner || auditWholeBoardForWinner(state)))));
   if (winner && !state.winner) {
     state.winner = winner;
     pushLog(usesFactoryMode(state)
@@ -9480,7 +9886,9 @@ function checkForWinner(state) {
         ? `Player ${winner} wins Bed Siege.`
         : (usesPowderMode(state)
           ? `Player ${winner} wins Powder Cascade.`
-          : (tideKitchenWinner === winner ? `Player ${winner} caught the Godfish and wins Godfish Galley.` : `Player ${winner} wins.`))));
+          : (usesPigMode(state)
+            ? `Player ${winner} trapped the pig and wins.`
+            : (tideKitchenWinner === winner ? `Player ${winner} caught the Godfish and wins Godfish Galley.` : `Player ${winner} wins.`)))));
   }
   return winner;
 }
@@ -9496,6 +9904,11 @@ function finishTurnRotation(state, previousPlayer) {
   state.egyptianRemoval = null;
   state.egyptianRemovalsThisTurn = createPlayerMap(getPlayerCount(state), () => 0);
   state.lastPlacedThisTurn = [];
+  const pig = ensurePigState(state);
+  if (pig) {
+    pig.reactionsThisTurn = 0;
+    pig.movedThisTurn = false;
+  }
   syncClockTickerFromState();
 }
 
@@ -9560,6 +9973,7 @@ function placeTurnTile(state, hex, owner) {
   if (existingCell) {
     return null;
   }
+  const wasPigTrappedBefore = isPigTrapped(state);
 
   if (usesPowderMode(state)) {
     const result = spawnPowderCell(state, hex, owner);
@@ -9588,6 +10002,8 @@ function placeTurnTile(state, hex, owner) {
   const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
   const chaosMessages = applyChaosAfterPlacementEffects(state, state.lastPlacement, owner);
   const riftMessages = applyRiftBloomPlacementEffects(state, state.lastPlacement, owner);
+  const pigMoveMessage = movePigAfterPlacement(state);
+  const pigMessage = applyPigTrapAfterPlacement(state, owner, wasPigTrappedBefore);
 
   queueEcho(state, {
     kind: "stone",
@@ -9604,6 +10020,8 @@ function placeTurnTile(state, hex, owner) {
     ...tideKitchenMessages,
     ...chaosMessages,
     ...riftMessages,
+    pigMoveMessage,
+    pigMessage,
     powderMessage
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
@@ -10871,6 +11289,21 @@ function clickPlacement(hex) {
     return;
   }
 
+  const targetCell = getCellAt(state, hex);
+  if (canPigDestroyCell(state, hex, targetCell)) {
+    saveHistory();
+    const removed = removeStone(state, hex, { ignoreChaosShield: true });
+    rebuildPanicZones(state);
+    const destroyedLabel = isRiftBloomGhostCell(removed) ? "rift ghost" : "stone";
+    pushLog(`Player ${state.turnPlayer} destroyed a ${destroyedLabel} at (${hex.q}, ${hex.r}).`);
+    finishSubmove(state);
+    updateStatus();
+    syncClockTickerFromState();
+    render();
+    broadcastOnlineState();
+    return;
+  }
+
   if (!isLegalPlacement(state, hex)) {
     return;
   }
@@ -10881,6 +11314,14 @@ function clickPlacement(hex) {
     return;
   }
   pushLog(placementResult.log);
+
+  if (usesPigMode(state) && getPigTrapWinner(state) && checkForWinner(state)) {
+    updateStatus();
+    syncClockTickerFromState();
+    render();
+    broadcastOnlineState();
+    return;
+  }
 
   if (placementResult.needsEgyptianChoice) {
     updateStatus();
@@ -11562,7 +12003,7 @@ function updateStatus() {
   if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
   } else if (!state.openingMoveDone) {
-    ui.subturnText.textContent = "Opening move: 1 placement";
+    ui.subturnText.textContent = usesPigMode(state) ? "Opening move: the pig blocks the origin" : "Opening move: 1 placement";
   } else if (hasEgyptianRemovalPhase(state)) {
     const owner = state.egyptianRemoval.owner;
     const remaining = state.egyptianRemoval.remaining;
@@ -11623,11 +12064,26 @@ function updateStatus() {
     const claimLabel = usesRiftBloomContestClaim(state) ? "majority claim" : "anchor";
     ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | ${getRiftBloomGhostTurns(state)}t | 1/${coverageStep} ${activeLabel} | ${claimLabel}`;
   }
+  if (usesPigMode(state) && !state.winner) {
+    const pigHex = getPigHex(state);
+    const pigMoves = getPigLegalMoves(state).length;
+    const pig = ensurePigState(state);
+    const pigReaction = !pig || pig.reactionsThisTurn <= 0
+      ? "ready"
+      : (pig.reactionsThisTurn >= PIG_MAX_REACTIONS_PER_TURN
+        ? "settled"
+        : (pigMoves >= PIG_STARTLE_MIN_ESCAPE_OPTIONS ? "wary" : "cornered"));
+    ui.subturnText.textContent += pigHex
+      ? ` | Pig (${pigHex.q}, ${pigHex.r}) | ${pigReaction} | ${pigMoves} escape${pigMoves === 1 ? "" : "s"}`
+      : " | Pig loose";
+  }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
   }
-  if (!usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesTideKitchenMode(state)) {
+  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesTideKitchenMode(state)) {
+    ui.subturnText.textContent += " | Trap the pig";
+  } else if (!usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesTideKitchenMode(state)) {
     ui.subturnText.textContent += ` | Connect ${getWinLength(state)}`;
   }
 
@@ -13489,6 +13945,26 @@ function drawBirdPiece(birdKind, birdHex, size) {
   }
 }
 
+function drawPigPiece(pigHex, size) {
+  const world = boardCellToPixel(pigHex, size, game.state);
+  const screen = worldToScreen(world.x, world.y);
+  const trapped = Boolean(getPigTrapWinner(game.state));
+  drawBoardShape(
+    screen.x,
+    screen.y,
+    size * (trapped ? 0.9 : 0.8),
+    trapped ? "rgba(255, 111, 177, 0.22)" : "rgba(255, 169, 194, 0.86)",
+    trapped ? "rgba(255, 246, 214, 0.9)" : "rgba(255,255,255,0.62)",
+    trapped ? 2.8 : 1.7,
+    pigHex
+  );
+  ctx.fillStyle = "rgba(44, 20, 30, 0.88)";
+  ctx.font = `${Math.max(12, size * 0.72)}px system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("\u{1F416}", screen.x, screen.y + 1);
+}
+
 function drawPowderClaimedCells() {
   const powder = ensurePowderState(game.state);
   if (!powder) {
@@ -13955,6 +14431,15 @@ function drawPieces() {
     }
   }
 
+  const pigHex = getPigHex(game.state);
+  if (pigHex) {
+    const world = boardCellToPixel(pigHex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (!(screen.x < -size * 2 || screen.y < -size * 2 || screen.x > w + size * 2 || screen.y > h + size * 2)) {
+      drawPigPiece(pigHex, size);
+    }
+  }
+
   for (const { birdKind, hex } of getBirdEntries(game.state)) {
     const world = boardCellToPixel(hex, size, game.state);
     const screen = worldToScreen(world.x, world.y);
@@ -14139,7 +14624,7 @@ function drawPowderWinnerLine(size) {
 }
 
 function drawWinnerLineHint() {
-  if (usesBedSiegeMode(game.state) || usesFactoryMode(game.state)) {
+  if (usesBedSiegeMode(game.state) || usesFactoryMode(game.state) || usesPigMode(game.state)) {
     return;
   }
   const size = currentHexSize();
