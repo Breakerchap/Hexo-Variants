@@ -883,7 +883,8 @@ const MODES = {
   pig: {
     name: "Pig",
     summary: "Escape puzzle: a pig starts at the origin, blocks placement, pathfinds one tile toward open space after the first stone placement each turn, and can startle once more only if an adjacent later stone lands while it still has room. Click an occupied tile to destroy it instead of placing.",
-    hint: "Trap the pig to win. You may place a stone or destroy any stone as your move; the pig reacts after the first placement each turn, with one extra adjacent-stone startle only while it still has several escapes."
+    hint: "Trap the pig to win. You may place a stone or destroy any stone as your move; the pig reacts after the first placement each turn, with one extra adjacent-stone startle only while it still has several escapes.",
+    secret: true
   },
   powderCascade: {
     name: "Powder Cascade",
