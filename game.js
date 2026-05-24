@@ -5290,6 +5290,10 @@ function setModeUI(modeKeys) {
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
 }
 
+function hasPendingModeSelection(state = game.state) {
+  return Boolean(state) && modeKeySignature(getSelectedModeKeys()) !== modeKeySignature(state.modeKeys);
+}
+
 function updateLegendUI(modeKeys = game.state?.modeKeys || game.previewModeKeys || []) {
   const keys = normaliseModeKeys(modeKeys);
   const selectedModes = new Set(keys);
@@ -12151,7 +12155,7 @@ function renderChaosPanel() {
 function updateStatus() {
   const state = game.state;
   ensureClockState(state);
-  if (game.modeUiSignature !== modeKeySignature(state.modeKeys)) {
+  if (!hasPendingModeSelection(state) && game.modeUiSignature !== modeKeySignature(state.modeKeys)) {
     setModeUI(state.modeKeys);
   }
 
