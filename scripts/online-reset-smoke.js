@@ -25,6 +25,12 @@ function makePort() {
   return 18080 + Math.floor(Math.random() * 2000);
 }
 
+function makeSessionId(label) {
+  const random = Math.random().toString(36).slice(2, 12);
+  const stamp = Date.now().toString(36);
+  return `test-${label}-${stamp}-${random}`;
+}
+
 function spawnServer(port) {
   const child = spawn(
     process.execPath,
@@ -35,7 +41,8 @@ function spawnServer(port) {
         ...process.env,
         PORT: String(port),
         WS_PATH: "/ws",
-        WS_HEARTBEAT_MS: "5000"
+        WS_HEARTBEAT_MS: "5000",
+        ROOM_RECONNECT_GRACE_MS: "1000"
       },
       stdio: ["ignore", "pipe", "pipe"]
     }
@@ -79,7 +86,8 @@ function spawnServer(port) {
 }
 
 class WsClient {
-  constructor(url) {
+  constructor(url, sessionId = null) {
+    this.sessionId = sessionId || makeSessionId("client");
     this.ws = new WebSocket(url);
     this.messages = [];
     this.waiters = [];
@@ -167,14 +175,16 @@ async function connectClientPair(url) {
 
 async function createJoinedRoom(url) {
   const pair = await connectClientPair(url);
-  pair.clientA.send({ type: "createRoom" });
+  pair.clientA.send({ type: "createRoom", sessionId: pair.clientA.sessionId });
   const roomJoinA = await pair.clientA.waitFor((m) => m.type === "roomJoined" && m.roomCode);
   const roomCode = roomJoinA.roomCode;
   assert.ok(roomCode, "Room code should be present after createRoom");
+  assert.equal(roomJoinA.yourPlayerSlot, 1);
 
-  pair.clientB.send({ type: "joinRoom", roomCode });
+  pair.clientB.send({ type: "joinRoom", roomCode, sessionId: pair.clientB.sessionId });
   const roomJoinB = await pair.clientB.waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
   assert.equal(roomJoinB.roomCode, roomCode);
+  assert.equal(roomJoinB.yourPlayerSlot, 2);
 
   return { ...pair, roomCode };
 }
@@ -229,6 +239,95 @@ async function runConcurrentRoomSmoke(url, roomCount) {
   await closeClients(rooms.flatMap((room) => [room.clientA, room.clientB]));
 }
 
+async function runReconnectSmoke(url) {
+  const room = await createJoinedRoom(url);
+  const { roomCode } = room;
+  const sessionA = room.clientA.sessionId;
+  const sessionB = room.clientB.sessionId;
+
+  room.clientA.send({
+    type: "stateUpdate",
+    baseRevision: 0,
+    state: makeState(1, "reconnect-seed-r1")
+  });
+
+  const r1A = await room.clientA.waitFor((m) => m.type === "stateUpdate" && m.revision === 1);
+  const r1B = await room.clientB.waitFor((m) => m.type === "stateUpdate" && m.revision === 1);
+  assert.equal(r1A.state.marker, "reconnect-seed-r1");
+  assert.equal(r1B.state.marker, "reconnect-seed-r1");
+
+  await closeClients([room.clientA, room.clientB]);
+  await sleep(100);
+
+  const clientA2 = new WsClient(url, sessionA);
+  const clientB2 = new WsClient(url, sessionB);
+
+  try {
+    await clientA2.openPromise;
+    await clientA2.waitFor((m) => m.type === "welcome");
+    clientA2.send({ type: "joinRoom", roomCode, sessionId: clientA2.sessionId });
+    const rejoinA = await clientA2.waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
+    assert.equal(rejoinA.yourPlayerSlot, 1);
+    assert.equal(rejoinA.revision, 1);
+    assert.equal(rejoinA.state.marker, "reconnect-seed-r1");
+
+    clientA2.send({
+      type: "stateUpdate",
+      baseRevision: 1,
+      state: makeState(2, "after-player-one-reconnect-r2")
+    });
+
+    const r2A = await clientA2.waitFor((m) => m.type === "stateUpdate" && m.revision === 2);
+    assert.equal(r2A.state.marker, "after-player-one-reconnect-r2");
+
+    await clientB2.openPromise;
+    await clientB2.waitFor((m) => m.type === "welcome");
+    clientB2.send({ type: "joinRoom", roomCode, sessionId: clientB2.sessionId });
+    const rejoinB = await clientB2.waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
+    assert.equal(rejoinB.yourPlayerSlot, 2);
+    assert.equal(rejoinB.revision, 2);
+    assert.equal(rejoinB.state.marker, "after-player-one-reconnect-r2");
+
+    clientB2.send({
+      type: "stateUpdate",
+      baseRevision: 2,
+      state: makeState(1, "after-player-two-reconnect-r3")
+    });
+
+    const r3A = await clientA2.waitFor((m) => m.type === "stateUpdate" && m.revision === 3);
+    const r3B = await clientB2.waitFor((m) => m.type === "stateUpdate" && m.revision === 3);
+    assert.equal(r3A.state.marker, "after-player-two-reconnect-r3");
+    assert.equal(r3B.state.marker, "after-player-two-reconnect-r3");
+  } finally {
+    await closeClients([clientA2, clientB2]);
+  }
+}
+
+async function runSlotReleaseSmoke(url) {
+  const room = await createJoinedRoom(url);
+  const replacement = new WsClient(url);
+
+  try {
+    await room.clientB.close();
+    await sleep(1200);
+
+    await replacement.openPromise;
+    await replacement.waitFor((m) => m.type === "welcome");
+    replacement.send({
+      type: "joinRoom",
+      roomCode: room.roomCode,
+      sessionId: replacement.sessionId
+    });
+
+    const joinedReplacement = await replacement.waitFor(
+      (m) => m.type === "roomJoined" && m.roomCode === room.roomCode
+    );
+    assert.equal(joinedReplacement.yourPlayerSlot, 2);
+  } finally {
+    await closeClients([room.clientA, room.clientB, replacement]);
+  }
+}
+
 async function main() {
   const port = makePort();
   const { child, ready } = spawnServer(port);
@@ -238,6 +337,9 @@ async function main() {
   let clientB = null;
   try {
     await ready;
+    await runReconnectSmoke(url);
+    await runSlotReleaseSmoke(url);
+
     const joinedRoom = await createJoinedRoom(url);
     clientA = joinedRoom.clientA;
     clientB = joinedRoom.clientB;
@@ -319,7 +421,7 @@ async function main() {
 
     await runConcurrentRoomSmoke(url, 10);
 
-    console.log("Online reset and concurrency smoke test passed.");
+    console.log("Online reconnect, reset, and concurrency smoke test passed.");
   } finally {
     if (clientA) {
       await clientA.close().catch(() => {});

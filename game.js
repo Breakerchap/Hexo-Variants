@@ -3803,12 +3803,51 @@ const game = {
   futureHistory: []
 };
 
+const ONLINE_SESSION_STORAGE_KEY = "hexTttOnlineSessionId";
+
+function createOnlineSessionId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  const randomPart = Math.random().toString(36).slice(2);
+  const timePart = Date.now().toString(36);
+  return `hex-${timePart}-${randomPart}`;
+}
+
+function getStoredOnlineSessionId() {
+  try {
+    const stored = window.sessionStorage?.getItem(ONLINE_SESSION_STORAGE_KEY);
+    if (/^[A-Za-z0-9_-]{12,128}$/.test(stored || "")) {
+      return stored;
+    }
+  } catch (error) {
+    // Private browsing or embedded contexts can block session storage.
+  }
+  return "";
+}
+
+function getOrCreateOnlineSessionId() {
+  const existing = getStoredOnlineSessionId();
+  if (existing) {
+    return existing;
+  }
+
+  const next = createOnlineSessionId();
+  try {
+    window.sessionStorage?.setItem(ONLINE_SESSION_STORAGE_KEY, next);
+  } catch (error) {
+    // A per-page session still works if storage is unavailable.
+  }
+  return next;
+}
+
 const online = {
   socket: null,
   pendingAction: null,
   isConnected: false,
   roomCode: "",
   desiredRoomCode: "",
+  sessionId: getOrCreateOnlineSessionId(),
   clientId: null,
   assignedPlayer: null,
   lastRevision: 0,
@@ -5872,7 +5911,7 @@ function scheduleOnlineReconnect(roomCode) {
   online.reconnectTimerId = window.setTimeout(() => {
     online.reconnectTimerId = null;
     connectOnline(() => {
-      sendOnlineMessage({ type: "joinRoom", roomCode });
+      sendOnlineMessage({ type: "joinRoom", roomCode, sessionId: online.sessionId });
     });
   }, delayMs);
 
@@ -6025,6 +6064,10 @@ function connectOnline(afterConnect) {
 }
 
 function updateAssignmentFromMessage(message) {
+  if (message && Number.isInteger(message.yourPlayerSlot)) {
+    online.assignedPlayer = message.yourPlayerSlot || null;
+    return;
+  }
   if (message && message.playerAssignments && typeof message.playerAssignments === "object") {
     online.latestPlayerAssignments = message.playerAssignments;
   }
@@ -6159,7 +6202,7 @@ function createOnlineRoom() {
   online.desiredRoomCode = "";
   online.reconnectDelayMs = ONLINE_RECONNECT_BASE_MS;
   connectOnline(() => {
-    sendOnlineMessage({ type: "createRoom" });
+    sendOnlineMessage({ type: "createRoom", sessionId: online.sessionId });
   });
 }
 
@@ -6173,7 +6216,7 @@ function joinOnlineRoom() {
   online.desiredRoomCode = roomCode;
   online.reconnectDelayMs = ONLINE_RECONNECT_BASE_MS;
   connectOnline(() => {
-    sendOnlineMessage({ type: "joinRoom", roomCode });
+    sendOnlineMessage({ type: "joinRoom", roomCode, sessionId: online.sessionId });
   });
 }
 
