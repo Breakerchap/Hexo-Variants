@@ -234,6 +234,59 @@ body::after {
   color: var(--text);
 }
 
+.infoMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.infoMenu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.infoMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.infoMenu > summary::after {
+  content: "+";
+  float: right;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.infoMenu[open] > summary::after {
+  content: "-";
+}
+
+.infoMenu[open] > summary {
+  margin-bottom: 14px;
+}
+
+.infoMenu > summary:focus-visible {
+  outline: 2px solid rgba(109, 198, 255, 0.78);
+  outline-offset: 2px;
+}
+
+.infoMenu > .section,
+.infoMenu > .statusCard,
+.infoMenu > .logCard {
+  margin-bottom: 14px;
+}
+
+.infoMenu > :last-child {
+  margin-bottom: 0;
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

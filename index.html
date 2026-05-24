@@ -252,49 +252,52 @@
         <div class="small" id="onlineRoleText">Role: local</div>
       </section>
 
-      <section class="statusCard">
-        <div class="small">Current turn</div>
-        <div id="turnBig" class="turnBig playerP1">Player 1</div>
-        <div id="subturnText" class="small">Opening move: 1 placement</div>
-        <div style="height: 10px"></div>
-        <div class="kv">
-          <strong>Mode</strong><span id="modeName">Classic</span>
-          <strong>Round</strong><span id="roundText">1</span>
-          <strong>Moves left</strong><span id="movesLeftText">1</span>
-          <strong>Bird phase</strong><span id="duckPhaseText">No</span>
-          <strong>Winner</strong><span id="winnerText">None</span>
-        </div>
-        <div style="height: 12px"></div>
-        <div class="kv">
-          <strong>Player 1 clock</strong><span id="p1ClockText">05:00</span>
-          <strong>Player 2 clock</strong><span id="p2ClockText">05:00</span>
-          <strong id="p3ClockLabel" hidden>Player 3 clock</strong><span id="p3ClockText" hidden>05:00</span>
-          <strong id="p4ClockLabel" hidden>Player 4 clock</strong><span id="p4ClockText" hidden>05:00</span>
-        </div>
-      </section>
+      <details class="infoMenu">
+        <summary>Game info</summary>
+        <section class="statusCard">
+          <div class="small">Current turn</div>
+          <div id="turnBig" class="turnBig playerP1">Player 1</div>
+          <div id="subturnText" class="small">Opening move: 1 placement</div>
+          <div style="height: 10px"></div>
+          <div class="kv">
+            <strong>Mode</strong><span id="modeName">Classic</span>
+            <strong>Round</strong><span id="roundText">1</span>
+            <strong>Moves left</strong><span id="movesLeftText">1</span>
+            <strong>Bird phase</strong><span id="duckPhaseText">No</span>
+            <strong>Winner</strong><span id="winnerText">None</span>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="kv">
+            <strong>Player 1 clock</strong><span id="p1ClockText">05:00</span>
+            <strong>Player 2 clock</strong><span id="p2ClockText">05:00</span>
+            <strong id="p3ClockLabel" hidden>Player 3 clock</strong><span id="p3ClockText" hidden>05:00</span>
+            <strong id="p4ClockLabel" hidden>Player 4 clock</strong><span id="p4ClockText" hidden>05:00</span>
+          </div>
+        </section>
 
-      <section class="section">
-        <div class="small" style="margin-bottom: 8px; color: var(--text);">Mode summary</div>
-        <p id="modeSummary" class="modeSummary"></p>
-      </section>
+        <section class="section">
+          <div class="small" style="margin-bottom: 8px; color: var(--text);">Mode summary</div>
+          <p id="modeSummary" class="modeSummary"></p>
+        </section>
 
-      <section class="section">
-        <div class="small" style="margin-bottom: 8px; color: var(--text);">Rules & controls</div>
-        <ul class="rules">
-          <li>Click a board space to place.</li>
-          <li>The first move must be at (0, 0).</li>
-          <li>Later placements must be within 11 spaces of an existing board space.</li>
-          <li>Drag with right mouse button or middle mouse to pan.</li>
-          <li>Scroll to zoom.</li>
-          <li>Winning line length uses the current in-a-row setting.</li>
-          <li>The opening turn is always 1 placement, no matter who starts.</li>
-        </ul>
-      </section>
+        <section class="section">
+          <div class="small" style="margin-bottom: 8px; color: var(--text);">Rules & controls</div>
+          <ul class="rules">
+            <li>Click a board space to place.</li>
+            <li>The first move must be at (0, 0).</li>
+            <li>Later placements must be within 11 spaces of an existing board space.</li>
+            <li>Drag with right mouse button or middle mouse to pan.</li>
+            <li>Scroll to zoom.</li>
+            <li>Winning line length uses the current in-a-row setting.</li>
+            <li>The opening turn is always 1 placement, no matter who starts.</li>
+          </ul>
+        </section>
 
-      <section class="logCard">
-        <div class="small" style="color: var(--text);">Chronicle</div>
-        <div class="log" id="log"></div>
-      </section>
+        <section class="logCard">
+          <div class="small" style="color: var(--text);">Chronicle</div>
+          <div class="log" id="log"></div>
+        </section>
+      </details>
 
       <footer class="siteFooter">
         <div class="siteFooterText">
