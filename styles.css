@@ -87,6 +87,16 @@ body.extremeLdmMode::after {
   display: none;
 }
 
+html,
+body {
+  background: var(--bg);
+}
+
+body::before,
+body::after {
+  opacity: 0;
+}
+
 @keyframes bgFloatA {
   0% {
     transform: translate3d(-34%, -30%, 0) scale(0.82) rotate(-8deg);
