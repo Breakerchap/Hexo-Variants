@@ -916,15 +916,23 @@ canvas:focus-visible {
   margin-top: 2px;
 }
 
-.boardClocks {
+.boardHudStack {
   position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 6;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
   pointer-events: none;
+}
+
+.boardClocks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 .boardClock {
@@ -987,9 +995,6 @@ canvas:focus-visible {
 }
 
 .help {
-  position: absolute;
-  right: 16px;
-  bottom: 176px;
   background: rgba(8, 12, 26, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
@@ -1206,9 +1211,13 @@ canvas:focus-visible {
     border-radius: 11px;
   }
 
-  .boardClocks {
+  .boardHudStack {
     right: 10px;
     bottom: 10px;
+    gap: 8px;
+  }
+
+  .boardClocks {
     gap: 8px;
   }
 

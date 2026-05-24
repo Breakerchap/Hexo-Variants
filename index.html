@@ -324,31 +324,33 @@
         </div>
       </div>
       <div id="meteorTimerBadge" class="meteorTimerBadge" hidden>Meteor in 3 turns</div>
-      <div class="boardClocks" aria-live="polite">
-        <div id="boardClockP4" class="boardClock boardClockP4" hidden>
-          <div class="boardClockLabel">Player 4</div>
-          <div id="boardClockP4Time" class="boardClockTime">05:00</div>
+      <div class="boardHudStack">
+        <div class="help">
+          <div><span class="legendDot" style="background: var(--p1)"></span>Player 1</div>
+          <div><span class="legendDot" style="background: var(--p2)"></span>Player 2</div>
+          <div id="legendP3" hidden><span class="legendDot" style="background: var(--p3)"></span>Player 3</div>
+          <div id="legendP4" hidden><span class="legendDot" style="background: var(--p4)"></span>Player 4</div>
+          <div id="legendDuck" hidden><span class="legendDot" style="background: var(--duck)"></span>Duck</div>
+          <div id="legendPig" hidden><span class="legendDot" style="background: var(--pig)"></span>Pig</div>
         </div>
-        <div id="boardClockP3" class="boardClock boardClockP3" hidden>
-          <div class="boardClockLabel">Player 3</div>
-          <div id="boardClockP3Time" class="boardClockTime">05:00</div>
+        <div class="boardClocks" aria-live="polite">
+          <div id="boardClockP4" class="boardClock boardClockP4" hidden>
+            <div class="boardClockLabel">Player 4</div>
+            <div id="boardClockP4Time" class="boardClockTime">05:00</div>
+          </div>
+          <div id="boardClockP3" class="boardClock boardClockP3" hidden>
+            <div class="boardClockLabel">Player 3</div>
+            <div id="boardClockP3Time" class="boardClockTime">05:00</div>
+          </div>
+          <div id="boardClockP2" class="boardClock boardClockP2">
+            <div class="boardClockLabel">Player 2</div>
+            <div id="boardClockP2Time" class="boardClockTime">05:00</div>
+          </div>
+          <div id="boardClockP1" class="boardClock boardClockP1">
+            <div class="boardClockLabel">Player 1</div>
+            <div id="boardClockP1Time" class="boardClockTime">05:00</div>
+          </div>
         </div>
-        <div id="boardClockP2" class="boardClock boardClockP2">
-          <div class="boardClockLabel">Player 2</div>
-          <div id="boardClockP2Time" class="boardClockTime">05:00</div>
-        </div>
-        <div id="boardClockP1" class="boardClock boardClockP1">
-          <div class="boardClockLabel">Player 1</div>
-          <div id="boardClockP1Time" class="boardClockTime">05:00</div>
-        </div>
-      </div>
-      <div class="help">
-        <div><span class="legendDot" style="background: var(--p1)"></span>Player 1</div>
-        <div><span class="legendDot" style="background: var(--p2)"></span>Player 2</div>
-        <div id="legendP3" hidden><span class="legendDot" style="background: var(--p3)"></span>Player 3</div>
-        <div id="legendP4" hidden><span class="legendDot" style="background: var(--p4)"></span>Player 4</div>
-        <div><span class="legendDot" style="background: var(--duck)"></span>Duck</div>
-        <div><span class="legendDot" style="background: var(--pig)"></span>Pig</div>
       </div>
     </main>
   </div>

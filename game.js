@@ -117,6 +117,8 @@ const ui = {
   boardClockP4Time: document.getElementById("boardClockP4Time"),
   legendP3: document.getElementById("legendP3"),
   legendP4: document.getElementById("legendP4"),
+  legendDuck: document.getElementById("legendDuck"),
+  legendPig: document.getElementById("legendPig"),
   onlineCreateBtn: document.getElementById("onlineCreateBtn"),
   onlineJoinBtn: document.getElementById("onlineJoinBtn"),
   onlineLeaveBtn: document.getElementById("onlineLeaveBtn"),
@@ -5275,6 +5277,7 @@ function setModeUI(modeKeys) {
   ui.modeSummary.textContent = mode.summary;
   ui.overlayTitle.textContent = mode.name;
   ui.overlayHint.textContent = mode.hint;
+  updateLegendUI(modeKeys);
   refreshEgyptianCapControls(modeKeys);
   refreshSecretRuleControls(modeKeys);
   refreshArmoryControls(modeKeys);
@@ -5285,6 +5288,16 @@ function setModeUI(modeKeys) {
   refreshChaosControls(modeKeys);
   refreshRiftBloomControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
+}
+
+function updateLegendUI(modeKeys = game.state?.modeKeys || game.previewModeKeys || []) {
+  const keys = normaliseModeKeys(modeKeys);
+  const selectedModes = new Set(keys);
+  const playerCount = getPlayerCountFromModeKeys(keys);
+  if (ui.legendP3) ui.legendP3.hidden = playerCount < 3;
+  if (ui.legendP4) ui.legendP4.hidden = playerCount < 4;
+  if (ui.legendDuck) ui.legendDuck.hidden = !BIRD_KINDS.some((modeKey) => selectedModes.has(modeKey));
+  if (ui.legendPig) ui.legendPig.hidden = !selectedModes.has("pig");
 }
 
 function setOptionsMenuCollapsed(collapsed) {
@@ -5727,8 +5740,7 @@ function updateClockUI() {
       row.board.classList.toggle("flagged", flaggedPlayer === row.player);
     }
   }
-  if (ui.legendP3) ui.legendP3.hidden = playerCount < 3;
-  if (ui.legendP4) ui.legendP4.hidden = playerCount < 4;
+  updateLegendUI(game.state.modeKeys);
 }
 
 function stopClockTicker() {
