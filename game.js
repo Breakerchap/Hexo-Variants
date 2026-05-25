@@ -4387,7 +4387,7 @@ function updateTurnOrderSummary(playerCount = getPlayerCountFromModeKeys(getSele
 
 function isCustomMoveOrderAllowedForModeKeys(modeKeys) {
   const keys = normaliseModeKeys(modeKeys);
-  return !keys.includes("bedSiege") && !keys.includes("factoryFoundry");
+  return !keys.includes("powderCascade") && !keys.includes("bedSiege") && !keys.includes("factoryFoundry");
 }
 
 function cloneCustomMoveOrderChunks(chunks) {
@@ -4426,7 +4426,7 @@ function customMoveOrderStoneOwnerFromSymbol(symbol) {
 function normaliseCustomMoveOrderActionSymbol(symbol, playerCount) {
   const value = String(symbol || "").trim().toLowerCase();
   if (value === "d") return { type: "bird", birdKind: "duck" };
-  if (value === "k") return { type: "bird", birdKind: "kingDuck" };
+  if (value === "k" || value === "kd") return { type: "bird", birdKind: "kingDuck" };
   const owner = customMoveOrderStoneOwnerFromSymbol(value);
   return owner && isValidPlayerNumber(owner, playerCount) ? { type: "stone", owner } : null;
 }
@@ -4499,10 +4499,14 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
     index += 1;
 
     const actions = [];
-    while (index < syntax.length && syntax[index] !== "," && syntax[index] !== ")") {
-      const symbol = syntax[index];
-      index += 1;
-      if (/\s/.test(symbol)) continue;
+    while (index < syntax.length) {
+      skipWhitespace();
+      if (index >= syntax.length || syntax[index] === "," || syntax[index] === ")") {
+        break;
+      }
+      const remaining = syntax.slice(index).toLowerCase();
+      const symbol = remaining.startsWith("kd") ? syntax.slice(index, index + 2) : syntax[index];
+      index += symbol.length;
       const action = normaliseCustomMoveOrderActionSymbol(symbol, safePlayerCount);
       if (!action) fail(`Unknown action "${symbol}"`);
       if (action.type === "stone" && action.owner !== player) {
@@ -5158,6 +5162,7 @@ function finishCustomMoveOrderAction(state) {
     syncCustomMoveOrderTurnState(state);
     return true;
   }
+  clearCustomBirdsNoLongerMoved(state);
   state.movesLeftInTurn = 0;
   state.duckPhase = false;
   state.currentBirdMoveKind = null;
