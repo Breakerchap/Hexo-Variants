@@ -49,8 +49,8 @@ If your frontend and backend are on different hosts, set the client WebSocket en
 
 ## Rules
 
-- Player 1 opens with **1 placement**.
-- Every turn after that uses **2 placements**.
+- Player 1 opens with **1 placement** by default; the dev rules panel can change the first-turn placement count.
+- Every turn after that uses **2 placements** by default and can be changed in the main rules panel.
 - The first move must be at **(0, 0)**.
 - Later placements must be within **11 spaces** of an existing occupied space.
 - A line of **6 stones** wins.

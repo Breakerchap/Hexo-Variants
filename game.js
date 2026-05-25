@@ -29,7 +29,9 @@ const ui = {
   egyptianCapInput: document.getElementById("egyptianCapInput"),
   egyptianCapSummaryText: document.getElementById("egyptianCapSummaryText"),
   secretRuleControls: document.getElementById("secretRuleControls"),
+  devRuleControls: document.getElementById("devRuleControls"),
   placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
+  openingPlacementsInput: document.getElementById("openingPlacementsInput"),
   winLengthInput: document.getElementById("winLengthInput"),
   secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
   riftBloomControls: document.getElementById("riftBloomControls"),
@@ -130,6 +132,9 @@ const MAX_WIN_LENGTH = 12;
 const DEFAULT_PLACEMENTS_PER_TURN = 2;
 const MIN_PLACEMENTS_PER_TURN = 1;
 const MAX_PLACEMENTS_PER_TURN = 8;
+const DEFAULT_OPENING_PLACEMENTS_PER_TURN = 1;
+const MIN_OPENING_PLACEMENTS_PER_TURN = 1;
+const MAX_OPENING_PLACEMENTS_PER_TURN = 8;
 const MAX_PLACEMENT_DISTANCE = 8;
 const CLOCK_TICK_MS = 100;
 const GRID_HINT_MIN_HEX_SIZE = 9;
@@ -778,12 +783,12 @@ const PLAYER_STYLES = {
 const MODES = {
   threePlayer: {
     name: "3 Players",
-    summary: "Adds Player 3 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
+    summary: "Adds Player 3 to the turn order. The opening turn uses the first-turn setting, then every turn uses the placements-per-turn setting.",
     hint: "Three-player game: turns rotate P1, P2, P3. Connect the target line length to win."
   },
   fourPlayer: {
     name: "4 Players",
-    summary: "Adds Players 3 and 4 to the turn order. The opening turn is still 1 placement, then every turn uses 2 placements.",
+    summary: "Adds Players 3 and 4 to the turn order. The opening turn uses the first-turn setting, then every turn uses the placements-per-turn setting.",
     hint: "Four-player game: turns rotate P1, P2, P3, P4. Connect the target line length to win."
   },
   triangleGrid: {
@@ -2710,6 +2715,7 @@ const game = {
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
+  openingPlacementsPerTurn: DEFAULT_OPENING_PLACEMENTS_PER_TURN,
   winLength: DEFAULT_WIN_LENGTH,
   riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
   riftBloomGhostTurns: RIFT_BLOOM_GHOST_TURNS,
@@ -2859,7 +2865,10 @@ function refreshSecretRuleControls(modeKeys) {
   if (!ui.secretRuleControls) {
     return;
   }
-  ui.secretRuleControls.hidden = !game.secretModesUnlocked;
+  ui.secretRuleControls.hidden = false;
+  if (ui.devRuleControls) {
+    ui.devRuleControls.hidden = !game.secretModesUnlocked;
+  }
   refreshSecretRuleSummaryFromInputs(modeKeys);
 }
 
@@ -2966,19 +2975,25 @@ function getModeConfig(modeKeys) {
         ? activeModes[0].hint
         : activeModes.map((mode) => `${mode.name}: ${mode.hint}`).join(" | ")
     };
-  if (game.secretModesUnlocked) {
-    const settings = getGameRuleSettings({
-      placementsPerTurn: getPlacementsPerTurnFromInputs(),
-      winLength: getWinLengthFromInputs()
-    });
-    const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
-    if (keys.includes("pig")) {
-      config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; line wins are disabled in Pig.`;
-      config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn; trap the pig instead of connecting ${settings.winLength}.`;
-    } else {
-      config.summary += ` Custom rules: ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
-      config.hint += ` | Custom rules: ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
-    }
+  const settings = getGameRuleSettings({
+    placementsPerTurn: getPlacementsPerTurnFromInputs(),
+    openingPlacementsPerTurn: getOpeningPlacementsPerTurnFromInputs(),
+    winLength: getWinLengthFromInputs()
+  });
+  const openingMovesWord = settings.openingPlacementsPerTurn === 1 ? "move" : "moves";
+  const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
+  if (keys.includes("factoryFoundry")) {
+    config.summary += ` Rules: ${settings.placementsPerTurn} ${movesWord} per turn; last base standing wins.`;
+    config.hint += ` | Rules: ${settings.placementsPerTurn} factory action${settings.placementsPerTurn === 1 ? "" : "s"} per turn.`;
+  } else if (keys.includes("bedSiege")) {
+    config.summary += ` Rules: ${settings.placementsPerTurn} ${movesWord} per turn; break every rival bed to win.`;
+    config.hint += ` | Rules: ${settings.placementsPerTurn} action${settings.placementsPerTurn === 1 ? "" : "s"} per turn.`;
+  } else if (keys.includes("pig")) {
+    config.summary += ` Rules: opening turn ${settings.openingPlacementsPerTurn} ${openingMovesWord}; then ${settings.placementsPerTurn} ${movesWord} per turn; line wins are disabled in Pig.`;
+    config.hint += ` | Rules: opening ${settings.openingPlacementsPerTurn}, then ${settings.placementsPerTurn} per turn; trap the pig instead of connecting ${settings.winLength}.`;
+  } else {
+    config.summary += ` Rules: opening turn ${settings.openingPlacementsPerTurn} ${openingMovesWord}; then ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength} where line wins apply.`;
+    config.hint += ` | Rules: opening ${settings.openingPlacementsPerTurn}, then ${settings.placementsPerTurn} per turn, connect ${settings.winLength}.`;
   }
   if (keys.includes("riftBloom")) {
     const riftStep = getRiftBloomCellModulusFromInputs();
@@ -4073,6 +4088,7 @@ function makeInitialState(
     playerCount,
     egyptianStoneCap: normaliseEgyptianStoneCap(egyptianStoneCap),
     placementsPerTurn: appliedGameRules.placementsPerTurn,
+    openingPlacementsPerTurn: appliedGameRules.openingPlacementsPerTurn,
     winLength: appliedGameRules.winLength,
     riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
     riftBloomContestClaim: Boolean(riftBloomContestClaim),
@@ -4080,7 +4096,7 @@ function makeInitialState(
     riftBloomTieGoesToCreator: Boolean(riftBloomTieGoesToCreatorValue),
     cells: {},
     turnPlayer: 1,
-    movesLeftInTurn: 1,
+    movesLeftInTurn: appliedGameRules.openingPlacementsPerTurn,
     openingMoveDone: false,
     winner: 0,
     round: 1,
@@ -4345,6 +4361,14 @@ function normalisePlacementsPerTurn(value) {
   return Math.max(MIN_PLACEMENTS_PER_TURN, Math.min(MAX_PLACEMENTS_PER_TURN, parsed));
 }
 
+function normaliseOpeningPlacementsPerTurn(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_OPENING_PLACEMENTS_PER_TURN;
+  }
+  return Math.max(MIN_OPENING_PLACEMENTS_PER_TURN, Math.min(MAX_OPENING_PLACEMENTS_PER_TURN, parsed));
+}
+
 function normaliseWinLength(value) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -4389,6 +4413,10 @@ function riftBloomCellModulusToSliderValue(value) {
 
 function getPlacementsPerTurnFromInputs() {
   return normalisePlacementsPerTurn(ui.placementsPerTurnInput?.value);
+}
+
+function getOpeningPlacementsPerTurnFromInputs() {
+  return normaliseOpeningPlacementsPerTurn(ui.openingPlacementsInput?.value ?? game.openingPlacementsPerTurn);
 }
 
 function getWinLengthFromInputs() {
@@ -4495,9 +4523,13 @@ function refreshRiftBloomTieSummaryFromInputs() {
 
 function setSecretRuleInputs(settings = {}) {
   const placementsPerTurn = normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn);
+  const openingPlacementsPerTurn = normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn);
   const winLength = normaliseWinLength(settings.winLength ?? game.winLength);
   if (ui.placementsPerTurnInput) {
     ui.placementsPerTurnInput.value = String(placementsPerTurn);
+  }
+  if (ui.openingPlacementsInput) {
+    ui.openingPlacementsInput.value = String(openingPlacementsPerTurn);
   }
   if (ui.winLengthInput) {
     ui.winLengthInput.value = String(winLength);
@@ -4510,13 +4542,15 @@ function refreshSecretRuleSummaryFromInputs() {
     return;
   }
   const placementsPerTurn = getPlacementsPerTurnFromInputs();
+  const openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   const winLength = getWinLengthFromInputs();
-  ui.secretRuleSummaryText.textContent = `${placementsPerTurn} per turn | connect ${winLength}`;
+  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}`;
 }
 
 function getGameRuleSettings(settings = {}) {
   return {
     placementsPerTurn: normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn),
+    openingPlacementsPerTurn: normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn),
     winLength: normaliseWinLength(settings.winLength ?? game.winLength)
   };
 }
@@ -4542,6 +4576,13 @@ function getPlacementsPerTurn(state) {
     return DEFAULT_PLACEMENTS_PER_TURN;
   }
   return normalisePlacementsPerTurn(state.placementsPerTurn);
+}
+
+function getOpeningPlacementsPerTurn(state) {
+  if (!state) {
+    return DEFAULT_OPENING_PLACEMENTS_PER_TURN;
+  }
+  return normaliseOpeningPlacementsPerTurn(state.openingPlacementsPerTurn);
 }
 
 function getWinLength(state) {
@@ -4760,6 +4801,9 @@ function updateOnlineControls() {
   }
   if (ui.placementsPerTurnInput) {
     ui.placementsPerTurnInput.disabled = inRoom && !admin;
+  }
+  if (ui.openingPlacementsInput) {
+    ui.openingPlacementsInput.disabled = inRoom && !admin;
   }
   if (ui.winLengthInput) {
     ui.winLengthInput.disabled = inRoom && !admin;
@@ -5002,8 +5046,16 @@ function applyRemoteState(state, revision) {
     incrementSeconds: game.state.clock.incrementSeconds
   });
   game.egyptianStoneCap = normaliseEgyptianStoneCap(game.state.egyptianStoneCap);
+  game.placementsPerTurn = getPlacementsPerTurn(game.state);
+  game.openingPlacementsPerTurn = getOpeningPlacementsPerTurn(game.state);
+  game.winLength = getWinLength(game.state);
   setTimerInputs(game.timerConfig);
   setEgyptianCapInput(game.egyptianStoneCap);
+  setSecretRuleInputs({
+    placementsPerTurn: game.placementsPerTurn,
+    openingPlacementsPerTurn: game.openingPlacementsPerTurn,
+    winLength: game.winLength
+  });
   setSelectedModeKeys(game.state.modeKeys);
   updateStatus();
   syncClockTickerFromState();
@@ -10997,7 +11049,11 @@ function updateStatus() {
   if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
   } else if (!state.openingMoveDone) {
-    ui.subturnText.textContent = usesPigMode(state) ? "Opening move: the pig blocks the origin" : "Opening move: 1 placement";
+    const openingPlacements = Math.max(1, Number(state.movesLeftInTurn) || getOpeningPlacementsPerTurn(state));
+    const placementText = `${openingPlacements} placement${openingPlacements === 1 ? "" : "s"}`;
+    ui.subturnText.textContent = usesPigMode(state)
+      ? `Opening move: the pig blocks the origin | ${placementText}`
+      : `Opening move: ${placementText}`;
   } else if (hasEgyptianRemovalPhase(state)) {
     const owner = state.egyptianRemoval.owner;
     const remaining = state.egyptianRemoval.remaining;
@@ -13564,6 +13620,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.turnOrder = normaliseTurnOrder(turnOrder, playerCount);
   game.egyptianStoneCap = getEgyptianStoneCapFromInputs();
   game.placementsPerTurn = getPlacementsPerTurnFromInputs();
+  game.openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
@@ -13578,10 +13635,12 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   setRiftBloomTieCreatorInput(game.riftBloomTieGoesToCreator);
   setSecretRuleInputs({
     placementsPerTurn: game.placementsPerTurn,
+    openingPlacementsPerTurn: game.openingPlacementsPerTurn,
     winLength: game.winLength
   });
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
     placementsPerTurn: game.placementsPerTurn,
+    openingPlacementsPerTurn: game.openingPlacementsPerTurn,
     winLength: game.winLength
   }, game.riftBloomCellModulus, game.riftBloomContestClaim, game.riftBloomGhostTurns, game.riftBloomTieGoesToCreator);
   game.factoryAnimationDisabled = false;
@@ -13947,6 +14006,11 @@ ui.placementsPerTurnInput?.addEventListener("input", () => {
   refreshSecretRuleSummaryFromInputs();
   setModeUI(getSelectedModeKeys());
 });
+ui.openingPlacementsInput?.addEventListener("input", () => {
+  game.openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
 ui.winLengthInput?.addEventListener("input", () => {
   game.winLength = getWinLengthFromInputs();
   refreshSecretRuleSummaryFromInputs();
@@ -14037,6 +14101,7 @@ setRiftBloomContestInput(game.riftBloomContestClaim);
 setRiftBloomTieCreatorInput(game.riftBloomTieGoesToCreator);
 setSecretRuleInputs({
   placementsPerTurn: game.placementsPerTurn,
+  openingPlacementsPerTurn: game.openingPlacementsPerTurn,
   winLength: game.winLength
 });
 getArmoryClassSelectionsFromInputs();

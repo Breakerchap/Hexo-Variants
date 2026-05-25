@@ -635,6 +635,7 @@ select:focus-visible,
 #timerIncrementInput,
 #turnOrderInput,
 #placementsPerTurnInput,
+#openingPlacementsInput,
 #winLengthInput,
 #riftBloomCoverageInput,
 #riftBloomDurationInput {
@@ -669,6 +670,7 @@ select:focus-visible,
 #timerIncrementInput:focus,
 #turnOrderInput:focus,
 #placementsPerTurnInput:focus,
+#openingPlacementsInput:focus,
 #winLengthInput:focus,
 #riftBloomCoverageInput:focus,
 #riftBloomDurationInput:focus {
@@ -680,6 +682,14 @@ select:focus-visible,
 
 .secretRuleGrid {
   align-items: end;
+}
+
+.devRuleControls {
+  margin-top: 8px;
+}
+
+.devRuleControls .secretRuleField {
+  grid-column: 1 / -1;
 }
 
 .secretRuleField {

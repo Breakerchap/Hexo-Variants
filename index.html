@@ -14,7 +14,7 @@
     <aside class="sidebar">
       <section class="titleCard">
         <h1>Infinite Hex Tic-Tac-Toe</h1>
-        <p>Connect 6 in a straight line by default. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. The starting player opens with 1 move, then normal turns use the current placements-per-turn setting.</p>
+        <p>Connect 6 in a straight line by default. The first move must be at the origin, then every placement must stay within 11 spaces of an existing tile. The starting player uses the first-turn placement setting, then normal turns use the current placements-per-turn setting.</p>
       </section>
 
       <section class="section">
@@ -28,9 +28,9 @@
             <div class="small" id="egyptianCapSummaryText" style="align-self: center;">Cap: 12 stones/player</div>
           </div>
         </div>
-        <div id="secretRuleControls" hidden>
+        <div id="secretRuleControls">
           <div style="height: 8px"></div>
-          <div class="small" style="margin-bottom: 6px; color: var(--text);">Secret rules</div>
+          <div class="small" style="margin-bottom: 6px; color: var(--text);">Game rules</div>
           <div class="grid2 secretRuleGrid">
             <label class="small secretRuleField" for="placementsPerTurnInput">
               Placements / turn
@@ -41,7 +41,15 @@
               <input id="winLengthInput" type="number" min="3" max="12" step="1" value="6" aria-label="Number in a row to win" />
             </label>
           </div>
-          <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">2 per turn | connect 6</div>
+          <div id="devRuleControls" class="devRuleControls" hidden>
+            <div class="grid2 secretRuleGrid">
+              <label class="small secretRuleField" for="openingPlacementsInput">
+                First turn placements
+                <input id="openingPlacementsInput" type="number" min="1" max="8" step="1" value="1" aria-label="Placements on the first turn" />
+              </label>
+            </div>
+          </div>
+          <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">Opening 1 | then 2 per turn | connect 6</div>
         </div>
         <div id="riftBloomControls" hidden>
           <div style="height: 8px"></div>
@@ -272,7 +280,7 @@
             <li>Drag with right mouse button or middle mouse to pan.</li>
             <li>Scroll to zoom.</li>
             <li>Winning line length uses the current in-a-row setting.</li>
-            <li>The opening turn is always 1 placement, no matter who starts.</li>
+            <li>The opening turn uses the current first-turn placement setting.</li>
           </ul>
         </section>
 
