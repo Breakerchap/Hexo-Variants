@@ -87,6 +87,16 @@ body.extremeLdmMode::after {
   display: none;
 }
 
+html,
+body {
+  background: var(--bg);
+}
+
+body::before,
+body::after {
+  opacity: 0;
+}
+
 @keyframes bgFloatA {
   0% {
     transform: translate3d(-34%, -30%, 0) scale(0.82) rotate(-8deg);
@@ -222,6 +232,59 @@ body.extremeLdmMode::after {
 .sectionHeading {
   margin-bottom: 8px;
   color: var(--text);
+}
+
+.infoMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.infoMenu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: var(--shadow);
+}
+
+.infoMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.infoMenu > summary::after {
+  content: "+";
+  float: right;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.infoMenu[open] > summary::after {
+  content: "-";
+}
+
+.infoMenu[open] > summary {
+  margin-bottom: 14px;
+}
+
+.infoMenu > summary:focus-visible {
+  outline: 2px solid rgba(109, 198, 255, 0.78);
+  outline-offset: 2px;
+}
+
+.infoMenu > .section,
+.infoMenu > .statusCard,
+.infoMenu > .logCard {
+  margin-bottom: 14px;
+}
+
+.infoMenu > :last-child {
+  margin-bottom: 0;
 }
 
 .grid2 {
@@ -904,15 +967,23 @@ canvas:focus-visible {
   margin-top: 2px;
 }
 
-.boardClocks {
+.boardHudStack {
   position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 6;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
   pointer-events: none;
+}
+
+.boardClocks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
 }
 
 .boardClock {
@@ -975,9 +1046,6 @@ canvas:focus-visible {
 }
 
 .help {
-  position: absolute;
-  right: 16px;
-  bottom: 176px;
   background: rgba(8, 12, 26, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
@@ -1069,36 +1137,54 @@ canvas:focus-visible {
 }
 
 .secretModesButton {
+  position: relative;
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid rgba(255, 215, 94, 0.22);
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255, 215, 94, 0.20) 0 28%, transparent 31%),
-    rgba(255, 255, 255, 0.04);
+  min-height: 28px;
+  padding: 5px 10px 5px 24px;
+  border: 1px solid rgba(236, 242, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(236, 242, 255, 0.66);
   box-shadow: none;
-  opacity: 0.72;
-  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, color 0.14s ease;
+}
+
+.secretModesButton::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(236, 242, 255, 0.44);
+  box-shadow: none;
+  transform: translateY(-50%);
 }
 
 .secretModesButton:hover,
 .secretModesButton:focus-visible {
-  opacity: 1;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255, 215, 94, 0.42) 0 30%, transparent 33%),
-    rgba(255, 215, 94, 0.10);
-  border-color: rgba(255, 215, 94, 0.50);
+  background: rgba(109, 198, 255, 0.12);
+  border-color: rgba(109, 198, 255, 0.32);
+  color: var(--text);
+  transform: translateY(-1px);
 }
 
 .secretModesButton[aria-pressed="true"] {
-  opacity: 1;
   border-color: rgba(255, 215, 94, 0.90);
-  background:
-    radial-gradient(circle at 50% 50%, #ffd75e 0 34%, rgba(255, 215, 94, 0.30) 37% 58%, transparent 61%),
-    rgba(255, 215, 94, 0.14);
-  box-shadow: 0 0 0 2px rgba(255, 215, 94, 0.12), 0 0 14px rgba(255, 215, 94, 0.36);
+  background: rgba(255, 215, 94, 0.22);
+  color: #fff6d6;
+  box-shadow: none;
+}
+
+.secretModesButton[aria-pressed="true"]::before {
+  background: #ffd75e;
+  box-shadow: none;
 }
 
 @media (max-width: 980px) {
@@ -1194,9 +1280,13 @@ canvas:focus-visible {
     border-radius: 11px;
   }
 
-  .boardClocks {
+  .boardHudStack {
     right: 10px;
     bottom: 10px;
+    gap: 8px;
+  }
+
+  .boardClocks {
     gap: 8px;
   }
 

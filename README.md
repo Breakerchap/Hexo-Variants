@@ -39,6 +39,7 @@ Optional server env vars:
 
 - `WS_PATH` (default `/ws`)
 - `WS_HEARTBEAT_MS` (minimum `5000`, default `25000`)
+- `ROOM_RECONNECT_GRACE_MS` (default `300000`) keeps empty rooms recoverable after dropped connections.
 
 If your frontend and backend are on different hosts, set the client WebSocket endpoint using one of:
 
