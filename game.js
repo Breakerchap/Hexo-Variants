@@ -117,6 +117,11 @@ const ui = {
   onlineStatusText: document.getElementById("onlineStatusText"),
   onlineRoomText: document.getElementById("onlineRoomText"),
   onlineRoleText: document.getElementById("onlineRoleText"),
+  onlinePlayerIndicators: document.getElementById("onlinePlayerIndicators"),
+  onlinePlayerP1: document.getElementById("onlinePlayerP1"),
+  onlinePlayerP2: document.getElementById("onlinePlayerP2"),
+  onlinePlayerP3: document.getElementById("onlinePlayerP3"),
+  onlinePlayerP4: document.getElementById("onlinePlayerP4"),
   toggleMenuBtn: document.getElementById("toggleMenuBtn"),
   ldmBtn: document.getElementById("ldmBtn"),
   extremeLdmBtn: document.getElementById("extremeLdmBtn"),
@@ -4198,6 +4203,7 @@ function setModeUI(modeKeys) {
   refreshChaosControls(modeKeys);
   refreshRiftBloomControls(modeKeys);
   updateTurnOrderSummary(getPlayerCountFromModeKeys(modeKeys));
+  updateOnlinePlayerIndicators();
 }
 
 function hasPendingModeSelection(state = game.state) {
@@ -4846,6 +4852,7 @@ function updateOnlineStatusUI() {
   ui.onlineRoleText.textContent = (online.roomCode || online.desiredRoomCode)
     ? `Role: ${role}`
     : "Role: local";
+  updateOnlinePlayerIndicators();
   updateOnlineControls();
 }
 
@@ -4876,6 +4883,64 @@ function scheduleOnlineReconnect(roomCode) {
 
   pushLog(`Connection lost. Reconnecting in ${Math.max(1, Math.round(delayMs / 1000))}s...`);
   updateStatus();
+}
+
+function getOnlinePlayerIndicator(player) {
+  return ui[`onlinePlayerP${player}`] || null;
+}
+
+function getOnlineAssignedSlots() {
+  const slots = new Set();
+  const assignments = online.latestPlayerAssignments && typeof online.latestPlayerAssignments === "object"
+    ? online.latestPlayerAssignments
+    : {};
+  for (const rawSlot of Object.values(assignments)) {
+    const slot = Math.trunc(Number(rawSlot));
+    if (slot >= 1 && slot <= MAX_PLAYER_COUNT) {
+      slots.add(slot);
+    }
+  }
+  if (online.assignedPlayer >= 1 && online.assignedPlayer <= MAX_PLAYER_COUNT) {
+    slots.add(online.assignedPlayer);
+  }
+  return slots;
+}
+
+function getOnlineIndicatorPlayerCount(assignedSlots) {
+  const selectedCount = getPlayerCountFromModeKeys(getSelectedModeKeys());
+  const stateCount = game.state ? getPlayerCount(game.state) : MIN_PLAYER_COUNT;
+  const assignedCount = Math.max(0, ...assignedSlots);
+  return Math.max(MIN_PLAYER_COUNT, Math.min(MAX_PLAYER_COUNT, Math.max(selectedCount, stateCount, assignedCount)));
+}
+
+function updateOnlinePlayerIndicators() {
+  const inRoom = Boolean(online.roomCode || online.desiredRoomCode);
+  const assignedSlots = getOnlineAssignedSlots();
+  const visiblePlayerCount = getOnlineIndicatorPlayerCount(assignedSlots);
+  const currentTurnPlayer = game.state && isValidPlayerNumber(game.state.turnPlayer, MAX_PLAYER_COUNT)
+    ? normalisePlayerNumber(game.state.turnPlayer, MAX_PLAYER_COUNT)
+    : 0;
+
+  for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
+    const indicator = getOnlinePlayerIndicator(player);
+    if (!indicator) {
+      continue;
+    }
+    const visible = player <= visiblePlayerCount;
+    const joined = inRoom && assignedSlots.has(player);
+    const self = inRoom && online.assignedPlayer === player;
+    const current = inRoom && currentTurnPlayer === player;
+    indicator.hidden = !visible;
+    indicator.classList.toggle("joined", joined);
+    indicator.classList.toggle("self", self);
+    indicator.classList.toggle("current", current);
+    indicator.textContent = self
+      ? `P${player} You`
+      : (joined ? `P${player} joined` : `P${player} open`);
+    indicator.title = inRoom
+      ? `Player ${player}: ${self ? "you" : (joined ? "joined" : "open")}${current ? ", current turn" : ""}`
+      : `Player ${player}: local`;
+  }
 }
 
 function normaliseSocketUrl(rawUrl) {
@@ -5018,12 +5083,12 @@ function connectOnline(afterConnect) {
 }
 
 function updateAssignmentFromMessage(message) {
+  if (message && message.playerAssignments && typeof message.playerAssignments === "object") {
+    online.latestPlayerAssignments = message.playerAssignments;
+  }
   if (message && Number.isInteger(message.yourPlayerSlot)) {
     online.assignedPlayer = message.yourPlayerSlot || null;
     return;
-  }
-  if (message && message.playerAssignments && typeof message.playerAssignments === "object") {
-    online.latestPlayerAssignments = message.playerAssignments;
   }
   if (!online.latestPlayerAssignments || !online.clientId) {
     return;

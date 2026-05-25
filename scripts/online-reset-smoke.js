@@ -155,6 +155,16 @@ class WsClient {
 function makeState(turnPlayer, marker) {
   return {
     modeKeys: [],
+    playerCount: 2,
+    turnPlayer,
+    marker
+  };
+}
+
+function makeMultiplayerState(turnPlayer, marker, playerCount) {
+  return {
+    modeKeys: playerCount >= 4 ? ["fourPlayer"] : ["threePlayer"],
+    playerCount,
     turnPlayer,
     marker
   };
@@ -328,6 +338,64 @@ async function runSlotReleaseSmoke(url) {
   }
 }
 
+async function runFourPlayerRoomSmoke(url) {
+  const clients = Array.from({ length: 5 }, () => new WsClient(url));
+  try {
+    await Promise.all(clients.map((client) => client.openPromise));
+    await Promise.all(clients.map((client) => client.waitFor((m) => m.type === "welcome")));
+
+    clients[0].send({ type: "createRoom", sessionId: clients[0].sessionId });
+    const joinA = await clients[0].waitFor((m) => m.type === "roomJoined" && m.roomCode);
+    const roomCode = joinA.roomCode;
+    assert.equal(joinA.yourPlayerSlot, 1);
+
+    for (let index = 1; index < clients.length; index += 1) {
+      clients[index].send({ type: "joinRoom", roomCode, sessionId: clients[index].sessionId });
+      const joined = await clients[index].waitFor((m) => m.type === "roomJoined" && m.roomCode === roomCode);
+      assert.equal(joined.yourPlayerSlot || null, index <= 3 ? index + 1 : null);
+    }
+
+    clients[0].send({
+      type: "stateUpdate",
+      baseRevision: 0,
+      state: makeMultiplayerState(3, "four-player-seed-r1", 4)
+    });
+    await Promise.all(clients.slice(0, 4).map(async (client) => {
+      const update = await client.waitFor((m) => m.type === "stateUpdate" && m.revision === 1);
+      assert.equal(update.state.turnPlayer, 3);
+      assert.equal(update.state.playerCount, 4);
+    }));
+
+    clients[1].send({
+      type: "stateUpdate",
+      baseRevision: 1,
+      state: makeMultiplayerState(4, "bad-p2-move", 4)
+    });
+    const outOfTurn = await clients[1].waitFor((m) => m.type === "error");
+    assert.equal(outOfTurn.code, "NOT_YOUR_TURN");
+
+    clients[2].send({
+      type: "stateUpdate",
+      baseRevision: 1,
+      state: makeMultiplayerState(4, "p3-move-r2", 4)
+    });
+    const p3Move = await clients[2].waitFor((m) => m.type === "stateUpdate" && m.revision === 2);
+    assert.equal(p3Move.state.marker, "p3-move-r2");
+    assert.equal(p3Move.state.turnPlayer, 4);
+
+    clients[3].send({
+      type: "stateUpdate",
+      baseRevision: 2,
+      state: makeMultiplayerState(1, "p4-move-r3", 4)
+    });
+    const p4Move = await clients[3].waitFor((m) => m.type === "stateUpdate" && m.revision === 3);
+    assert.equal(p4Move.state.marker, "p4-move-r3");
+    assert.equal(p4Move.state.turnPlayer, 1);
+  } finally {
+    await closeClients(clients);
+  }
+}
+
 async function main() {
   const port = makePort();
   const { child, ready } = spawnServer(port);
@@ -339,6 +407,7 @@ async function main() {
     await ready;
     await runReconnectSmoke(url);
     await runSlotReleaseSmoke(url);
+    await runFourPlayerRoomSmoke(url);
 
     const joinedRoom = await createJoinedRoom(url);
     clientA = joinedRoom.clientA;

@@ -10,6 +10,7 @@ const DEFAULT_PORT = 8080;
 const DEFAULT_WS_PATH = "/ws";
 const DEFAULT_WS_HEARTBEAT_MS = 25000;
 const DEFAULT_ROOM_RECONNECT_GRACE_MS = 300000;
+const PLAYER_SLOTS = [1, 2, 3, 4];
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -223,7 +224,7 @@ function getPlayerAssignments(room) {
     if (!meta) {
       continue;
     }
-    for (const slot of [1, 2]) {
+    for (const slot of PLAYER_SLOTS) {
       if (room.playerSlots[slot] === meta.sessionId) {
         assignments[meta.clientId] = slot;
         break;
@@ -237,7 +238,7 @@ function getPlayerSlotForSession(room, sessionId) {
   if (!room || !sessionId) {
     return null;
   }
-  for (const slot of [1, 2]) {
+  for (const slot of PLAYER_SLOTS) {
     if (room.playerSlots[slot] === sessionId) {
       return slot;
     }
@@ -257,7 +258,8 @@ function getExpectedTurnPlayer(room) {
   if (!room || !room.state || typeof room.state !== "object") {
     return 1;
   }
-  return room.state.turnPlayer === 2 ? 2 : 1;
+  const turnPlayer = Math.trunc(Number(room.state.turnPlayer));
+  return PLAYER_SLOTS.includes(turnPlayer) ? turnPlayer : 1;
 }
 
 function getUpdateIntent(message) {
@@ -321,7 +323,7 @@ function deleteRoom(roomCode) {
     clearTimeout(room.cleanupTimerId);
     room.cleanupTimerId = null;
   }
-  for (const slot of [1, 2]) {
+  for (const slot of PLAYER_SLOTS) {
     if (room.slotCleanupTimerIds?.[slot]) {
       clearTimeout(room.slotCleanupTimerIds[slot]);
       room.slotCleanupTimerIds[slot] = null;
@@ -331,7 +333,7 @@ function deleteRoom(roomCode) {
 }
 
 function roomHasRetainedPlayerSlots(room) {
-  return Boolean(room.playerSlots[1] || room.playerSlots[2]);
+  return PLAYER_SLOTS.some((slot) => Boolean(room.playerSlots[slot]));
 }
 
 function scheduleRoomCleanup(room) {
@@ -502,12 +504,12 @@ function joinRoom(ws, roomCode, sessionId = null) {
   if (meta.playerSlot) {
     clearSlotCleanup(room, meta.playerSlot);
   }
-  if (!meta.playerSlot && !room.playerSlots[1]) {
-    room.playerSlots[1] = meta.sessionId;
-    meta.playerSlot = 1;
-  } else if (!meta.playerSlot && !room.playerSlots[2]) {
-    room.playerSlots[2] = meta.sessionId;
-    meta.playerSlot = 2;
+  if (!meta.playerSlot) {
+    const openSlot = PLAYER_SLOTS.find((slot) => !room.playerSlots[slot]);
+    if (openSlot) {
+      room.playerSlots[openSlot] = meta.sessionId;
+      meta.playerSlot = openSlot;
+    }
   }
 
   const playerAssignments = getPlayerAssignments(room);
@@ -556,11 +558,15 @@ function createRoom(ws, sessionId = null) {
     state: null,
     playerSlots: {
       1: null,
-      2: null
+      2: null,
+      3: null,
+      4: null
     },
     slotCleanupTimerIds: {
       1: null,
-      2: null
+      2: null,
+      3: null,
+      4: null
     },
     cleanupTimerId: null
   });
@@ -618,7 +624,7 @@ function handleStateUpdate(ws, message) {
     return;
   }
 
-  if (meta.playerSlot !== 1 && meta.playerSlot !== 2) {
+  if (!PLAYER_SLOTS.includes(meta.playerSlot)) {
     rejectStateUpdate(
       ws,
       room,
