@@ -67,17 +67,6 @@ const ui = {
   factoryBuildSelect: document.getElementById("factoryBuildSelect"),
   factoryActionSelect: document.getElementById("factoryActionSelect"),
   factoryRuleText: document.getElementById("factoryRuleText"),
-  tideKitchenControls: document.getElementById("tideKitchenControls"),
-  tideKitchenSummaryText: document.getElementById("tideKitchenSummaryText"),
-  tideKitchenActiveText: document.getElementById("tideKitchenActiveText"),
-  tideKitchenCatchText: document.getElementById("tideKitchenCatchText"),
-  tideKitchenCastBtn: document.getElementById("tideKitchenCastBtn"),
-  tideKitchenStrikeBtn: document.getElementById("tideKitchenStrikeBtn"),
-  tideKitchenCookBtn: document.getElementById("tideKitchenCookBtn"),
-  tideKitchenSellBtn: document.getElementById("tideKitchenSellBtn"),
-  tideKitchenRodBtn: document.getElementById("tideKitchenRodBtn"),
-  tideKitchenBoatBtn: document.getElementById("tideKitchenBoatBtn"),
-  tideKitchenEndBtn: document.getElementById("tideKitchenEndBtn"),
   bagelControls: document.getElementById("bagelControls"),
   bagelPhaseText: document.getElementById("bagelPhaseText"),
   bagelZoneText: document.getElementById("bagelZoneText"),
@@ -890,12 +879,6 @@ const MODES = {
     summary: "Secret powder-sim territory mode: each placement becomes a source pad that pours 20 grains, then your newest source pads drip pressure at turn end. A cell is claimed when one player settles 7 grains there with a clear lead; connect the target number of claimed cells to win.",
     hint: "Place source pads above the lanes you want to flood. Settled grains claim cells by density, ties stay contested, and source pads keep dripping pressure on later turns.",
     secret: true
-  },
-  tideKitchen: {
-    name: "Godfish Galley",
-    summary: "Secret fishing economy game: cast a rod, win different catch minigames, cook fish for customers, sell meals, buy stronger rods and better boats, and catch the Godfish to win.",
-    hint: "Use the harbor panel and canvas. Cast, control the rod through timing/tension/rhythm catches, cook and serve meals for coins, upgrade your rod and boat, then land the Godfish.",
-    secret: true
   }
 };
 
@@ -944,151 +927,6 @@ const HIDDEN_MODE_KEYS = new Set(["powderCascade"]);
 const LDM_DEVICE_PIXEL_RATIO_CAP = 1.5;
 const EXTREME_LDM_DEVICE_PIXEL_RATIO_CAP = 1;
 const SECRET_MODE_KEYS = Object.keys(MODES).filter((key) => MODES[key].secret);
-const TIDE_KITCHEN_SCORE_TARGET = 18;
-const TIDE_KITCHEN_HARVEST_CAP = 6;
-const TIDE_KITCHEN_RESOURCE_TYPES = ["fish", "kelp", "spice", "heat"];
-const TIDE_KITCHEN_ACTIONS_PER_TURN = 3;
-const TIDE_KITCHEN_STARTING_COINS = 12;
-const TIDE_KITCHEN_MAX_UPGRADE_LEVEL = 4;
-const TIDE_KITCHEN_GODFISH_FAME_TARGET = 80;
-const TIDE_KITCHEN_ROD_COSTS = { 2: 18, 3: 45, 4: 95 };
-const TIDE_KITCHEN_BOAT_COSTS = { 2: 22, 3: 55, 4: 120 };
-const TIDE_KITCHEN_GODFISH_KEY = "godfish";
-const TIDE_KITCHEN_FISH_DEFS = {
-  sprat: {
-    name: "Silver Sprat",
-    rarity: "common",
-    minRod: 1,
-    minBoat: 1,
-    minigame: "timing",
-    rawValue: 5,
-    mealValue: 10,
-    difficulty: 0.22
-  },
-  crab: {
-    name: "Lantern Crab",
-    rarity: "common",
-    minRod: 1,
-    minBoat: 1,
-    minigame: "rhythm",
-    rawValue: 7,
-    mealValue: 13,
-    difficulty: 0.28
-  },
-  snapper: {
-    name: "Red Snapper",
-    rarity: "uncommon",
-    minRod: 1,
-    minBoat: 1,
-    minigame: "tension",
-    rawValue: 10,
-    mealValue: 18,
-    difficulty: 0.34
-  },
-  eel: {
-    name: "Clockwork Eel",
-    rarity: "rare",
-    minRod: 2,
-    minBoat: 1,
-    minigame: "rhythm",
-    rawValue: 16,
-    mealValue: 29,
-    difficulty: 0.46
-  },
-  tuna: {
-    name: "Thunderfin Tuna",
-    rarity: "rare",
-    minRod: 2,
-    minBoat: 2,
-    minigame: "tension",
-    rawValue: 24,
-    mealValue: 42,
-    difficulty: 0.55
-  },
-  lobster: {
-    name: "Moon Lobster",
-    rarity: "legendary",
-    minRod: 3,
-    minBoat: 3,
-    minigame: "timing",
-    rawValue: 38,
-    mealValue: 68,
-    difficulty: 0.68
-  },
-  godfish: {
-    name: "Godfish",
-    rarity: "divine",
-    minRod: 4,
-    minBoat: 4,
-    minigame: "godfish",
-    rawValue: 999,
-    mealValue: 999,
-    difficulty: 0.82,
-    god: true
-  }
-};
-const TIDE_KITCHEN_CUSTOMERS = [
-  { name: "Dockhand", preference: "common", bonus: 3 },
-  { name: "Mapmaker", preference: "uncommon", bonus: 6 },
-  { name: "Storm Chef", preference: "rare", bonus: 10 },
-  { name: "Moon Baron", preference: "legendary", bonus: 18 }
-];
-const TIDE_KITCHEN_TILE_TYPES = {
-  shoal: {
-    name: "Shoal",
-    label: "F",
-    resource: "fish",
-    fill: "rgba(109, 198, 255, 0.13)",
-    stroke: "rgba(109, 198, 255, 0.62)",
-    text: "rgba(231, 247, 255, 0.94)"
-  },
-  kelp: {
-    name: "Kelp Bed",
-    label: "K",
-    resource: "kelp",
-    fill: "rgba(118, 227, 168, 0.12)",
-    stroke: "rgba(118, 227, 168, 0.58)",
-    text: "rgba(227, 255, 237, 0.94)"
-  },
-  spice: {
-    name: "Spice Dock",
-    label: "S",
-    resource: "spice",
-    fill: "rgba(255, 215, 94, 0.13)",
-    stroke: "rgba(255, 215, 94, 0.66)",
-    text: "rgba(255, 248, 214, 0.95)"
-  },
-  hearth: {
-    name: "Hearth Vent",
-    label: "H",
-    resource: "heat",
-    fill: "rgba(255, 140, 92, 0.13)",
-    stroke: "rgba(255, 140, 92, 0.66)",
-    text: "rgba(255, 237, 224, 0.95)"
-  }
-};
-const TIDE_KITCHEN_RECIPES = [
-  {
-    name: "Harbor Feast",
-    points: 7,
-    cost: { fish: 2, kelp: 2, spice: 1, heat: 1 }
-  },
-  {
-    name: "Sizzle Broth",
-    points: 4,
-    cost: { fish: 2, kelp: 1, heat: 1 }
-  },
-  {
-    name: "Grilled Catch",
-    points: 2,
-    cost: { fish: 1, heat: 1 }
-  },
-  {
-    name: "Spice Salad",
-    points: 2,
-    cost: { kelp: 1, spice: 1 }
-  }
-];
 
 function keyOf(q, r) {
   return `${q},${r}`;
@@ -2602,921 +2440,6 @@ function resolveBedSiegeTurnEnd(state, owner) {
   return null;
 }
 
-function createTideKitchenPantry(source = {}) {
-  const pantry = {};
-  for (const resource of TIDE_KITCHEN_RESOURCE_TYPES) {
-    pantry[resource] = Math.max(0, Math.round(Number(source?.[resource]) || 0));
-  }
-  return pantry;
-}
-
-function createTideKitchenVisitedMap(source = {}) {
-  const visited = {};
-  for (const tileType of Object.keys(TIDE_KITCHEN_TILE_TYPES)) {
-    visited[tileType] = Boolean(source?.[tileType]);
-  }
-  return visited;
-}
-
-function createTideKitchenStateForGame(state) {
-  return {
-    pantries: createPlayerMap(getPlayerCount(state), () => createTideKitchenPantry()),
-    score: createPlayerMap(getPlayerCount(state), () => 0),
-    visited: createPlayerMap(getPlayerCount(state), () => createTideKitchenVisitedMap()),
-    tastingBonusClaimed: createPlayerMap(getPlayerCount(state), () => false),
-    lastReport: createPlayerMap(getPlayerCount(state), () => null)
-  };
-}
-
-function ensureTideKitchenState(state) {
-  if (!usesTideKitchenMode(state)) {
-    if (state) {
-      state.tideKitchen = null;
-    }
-    return null;
-  }
-  const current = state.tideKitchen && typeof state.tideKitchen === "object" ? state.tideKitchen : {};
-  const currentPantries = current.pantries && typeof current.pantries === "object" ? current.pantries : {};
-  const currentScore = current.score && typeof current.score === "object" ? current.score : {};
-  const currentVisited = current.visited && typeof current.visited === "object" ? current.visited : {};
-  const currentBonus = current.tastingBonusClaimed && typeof current.tastingBonusClaimed === "object" ? current.tastingBonusClaimed : {};
-  const currentReport = current.lastReport && typeof current.lastReport === "object" ? current.lastReport : {};
-
-  state.tideKitchen = {
-    pantries: createPlayerMap(getPlayerCount(state), (owner) => createTideKitchenPantry(currentPantries[owner])),
-    score: createPlayerMap(getPlayerCount(state), (owner) => Math.max(0, Math.round(Number(currentScore[owner]) || 0))),
-    visited: createPlayerMap(getPlayerCount(state), (owner) => createTideKitchenVisitedMap(currentVisited[owner])),
-    tastingBonusClaimed: createPlayerMap(getPlayerCount(state), (owner) => Boolean(currentBonus[owner])),
-    lastReport: createPlayerMap(getPlayerCount(state), (owner) => currentReport[owner] || null)
-  };
-  return state.tideKitchen;
-}
-
-function getTideKitchenPhase(state) {
-  return positiveMod(Math.trunc(Number(state?.turnCount) || 0), 12);
-}
-
-function getTideKitchenTileType(state, hex) {
-  if (!usesTideKitchenMode(state) || !isCellSupportedForMode(state, hex)) {
-    return null;
-  }
-  const q = Math.trunc(Number(hex?.q) || 0);
-  const r = Math.trunc(Number(hex?.r) || 0);
-  const distance = getDistanceForMode(state, { q, r });
-  if (distance <= 0) {
-    return null;
-  }
-  const phase = getTideKitchenPhase(state);
-  if (positiveMod(q + (2 * r) + phase, 7) === 0) {
-    return "shoal";
-  }
-  if (positiveMod((2 * q) - r - phase, 8) === 0) {
-    return "kelp";
-  }
-  if (positiveMod(q - (3 * r) + (phase * 2), 10) === 0) {
-    return "spice";
-  }
-  if (positiveMod((q * q) + (r * r) + q + (phase * 3), 13) === 0) {
-    return "hearth";
-  }
-  return null;
-}
-
-function getTideKitchenTileDef(tileType) {
-  return TIDE_KITCHEN_TILE_TYPES[tileType] || null;
-}
-
-function gainTideKitchenResource(state, owner, resource, amount) {
-  if (!TIDE_KITCHEN_RESOURCE_TYPES.includes(resource)) {
-    return 0;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  if (!tideKitchen || !isValidPlayerNumber(owner, state)) {
-    return 0;
-  }
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const gain = Math.max(0, Math.round(Number(amount) || 0));
-  tideKitchen.pantries[safeOwner][resource] += gain;
-  return gain;
-}
-
-function formatTideKitchenResourceGain(gain = {}) {
-  return TIDE_KITCHEN_RESOURCE_TYPES
-    .filter((resource) => Number(gain[resource]) > 0)
-    .map((resource) => `+${Math.round(gain[resource])}${resource[0]}`)
-    .join("/");
-}
-
-function markTideKitchenVisit(state, owner, tileType) {
-  const tileDef = getTideKitchenTileDef(tileType);
-  if (!tileDef || !isValidPlayerNumber(owner, state)) {
-    return "";
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  tideKitchen.visited[safeOwner][tileType] = true;
-  const visitedAll = Object.keys(TIDE_KITCHEN_TILE_TYPES).every((type) => tideKitchen.visited[safeOwner][type]);
-  if (visitedAll && !tideKitchen.tastingBonusClaimed[safeOwner]) {
-    tideKitchen.tastingBonusClaimed[safeOwner] = true;
-    tideKitchen.score[safeOwner] += 3;
-    return " Tasting flight completed for +3 rep.";
-  }
-  return "";
-}
-
-function getTideKitchenAdjacentTileTypes(state, hex) {
-  const types = new Set();
-  for (const candidate of [hex, ...getAdjacentsForMode(state, hex)]) {
-    const tileType = getTideKitchenTileType(state, candidate);
-    if (tileType) {
-      types.add(tileType);
-    }
-  }
-  return Object.keys(TIDE_KITCHEN_TILE_TYPES).filter((tileType) => types.has(tileType));
-}
-
-function applyTideKitchenPlacementEffects(state, placedHex, owner) {
-  if (!usesTideKitchenMode(state) || !placedHex || !owner) {
-    return [];
-  }
-  const directType = getTideKitchenTileType(state, placedHex);
-  const tileType = directType || getTideKitchenAdjacentTileTypes(state, placedHex)[0];
-  const tileDef = getTideKitchenTileDef(tileType);
-  if (!tileDef) {
-    return [];
-  }
-
-  const gainAmount = directType ? 2 : 1;
-  const gain = gainTideKitchenResource(state, owner, tileDef.resource, gainAmount);
-  const bonusText = markTideKitchenVisit(state, owner, tileType);
-  return [`Tide Kitchen: ${directType ? "worked" : "set up near"} ${tileDef.name} for +${gain}${tileDef.resource[0]}.${bonusText}`];
-}
-
-function getTideKitchenHarvestSitesForOwner(state, owner) {
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const sitesByKey = new Map();
-  for (const [key, cell] of Object.entries(state.cells || {})) {
-    if (!cell || cell.kind !== "stone" || cell.owner !== safeOwner) {
-      continue;
-    }
-    const hex = parseKey(key);
-    for (const candidate of [hex, ...getAdjacentsForMode(state, hex)]) {
-      const tileType = getTideKitchenTileType(state, candidate);
-      if (!tileType) {
-        continue;
-      }
-      const siteKey = `${tileType}:${keyOf(candidate.q, candidate.r)}`;
-      if (!sitesByKey.has(siteKey)) {
-        sitesByKey.set(siteKey, { hex: candidate, tileType });
-      }
-    }
-  }
-  const typeOrder = Object.keys(TIDE_KITCHEN_TILE_TYPES);
-  return Array.from(sitesByKey.values()).sort((a, b) => (
-    typeOrder.indexOf(a.tileType) - typeOrder.indexOf(b.tileType)
-    || getDistanceForMode(state, a.hex) - getDistanceForMode(state, b.hex)
-    || a.hex.q - b.hex.q
-    || a.hex.r - b.hex.r
-  ));
-}
-
-function getTideKitchenCookCapacity(state, owner) {
-  const hearthLinks = getTideKitchenHarvestSitesForOwner(state, owner)
-    .filter((site) => site.tileType === "hearth")
-    .length;
-  return Math.max(1, Math.min(4, 1 + Math.floor(hearthLinks / 2)));
-}
-
-function canCookTideKitchenRecipe(pantry, recipe) {
-  return Object.entries(recipe.cost || {}).every(([resource, amount]) => (
-    (pantry[resource] || 0) >= Math.max(0, Math.round(Number(amount) || 0))
-  ));
-}
-
-function cookTideKitchenRecipe(pantry, recipe) {
-  if (!canCookTideKitchenRecipe(pantry, recipe)) {
-    return false;
-  }
-  for (const [resource, amount] of Object.entries(recipe.cost || {})) {
-    pantry[resource] = Math.max(0, (pantry[resource] || 0) - Math.max(0, Math.round(Number(amount) || 0)));
-  }
-  return true;
-}
-
-function resolveTideKitchenCooking(state, owner, capacity) {
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const pantry = tideKitchen.pantries[safeOwner];
-  const cooked = [];
-  const maxDishes = Math.max(0, Math.round(Number(capacity) || 0));
-  for (let slot = 0; slot < maxDishes; slot += 1) {
-    const recipe = TIDE_KITCHEN_RECIPES.find((candidate) => canCookTideKitchenRecipe(pantry, candidate));
-    if (!recipe) {
-      break;
-    }
-    cookTideKitchenRecipe(pantry, recipe);
-    tideKitchen.score[safeOwner] += recipe.points;
-    cooked.push(recipe);
-  }
-  return cooked;
-}
-
-function resolveTideKitchenTurnEnd(state, owner) {
-  if (!usesTideKitchenMode(state) || !isValidPlayerNumber(owner, state)) {
-    return null;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const harvestSites = getTideKitchenHarvestSitesForOwner(state, safeOwner).slice(0, TIDE_KITCHEN_HARVEST_CAP);
-  const harvest = createTideKitchenPantry();
-  const bonusMessages = [];
-
-  for (const site of harvestSites) {
-    const tileDef = getTideKitchenTileDef(site.tileType);
-    if (!tileDef) {
-      continue;
-    }
-    harvest[tileDef.resource] += gainTideKitchenResource(state, safeOwner, tileDef.resource, 1);
-    const bonusMessage = markTideKitchenVisit(state, safeOwner, site.tileType);
-    if (bonusMessage) {
-      bonusMessages.push(bonusMessage.trim());
-    }
-  }
-
-  const capacity = getTideKitchenCookCapacity(state, safeOwner);
-  const cooked = resolveTideKitchenCooking(state, safeOwner, capacity);
-  const gainedRep = cooked.reduce((total, recipe) => total + recipe.points, 0);
-  const report = {
-    harvest,
-    cooked: cooked.map((recipe) => recipe.name),
-    capacity,
-    points: gainedRep
-  };
-  tideKitchen.lastReport[safeOwner] = report;
-
-  const harvestText = formatTideKitchenResourceGain(harvest);
-  const cookedText = cooked.length > 0
-    ? ` cooked ${cooked.map((recipe) => recipe.name).join(", ")} for +${gainedRep} rep`
-    : "";
-  if (!harvestText && !cookedText && bonusMessages.length <= 0) {
-    return null;
-  }
-  const message = `Tide Kitchen: P${safeOwner}${harvestText ? ` harvested ${harvestText}` : ""}${cookedText}${bonusMessages.length > 0 ? ` ${bonusMessages.join(" ")}` : ""}.`;
-  appendStateLog(state, message);
-  return message;
-}
-
-function getTideKitchenWinner(state) {
-  if (!usesTideKitchenMode(state)) {
-    return 0;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const scores = getPlayerNumbers(state).map((owner) => ({
-    owner,
-    score: Math.max(0, Math.round(Number(tideKitchen.score[owner]) || 0))
-  }));
-  const bestScore = Math.max(...scores.map((entry) => entry.score));
-  if (bestScore < TIDE_KITCHEN_SCORE_TARGET) {
-    return 0;
-  }
-  const leaders = scores.filter((entry) => entry.score === bestScore);
-  return leaders.length === 1 ? leaders[0].owner : 0;
-}
-
-function getTideKitchenScoreSummary(state) {
-  if (!usesTideKitchenMode(state)) {
-    return "";
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  return getPlayerNumbers(state)
-    .map((owner) => `P${owner} ${Math.max(0, Math.round(Number(tideKitchen.score[owner]) || 0))}/${TIDE_KITCHEN_SCORE_TARGET}`)
-    .join(" | ");
-}
-
-function getTideKitchenPantrySummary(state, owner) {
-  if (!usesTideKitchenMode(state) || !isValidPlayerNumber(owner, state)) {
-    return "";
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const pantry = tideKitchen.pantries[normalisePlayerNumber(owner, state)];
-  return `${pantry.fish}f/${pantry.kelp}k/${pantry.spice}s/${pantry.heat}h`;
-}
-
-function createTideKitchenFishInventory(source = {}) {
-  const inventory = {};
-  for (const fishKey of Object.keys(TIDE_KITCHEN_FISH_DEFS)) {
-    inventory[fishKey] = Math.max(0, Math.round(Number(source?.[fishKey]) || 0));
-  }
-  return inventory;
-}
-
-function normaliseTideKitchenFishKey(fishKey) {
-  return Object.prototype.hasOwnProperty.call(TIDE_KITCHEN_FISH_DEFS, fishKey) ? fishKey : "sprat";
-}
-
-function getTideKitchenFishDef(fishKey) {
-  return TIDE_KITCHEN_FISH_DEFS[normaliseTideKitchenFishKey(fishKey)];
-}
-
-function getTideKitchenTimingWindow(fishDef) {
-  const difficulty = Math.max(0, Math.min(1, Number(fishDef?.difficulty) || 0));
-  const halfWidth = Math.max(0.06, 0.20 - difficulty * 0.08);
-  return {
-    targetStart: Math.max(0.08, 0.50 - halfWidth),
-    targetEnd: Math.min(0.92, 0.50 + halfWidth)
-  };
-}
-
-function createTideKitchenDefaultRhythm(fishKey) {
-  return ["left", "center", "right", "center", "left"].slice(0, normaliseTideKitchenFishKey(fishKey) === TIDE_KITCHEN_GODFISH_KEY ? 5 : 3);
-}
-
-function normaliseTideKitchenMeal(meal = {}) {
-  const fishKey = normaliseTideKitchenFishKey(meal.fishKey);
-  const fishDef = getTideKitchenFishDef(fishKey);
-  const value = Number(meal.value);
-  const rarity = Object.values(TIDE_KITCHEN_FISH_DEFS).some((candidate) => candidate.rarity === meal.rarity)
-    ? meal.rarity
-    : fishDef.rarity;
-  return {
-    fishKey,
-    name: String(meal.name || `${fishDef.name} Plate`),
-    rarity,
-    value: Number.isFinite(value) ? Math.max(0, Math.round(value)) : fishDef.mealValue + 2
-  };
-}
-
-function normaliseTideKitchenChallenge(current, state) {
-  if (!current || typeof current !== "object") {
-    return null;
-  }
-  const owner = normalisePlayerNumber(current.owner || state?.turnPlayer, state);
-  const startedAt = Number(current.startedAt);
-  if (current.phase === "casting") {
-    const forceFishKey = current.forceFishKey == null ? null : normaliseTideKitchenFishKey(current.forceFishKey);
-    return {
-      owner,
-      phase: "casting",
-      startedAt: Number.isFinite(startedAt) ? startedAt : getTideKitchenNow(),
-      forceFishKey
-    };
-  }
-
-  const fishKey = normaliseTideKitchenFishKey(current.fishKey);
-  const fishDef = getTideKitchenFishDef(fishKey);
-  const defaultWindow = getTideKitchenTimingWindow(fishDef);
-  const defaultRhythm = createTideKitchenDefaultRhythm(fishKey);
-  const rhythm = Array.isArray(current.rhythm)
-    ? current.rhythm.filter((lane) => lane === "left" || lane === "center" || lane === "right")
-    : [];
-  const targetStartValue = Number(current.targetStart);
-  const targetEndValue = Number(current.targetEnd);
-  const targetStart = Math.max(0, Math.min(0.98, Number.isFinite(targetStartValue) ? targetStartValue : defaultWindow.targetStart));
-  const targetEnd = Math.max(targetStart + 0.01, Math.min(1, Number.isFinite(targetEndValue) ? targetEndValue : defaultWindow.targetEnd));
-  const quality = Number(current.quality);
-  const progress = Number(current.progress);
-  const tension = Number(current.tension);
-  const misses = Number(current.misses);
-  const safeRhythm = rhythm.length > 0 ? rhythm : defaultRhythm;
-  const rhythmIndex = Math.max(0, Math.min(safeRhythm.length, Math.round(Number(current.rhythmIndex) || 0)));
-  const godStage = fishDef.minigame === "godfish" && ["timing", "rhythm", "tension"].includes(current.godStage)
-    ? current.godStage
-    : (fishDef.minigame === "godfish" ? "timing" : null);
-
-  return {
-    owner,
-    phase: "hook",
-    fishKey,
-    minigame: fishDef.minigame,
-    quality: Number.isFinite(quality) ? Math.max(0, Math.min(1, quality)) : 0.5,
-    startedAt: Number.isFinite(startedAt) ? startedAt : getTideKitchenNow(),
-    progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
-    tension: Number.isFinite(tension) ? Math.max(0, Math.min(100, tension)) : 34 + Math.round(fishDef.difficulty * 20),
-    misses: Number.isFinite(misses) ? Math.max(0, Math.round(misses)) : 0,
-    rhythmIndex,
-    rhythm: safeRhythm,
-    godStage,
-    targetStart,
-    targetEnd
-  };
-}
-
-function createTideKitchenStateForGame(state) {
-  return {
-    coins: createPlayerMap(getPlayerCount(state), () => TIDE_KITCHEN_STARTING_COINS),
-    rodLevel: createPlayerMap(getPlayerCount(state), () => 1),
-    boatLevel: createPlayerMap(getPlayerCount(state), () => 1),
-    rawFish: createPlayerMap(getPlayerCount(state), () => createTideKitchenFishInventory()),
-    meals: createPlayerMap(getPlayerCount(state), () => []),
-    score: createPlayerMap(getPlayerCount(state), () => 0),
-    customerIndex: createPlayerMap(getPlayerCount(state), (owner) => owner - 1),
-    challenge: null,
-    godfishCaughtBy: 0,
-    lastCatch: null,
-    lastSale: null
-  };
-}
-
-function ensureTideKitchenState(state) {
-  if (!usesTideKitchenMode(state)) {
-    if (state) {
-      state.tideKitchen = null;
-    }
-    return null;
-  }
-
-  const current = state.tideKitchen && typeof state.tideKitchen === "object" ? state.tideKitchen : {};
-  state.tideKitchen = {
-    coins: createPlayerMap(getPlayerCount(state), (owner) => {
-      const coins = Number(current.coins?.[owner]);
-      return Number.isFinite(coins) ? Math.max(0, Math.round(coins)) : TIDE_KITCHEN_STARTING_COINS;
-    }),
-    rodLevel: createPlayerMap(getPlayerCount(state), (owner) => Math.max(1, Math.min(TIDE_KITCHEN_MAX_UPGRADE_LEVEL, Math.round(Number(current.rodLevel?.[owner]) || 1)))),
-    boatLevel: createPlayerMap(getPlayerCount(state), (owner) => Math.max(1, Math.min(TIDE_KITCHEN_MAX_UPGRADE_LEVEL, Math.round(Number(current.boatLevel?.[owner]) || 1)))),
-    rawFish: createPlayerMap(getPlayerCount(state), (owner) => createTideKitchenFishInventory(current.rawFish?.[owner])),
-    meals: createPlayerMap(getPlayerCount(state), (owner) => Array.isArray(current.meals?.[owner]) ? current.meals[owner].map((meal) => normaliseTideKitchenMeal(meal)) : []),
-    score: createPlayerMap(getPlayerCount(state), (owner) => Math.max(0, Math.round(Number(current.score?.[owner]) || 0))),
-    customerIndex: createPlayerMap(getPlayerCount(state), (owner) => Math.max(0, Math.round(Number(current.customerIndex?.[owner]) || (owner - 1)))),
-    challenge: normaliseTideKitchenChallenge(current.challenge, state),
-    godfishCaughtBy: isValidPlayerNumber(current.godfishCaughtBy, state) ? normalisePlayerNumber(current.godfishCaughtBy, state) : 0,
-    lastCatch: current.lastCatch || null,
-    lastSale: current.lastSale || null
-  };
-  return state.tideKitchen;
-}
-
-function getTideKitchenCustomer(state, owner) {
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const index = positiveMod(tideKitchen.customerIndex[safeOwner], TIDE_KITCHEN_CUSTOMERS.length);
-  return TIDE_KITCHEN_CUSTOMERS[index];
-}
-
-function getTideKitchenNow() {
-  return window.performance?.now ? window.performance.now() : Date.now();
-}
-
-function getTideKitchenElapsed(challenge, now = getTideKitchenNow()) {
-  const startedAt = Number(challenge?.startedAt);
-  return Math.max(0, now - (Number.isFinite(startedAt) ? startedAt : now));
-}
-
-function getTideKitchenAvailableFishKeys(state, owner) {
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const rodLevel = tideKitchen.rodLevel[safeOwner];
-  const boatLevel = tideKitchen.boatLevel[safeOwner];
-  return Object.entries(TIDE_KITCHEN_FISH_DEFS)
-    .filter(([, fishDef]) => rodLevel >= fishDef.minRod && boatLevel >= fishDef.minBoat)
-    .map(([fishKey]) => fishKey);
-}
-
-function pickTideKitchenFishKey(state, owner, castQuality = 0.5) {
-  const available = getTideKitchenAvailableFishKeys(state, owner);
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  if (available.includes(TIDE_KITCHEN_GODFISH_KEY) && tideKitchen.score[safeOwner] >= TIDE_KITCHEN_GODFISH_FAME_TARGET && castQuality >= 0.82) {
-    return TIDE_KITCHEN_GODFISH_KEY;
-  }
-  const nonGod = available.filter((fishKey) => fishKey !== TIDE_KITCHEN_GODFISH_KEY);
-  const weighted = [];
-  for (const fishKey of nonGod) {
-    const fishDef = getTideKitchenFishDef(fishKey);
-    const rarityWeight = fishDef.rarity === "legendary" ? 1 : fishDef.rarity === "rare" ? 2 : fishDef.rarity === "uncommon" ? 4 : 7;
-    const qualityBonus = Math.max(0, Math.round(castQuality * (fishDef.minRod + fishDef.minBoat)));
-    for (let i = 0; i < rarityWeight + qualityBonus; i += 1) {
-      weighted.push(fishKey);
-    }
-  }
-  return weighted[Math.floor(Math.random() * Math.max(1, weighted.length))] || "sprat";
-}
-
-function createTideKitchenChallenge(state, owner, fishKey = null, quality = 0.5) {
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const forcedFishKey = fishKey == null ? null : normaliseTideKitchenFishKey(fishKey);
-  const available = getTideKitchenAvailableFishKeys(state, safeOwner);
-  const forcedIsEligible = forcedFishKey
-    && available.includes(forcedFishKey)
-    && (forcedFishKey !== TIDE_KITCHEN_GODFISH_KEY || (ensureTideKitchenState(state).score[safeOwner] >= TIDE_KITCHEN_GODFISH_FAME_TARGET && quality >= 0.82));
-  const chosenFishKey = forcedIsEligible ? forcedFishKey : pickTideKitchenFishKey(state, safeOwner, quality);
-  const fishDef = getTideKitchenFishDef(chosenFishKey);
-  const now = getTideKitchenNow();
-  const timingWindow = getTideKitchenTimingWindow(fishDef);
-  const challenge = {
-    owner: safeOwner,
-    phase: "hook",
-    fishKey: chosenFishKey,
-    minigame: fishDef.minigame,
-    quality,
-    startedAt: now,
-    progress: 0,
-    tension: 34 + Math.round(fishDef.difficulty * 20),
-    misses: 0,
-    rhythmIndex: 0,
-    rhythm: createTideKitchenDefaultRhythm(chosenFishKey),
-    godStage: chosenFishKey === TIDE_KITCHEN_GODFISH_KEY ? "timing" : null,
-    targetStart: timingWindow.targetStart,
-    targetEnd: timingWindow.targetEnd
-  };
-  return challenge;
-}
-
-function startTideKitchenCastForCurrentPlayer(forceFishKey = null) {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge) {
-    return;
-  }
-  saveHistory();
-  tideKitchen.challenge = {
-    owner: state.turnPlayer,
-    phase: "casting",
-    startedAt: getTideKitchenNow(),
-    forceFishKey
-  };
-  pushLog(`Godfish Galley: Player ${state.turnPlayer} raised the rod. Hit Rod Control to cast.`);
-  updateStatus();
-  render();
-  broadcastOnlineState();
-}
-
-function getTideKitchenCastPower(challenge, now = getTideKitchenNow()) {
-  const elapsed = getTideKitchenElapsed(challenge, now);
-  return 0.5 + (Math.sin(elapsed / 320) * 0.5);
-}
-
-function getTideKitchenTimingMarker(challenge, now = getTideKitchenNow()) {
-  const elapsed = getTideKitchenElapsed(challenge, now);
-  return 0.5 + (Math.sin(elapsed / 260) * 0.5);
-}
-
-function getTideKitchenCurrentTension(challenge, now = getTideKitchenNow()) {
-  const elapsed = getTideKitchenElapsed(challenge, now);
-  return Math.max(0, Math.min(100, (challenge?.tension || 0) + (Math.sin(elapsed / 410) * 18)));
-}
-
-function completeTideKitchenCatch(state, owner, fishKey, quality = 0.5) {
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const safeFishKey = normaliseTideKitchenFishKey(fishKey);
-  const fishDef = getTideKitchenFishDef(safeFishKey);
-  tideKitchen.challenge = null;
-  tideKitchen.lastCatch = { owner: safeOwner, fishKey: safeFishKey, quality };
-  if (fishDef.god) {
-    tideKitchen.godfishCaughtBy = safeOwner;
-    appendStateLog(state, `Godfish Galley: Player ${safeOwner} caught the Godfish.`);
-    return `Player ${safeOwner} caught the Godfish.`;
-  }
-  tideKitchen.rawFish[safeOwner][safeFishKey] += 1;
-  appendStateLog(state, `Godfish Galley: Player ${safeOwner} caught ${fishDef.name}.`);
-  return `Player ${safeOwner} caught ${fishDef.name}.`;
-}
-
-function failTideKitchenCatch(state, owner, reason = "the line went slack") {
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  tideKitchen.challenge = null;
-  const message = `Godfish Galley: Player ${safeOwner} lost the fish; ${reason}.`;
-  appendStateLog(state, message);
-  return message;
-}
-
-function finishTideKitchenAction(state) {
-  if (checkForWinner(state)) {
-    updateStatus();
-    syncClockTickerFromState();
-    render();
-    broadcastOnlineState();
-    return;
-  }
-  finishSubmove(state);
-  updateStatus();
-  syncClockTickerFromState();
-  render();
-  broadcastOnlineState();
-}
-
-function resolveTideKitchenStrike(lane = null) {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const challenge = tideKitchen.challenge;
-  if (!challenge || challenge.owner !== state.turnPlayer) {
-    return;
-  }
-
-  if (challenge.phase === "casting") {
-    saveHistory();
-    const quality = getTideKitchenCastPower(challenge);
-    const nextChallenge = createTideKitchenChallenge(state, state.turnPlayer, challenge.forceFishKey, quality);
-    ensureTideKitchenState(state).challenge = nextChallenge;
-    pushLog(`Godfish Galley: Player ${state.turnPlayer} cast at ${Math.round(quality * 100)}% power.`);
-    updateStatus();
-    render();
-    broadcastOnlineState();
-    return;
-  }
-
-  saveHistory();
-  const fishDef = getTideKitchenFishDef(challenge.fishKey);
-  const activeGame = challenge.minigame === "godfish" ? challenge.godStage : challenge.minigame;
-
-  if (activeGame === "timing") {
-    const marker = getTideKitchenTimingMarker(challenge);
-    if (marker >= challenge.targetStart && marker <= challenge.targetEnd) {
-      if (challenge.minigame === "godfish") {
-        challenge.godStage = "rhythm";
-        challenge.startedAt = getTideKitchenNow();
-        pushLog("Godfish Galley: Godfish phase 1 landed. Match the rhythm.");
-        updateStatus();
-        render();
-        broadcastOnlineState();
-        return;
-      }
-      completeTideKitchenCatch(state, state.turnPlayer, challenge.fishKey, challenge.quality);
-    } else {
-      failTideKitchenCatch(state, state.turnPlayer, "bad timing");
-    }
-    finishTideKitchenAction(state);
-    return;
-  }
-
-  if (activeGame === "rhythm") {
-    const expected = challenge.rhythm[challenge.rhythmIndex] || "center";
-    const chosen = lane || "center";
-    if (chosen === expected) {
-      challenge.rhythmIndex += 1;
-      if (challenge.rhythmIndex >= challenge.rhythm.length) {
-        if (challenge.minigame === "godfish") {
-          challenge.godStage = "tension";
-          challenge.progress = 35;
-          challenge.tension = 42;
-          challenge.startedAt = getTideKitchenNow();
-          pushLog("Godfish Galley: Godfish rhythm held. Keep the tension clean.");
-          updateStatus();
-          render();
-          broadcastOnlineState();
-          return;
-        }
-        completeTideKitchenCatch(state, state.turnPlayer, challenge.fishKey, challenge.quality);
-        finishTideKitchenAction(state);
-        return;
-      }
-      pushLog(`Godfish Galley: rhythm hit ${challenge.rhythmIndex}/${challenge.rhythm.length}.`);
-      updateStatus();
-      render();
-      broadcastOnlineState();
-      return;
-    }
-    challenge.misses += 1;
-    if (challenge.misses >= 2) {
-      failTideKitchenCatch(state, state.turnPlayer, "missed the rhythm");
-      finishTideKitchenAction(state);
-      return;
-    }
-    pushLog("Godfish Galley: rhythm miss.");
-    updateStatus();
-    render();
-    broadcastOnlineState();
-    return;
-  }
-
-  if (activeGame === "tension") {
-    const rodLevel = tideKitchen.rodLevel[state.turnPlayer];
-    const tension = getTideKitchenCurrentTension(challenge);
-    if (tension > 88) {
-      failTideKitchenCatch(state, state.turnPlayer, "the line snapped");
-      finishTideKitchenAction(state);
-      return;
-    }
-    challenge.progress += 22 + (rodLevel * 8) + (tension >= 38 && tension <= 72 ? 12 : 0);
-    challenge.tension = Math.min(96, tension + 13 + (fishDef.difficulty * 10));
-    challenge.startedAt = getTideKitchenNow();
-    if (challenge.progress >= 100) {
-      completeTideKitchenCatch(state, state.turnPlayer, challenge.fishKey, challenge.quality);
-      finishTideKitchenAction(state);
-      return;
-    }
-    pushLog(`Godfish Galley: reel progress ${Math.min(100, Math.round(challenge.progress))}%.`);
-    updateStatus();
-    render();
-    broadcastOnlineState();
-  }
-}
-
-function getBestTideKitchenRawFishKey(state, owner) {
-  const tideKitchen = ensureTideKitchenState(state);
-  const inventory = tideKitchen.rawFish[normalisePlayerNumber(owner, state)];
-  return Object.keys(inventory)
-    .filter((fishKey) => inventory[fishKey] > 0 && !getTideKitchenFishDef(fishKey).god)
-    .sort((a, b) => getTideKitchenFishDef(b).mealValue - getTideKitchenFishDef(a).mealValue)[0] || null;
-}
-
-function cookTideKitchenMealForCurrentPlayer() {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  let tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge) {
-    return;
-  }
-  const owner = state.turnPlayer;
-  const fishKey = getBestTideKitchenRawFishKey(state, owner);
-  if (!fishKey) {
-    pushLog("Godfish Galley: no raw fish to cook.");
-    updateStatus();
-    render();
-    return;
-  }
-  tideKitchen = ensureTideKitchenState(state);
-  saveHistory();
-  const fishDef = getTideKitchenFishDef(fishKey);
-  tideKitchen.rawFish[owner][fishKey] -= 1;
-  const rodLevel = tideKitchen.rodLevel[owner];
-  const meal = {
-    fishKey,
-    name: `${fishDef.name} Plate`,
-    rarity: fishDef.rarity,
-    value: fishDef.mealValue + (rodLevel * 2)
-  };
-  tideKitchen.meals[owner].push(meal);
-  pushLog(`Godfish Galley: Player ${owner} cooked ${meal.name}.`);
-  finishTideKitchenAction(state);
-}
-
-function sellTideKitchenMealForCurrentPlayer() {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  let tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge) {
-    return;
-  }
-  const owner = state.turnPlayer;
-  let meals = tideKitchen.meals[owner];
-  if (!meals.length) {
-    pushLog("Godfish Galley: no cooked meals to serve.");
-    updateStatus();
-    render();
-    return;
-  }
-  const customer = getTideKitchenCustomer(state, owner);
-  tideKitchen = ensureTideKitchenState(state);
-  meals = tideKitchen.meals[owner];
-  const bestIndex = meals
-    .map((meal, index) => ({
-      index,
-      value: meal.value + (meal.rarity === customer.preference ? customer.bonus : 0)
-    }))
-    .sort((a, b) => b.value - a.value)[0].index;
-  saveHistory();
-  const [meal] = meals.splice(bestIndex, 1);
-  const bonus = meal.rarity === customer.preference ? customer.bonus : 0;
-  const coins = meal.value + bonus;
-  tideKitchen.coins[owner] += coins;
-  tideKitchen.score[owner] += Math.max(1, Math.floor(coins / 4));
-  tideKitchen.customerIndex[owner] += 1;
-  tideKitchen.lastSale = { owner, meal: meal.name, customer: customer.name, coins };
-  pushLog(`Godfish Galley: ${customer.name} bought Player ${owner}'s ${meal.name} for ${coins} coins.`);
-  finishTideKitchenAction(state);
-}
-
-function buyTideKitchenUpgrade(type) {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  if (type !== "rod" && type !== "boat") {
-    return;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge) {
-    return;
-  }
-  const owner = state.turnPlayer;
-  const levelMap = type === "boat" ? tideKitchen.boatLevel : tideKitchen.rodLevel;
-  const costMap = type === "boat" ? TIDE_KITCHEN_BOAT_COSTS : TIDE_KITCHEN_ROD_COSTS;
-  const nextLevel = levelMap[owner] + 1;
-  if (nextLevel > TIDE_KITCHEN_MAX_UPGRADE_LEVEL) {
-    pushLog(`Godfish Galley: Player ${owner}'s ${type} is already maxed.`);
-    updateStatus();
-    render();
-    return;
-  }
-  const cost = costMap[nextLevel] || Infinity;
-  if (tideKitchen.coins[owner] < cost) {
-    pushLog(`Godfish Galley: Player ${owner} needs ${cost} coins for ${type} level ${nextLevel}.`);
-    updateStatus();
-    render();
-    return;
-  }
-  saveHistory();
-  tideKitchen.coins[owner] -= cost;
-  levelMap[owner] = nextLevel;
-  pushLog(`Godfish Galley: Player ${owner} upgraded ${type} to level ${nextLevel}.`);
-  finishTideKitchenAction(state);
-}
-
-function passTideKitchenAction() {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge) {
-    return;
-  }
-  saveHistory();
-  pushLog(`Godfish Galley: Player ${state.turnPlayer} ended the shift.`);
-  state.movesLeftInTurn = 1;
-  finishTideKitchenAction(state);
-}
-
-function getTideKitchenLaneFromCanvasX(x) {
-  const width = Math.max(1, canvas.clientWidth || 1);
-  if (x < width / 3) {
-    return "left";
-  }
-  if (x > (width * 2) / 3) {
-    return "right";
-  }
-  return "center";
-}
-
-function handleTideKitchenCanvasClick(x, y) {
-  const state = game.state;
-  if (!canUseTideKitchenControls(state)) {
-    return;
-  }
-  const challenge = ensureTideKitchenState(state).challenge;
-  if (!challenge) {
-    startTideKitchenCastForCurrentPlayer();
-    return;
-  }
-  const lane = getTideKitchenLaneFromCanvasX(x);
-  resolveTideKitchenStrike(lane);
-}
-
-function canUseTideKitchenControls(state = game.state) {
-  return Boolean(
-    state
-    && usesTideKitchenMode(state)
-    && !state.winner
-    && !isBrowsingHistory()
-    && canActForCurrentTurn()
-    && !hasChaosPendingVote(state)
-  );
-}
-
-function resolveTideKitchenTurnEnd(state, owner) {
-  if (!usesTideKitchenMode(state)) {
-    return null;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  if (tideKitchen.challenge?.owner === owner) {
-    tideKitchen.challenge = null;
-    return `Godfish Galley: Player ${owner}'s line was reeled in at shift end.`;
-  }
-  return null;
-}
-
-function getTideKitchenWinner(state) {
-  if (!usesTideKitchenMode(state)) {
-    return 0;
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  return tideKitchen.godfishCaughtBy || 0;
-}
-
-function getTideKitchenScoreSummary(state) {
-  if (!usesTideKitchenMode(state)) {
-    return "";
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  return getPlayerNumbers(state)
-    .map((owner) => `P${owner} ${tideKitchen.coins[owner]}c ${tideKitchen.score[owner]}/${TIDE_KITCHEN_GODFISH_FAME_TARGET}f R${tideKitchen.rodLevel[owner]}/B${tideKitchen.boatLevel[owner]}`)
-    .join(" | ");
-}
-
-function getTideKitchenPantrySummary(state, owner) {
-  if (!usesTideKitchenMode(state) || !isValidPlayerNumber(owner, state)) {
-    return "";
-  }
-  const tideKitchen = ensureTideKitchenState(state);
-  const safeOwner = normalisePlayerNumber(owner, state);
-  const rawCount = Object.values(tideKitchen.rawFish[safeOwner]).reduce((total, amount) => total + amount, 0);
-  const meals = tideKitchen.meals[safeOwner].length;
-  const customer = getTideKitchenCustomer(state, safeOwner);
-  return `${rawCount} raw | ${meals} meals | ${customer.name} wants ${customer.preference}`;
-}
-
 function getLineAxesForMode(state) {
   if (usesOctagonGridMode(state)) {
     return octagonLineAxes;
@@ -3780,7 +2703,6 @@ const game = {
   lastFactoryAnimationAt: 0,
   factoryAnimationFramePending: false,
   factoryAnimationDisabled: false,
-  tideKitchenAnimationFramePending: false,
   performanceModeLevel: 0,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
@@ -3868,13 +2790,6 @@ function normaliseModeKeys(modeKeys) {
       }
     }
   }
-  if (requested.has("tideKitchen")) {
-    for (const key of Array.from(requested)) {
-      if (key !== "tideKitchen" && key !== "threePlayer" && key !== "fourPlayer") {
-        requested.delete(key);
-      }
-    }
-  }
   if (requested.has("bedSiege")) {
     requested.delete("riftBloom");
   }
@@ -3936,13 +2851,6 @@ function refreshFactoryControls(modeKeys) {
     return;
   }
   ui.factoryControls.hidden = !normaliseModeKeys(modeKeys).includes("factoryFoundry");
-}
-
-function refreshTideKitchenControls(modeKeys) {
-  if (!ui.tideKitchenControls) {
-    return;
-  }
-  ui.tideKitchenControls.hidden = !normaliseModeKeys(modeKeys).includes("tideKitchen");
 }
 
 function refreshBagelControls(modeKeys) {
@@ -4257,10 +3165,6 @@ function usesRiftBloomMode(state) {
 
 function usesPigMode(state) {
   return Boolean(state && hasMode(state, "pig"));
-}
-
-function usesTideKitchenMode(state) {
-  return Boolean(state && hasMode(state, "tideKitchen"));
 }
 
 function normalisePerformanceModeLevel(level) {
@@ -5169,8 +4073,7 @@ function makeInitialState(
     factory: null,
     chaos: null,
     powder: null,
-    pig: null,
-    tideKitchen: null
+    pig: null
   };
   if (usesArmoryMode(state)) {
     state.armory = createArmoryStateForGame(state);
@@ -5205,7 +4108,7 @@ function makeInitialState(
       : `anchor them beside ${RIFT_BLOOM_ANCHOR_FRIENDS} friendly stones within ${turns} turn${turns === 1 ? "" : "s"}`;
     state.log[0] = `Rift Bloom started: 1 in ${getRiftBloomCellModulus(state)} cells shimmer. Place on them to grow mirrored ghosts; ${riftRule}.`;
   }
-  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state) && !usesTideKitchenMode(state)) {
+  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state)) {
     state.pig = createPigStateForGame(state);
     state.log[0] = usesRiftBloomMode(state)
       ? "Pig + Rift Bloom started: the pig blocks the origin, rift cells still sprout mirrored ghosts, and only the player who places the trapping stone wins. The pig can startle once from an adjacent later stone while it still has room."
@@ -5215,14 +4118,6 @@ function makeInitialState(
     state.powder = createPowderStateForGame();
     if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
       state.log[0] = `Powder Cascade started: source pads pour ${POWDER_GRAINS_PER_CELL} grains, newest pads drip pressure at turn end, and clear grain leads claim a connect-${getWinLength(state)} line.`;
-    }
-  }
-  if (usesTideKitchenMode(state)) {
-    state.tideKitchen = createTideKitchenStateForGame(state);
-    state.movesLeftInTurn = TIDE_KITCHEN_ACTIONS_PER_TURN;
-    state.openingMoveDone = true;
-    if (!usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesPowderMode(state)) {
-      state.log[0] = "Godfish Galley started: cast, reel, cook, serve, upgrade, and be the first to catch the Godfish.";
     }
   }
   return state;
@@ -5240,7 +4135,6 @@ function setModeUI(modeKeys) {
   refreshArmoryControls(modeKeys);
   refreshBedSiegeControls(modeKeys);
   refreshFactoryControls(modeKeys);
-  refreshTideKitchenControls(modeKeys);
   refreshBagelControls(modeKeys);
   refreshChaosControls(modeKeys);
   refreshRiftBloomControls(modeKeys);
@@ -9976,14 +8870,13 @@ function resolveArmoryTurnEnd(state) {
 }
 
 function checkForWinner(state) {
-  const tideKitchenWinner = usesTideKitchenMode(state) ? getTideKitchenWinner(state) : 0;
   const winner = usesFactoryMode(state)
     ? getFactoryWinner(state)
     : (usesBedSiegeMode(state)
       ? getBedSiegeWinner(state)
       : (usesPowderMode(state)
         ? getPowderWinner(state)
-        : (usesPigMode(state) ? getPigTrapWinner(state) : (tideKitchenWinner || auditWholeBoardForWinner(state)))));
+        : (usesPigMode(state) ? getPigTrapWinner(state) : auditWholeBoardForWinner(state))));
   if (winner && !state.winner) {
     state.winner = winner;
     pushLog(usesFactoryMode(state)
@@ -9994,7 +8887,7 @@ function checkForWinner(state) {
           ? `Player ${winner} wins Powder Cascade.`
           : (usesPigMode(state)
             ? `Player ${winner} trapped the pig and wins.`
-            : (tideKitchenWinner === winner ? `Player ${winner} caught the Godfish and wins Godfish Galley.` : `Player ${winner} wins.`)))));
+            : `Player ${winner} wins.`))));
   }
   return winner;
 }
@@ -10003,7 +8896,7 @@ function finishTurnRotation(state, previousPlayer) {
   const nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
   switchClockTurn(state.clock, nextPlayer);
   state.turnPlayer = nextPlayer;
-  state.movesLeftInTurn = usesTideKitchenMode(state) ? TIDE_KITCHEN_ACTIONS_PER_TURN : getPlacementsPerTurn(state);
+  state.movesLeftInTurn = getPlacementsPerTurn(state);
   state.duckPhase = false;
   state.birdMovesPending = [];
   state.currentBirdMoveKind = null;
@@ -10035,7 +8928,6 @@ function endTurn(state) {
   resolvePowderCascade(state, previousPlayer);
   resolveArmoryTurnEnd(state);
   resolveBedSiegeTurnEnd(state, previousPlayer);
-  resolveTideKitchenTurnEnd(state, previousPlayer);
   resolveFactoryTurnEnd(state, previousPlayer);
   resolveChaosTurnEnd(state, previousPlayer);
   resolveRiftBloom(state);
@@ -10104,7 +8996,6 @@ function placeTurnTile(state, hex, owner) {
 
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
   const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
-  const tideKitchenMessages = applyTideKitchenPlacementEffects(state, state.lastPlacement, owner);
   const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
   const chaosMessages = applyChaosAfterPlacementEffects(state, state.lastPlacement, owner);
   const riftMessages = applyRiftBloomPlacementEffects(state, state.lastPlacement, owner);
@@ -10123,7 +9014,6 @@ function placeTurnTile(state, hex, owner) {
     armoryAbilityMessage,
     ...bedSiegeMessages,
     ...bagelMessages,
-    ...tideKitchenMessages,
     ...chaosMessages,
     ...riftMessages,
     pigMoveMessage,
@@ -11387,10 +10277,6 @@ function clickPlacement(hex) {
     return;
   }
 
-  if (usesTideKitchenMode(state)) {
-    return;
-  }
-
   if (usesFactoryMode(state)) {
     handleFactoryBoardClick(hex);
     return;
@@ -11909,70 +10795,6 @@ function renderFactoryPanel() {
   );
 }
 
-function renderTideKitchenPanel() {
-  if (!ui.tideKitchenControls) {
-    return;
-  }
-  const state = game.state;
-  if (!state || !usesTideKitchenMode(state)) {
-    ui.tideKitchenControls.hidden = true;
-    return;
-  }
-
-  ui.tideKitchenControls.hidden = false;
-  const tideKitchen = ensureTideKitchenState(state);
-  const owner = state.turnPlayer;
-  const canControl = canUseTideKitchenControls(state);
-  const challenge = tideKitchen.challenge;
-  const customer = getTideKitchenCustomer(state, owner);
-  const rawCount = Object.values(tideKitchen.rawFish[owner]).reduce((total, amount) => total + amount, 0);
-  const mealCount = tideKitchen.meals[owner].length;
-  const rodNext = tideKitchen.rodLevel[owner] + 1;
-  const boatNext = tideKitchen.boatLevel[owner] + 1;
-
-  if (ui.tideKitchenSummaryText) {
-    ui.tideKitchenSummaryText.textContent = getTideKitchenScoreSummary(state);
-  }
-  if (ui.tideKitchenActiveText) {
-    const challengeText = challenge
-      ? (challenge.phase === "casting"
-        ? "casting power"
-        : `${getTideKitchenFishDef(challenge.fishKey).name} | ${challenge.minigame === "godfish" ? challenge.godStage : challenge.minigame}`)
-      : "ready";
-    ui.tideKitchenActiveText.textContent = `Active: Player ${owner} | ${state.movesLeftInTurn} actions | ${challengeText}`;
-  }
-  if (ui.tideKitchenCatchText) {
-    ui.tideKitchenCatchText.textContent = `${rawCount} raw, ${mealCount} meals | ${customer.name} wants ${customer.preference}`;
-  }
-
-  if (ui.tideKitchenCastBtn) {
-    ui.tideKitchenCastBtn.disabled = !canControl || Boolean(challenge);
-  }
-  if (ui.tideKitchenStrikeBtn) {
-    ui.tideKitchenStrikeBtn.disabled = !canControl || !challenge;
-    ui.tideKitchenStrikeBtn.textContent = challenge?.phase === "casting" ? "Cast Line" : "Rod Control";
-  }
-  if (ui.tideKitchenCookBtn) {
-    ui.tideKitchenCookBtn.disabled = !canControl || Boolean(challenge) || rawCount <= 0;
-  }
-  if (ui.tideKitchenSellBtn) {
-    ui.tideKitchenSellBtn.disabled = !canControl || Boolean(challenge) || mealCount <= 0;
-  }
-  if (ui.tideKitchenRodBtn) {
-    const cost = TIDE_KITCHEN_ROD_COSTS[rodNext];
-    ui.tideKitchenRodBtn.disabled = !canControl || Boolean(challenge) || !cost || tideKitchen.coins[owner] < cost;
-    ui.tideKitchenRodBtn.textContent = cost ? `Rod L${rodNext} (${cost}c)` : "Rod Max";
-  }
-  if (ui.tideKitchenBoatBtn) {
-    const cost = TIDE_KITCHEN_BOAT_COSTS[boatNext];
-    ui.tideKitchenBoatBtn.disabled = !canControl || Boolean(challenge) || !cost || tideKitchen.coins[owner] < cost;
-    ui.tideKitchenBoatBtn.textContent = cost ? `Boat L${boatNext} (${cost}c)` : "Boat Max";
-  }
-  if (ui.tideKitchenEndBtn) {
-    ui.tideKitchenEndBtn.disabled = !canControl || Boolean(challenge);
-  }
-}
-
 function renderEverythingBagelPanel() {
   if (!ui.bagelControls) {
     return;
@@ -12165,10 +10987,6 @@ function updateStatus() {
     const movedText = powder.lastReport?.moved ? `, ${powder.lastReport.moved} steps` : "";
     ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${getPowderClaimSummary(state)} claimed, ${contested} contested${movedText}`;
   }
-  if (usesTideKitchenMode(state) && !state.winner) {
-    const owner = state.turnPlayer;
-    ui.subturnText.textContent = `${state.movesLeftInTurn} harbor action${state.movesLeftInTurn === 1 ? "" : "s"} left | ${getTideKitchenScoreSummary(state)} | ${getTideKitchenPantrySummary(state, owner)}`;
-  }
   if (usesRiftBloomMode(state) && !state.winner) {
     const ghostCount = getRiftBloomGhostEntries(state).length;
     const activeLabel = isRiftBloomActiveCell(state, game.hoverHex) ? "live hover" : "rift cells live";
@@ -12193,9 +11011,9 @@ function updateStatus() {
     const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
   }
-  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesTideKitchenMode(state)) {
+  if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     ui.subturnText.textContent += " | Trap the pig";
-  } else if (!usesBedSiegeMode(state) && !usesFactoryMode(state) && !usesTideKitchenMode(state)) {
+  } else if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     ui.subturnText.textContent += ` | Connect ${getWinLength(state)}`;
   }
 
@@ -12206,7 +11024,6 @@ function updateStatus() {
   renderArmoryPanel();
   renderBedSiegePanel();
   renderFactoryPanel();
-  renderTideKitchenPanel();
   renderEverythingBagelPanel();
   renderChaosPanel();
 }
@@ -13258,231 +12075,6 @@ function getVisibleBoundsForCurrentGrid(size, w, h, marginCells = 2) {
     hexSize: size,
     marginHexes: marginCells
   });
-}
-
-function drawTideKitchenOverlay() {
-  if (!usesTideKitchenMode(game.state) || usesExtremeLdmMode()) {
-    return;
-  }
-  const size = currentHexSize();
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  const bounds = getVisibleBoundsForCurrentGrid(size, w, h, 2);
-  const drawStep = getGridDrawStep(size);
-  const showDetailText = canDrawDetailText(size);
-  const radialMode = usesRadialGridMode(game.state);
-  const octagonMode = usesOctagonGridMode(game.state);
-
-  ctx.save();
-  for (let q = bounds.minQ; q <= bounds.maxQ; q += drawStep) {
-    const rValues = [];
-    if (radialMode && q === 0) {
-      rValues.push(0);
-    } else {
-      for (let r = bounds.minR; r <= bounds.maxR; r += drawStep) {
-        rValues.push(r);
-      }
-    }
-    for (const r of rValues) {
-      const hex = { q, r };
-      if (octagonMode && !isOctagonTileCoordinate(hex)) {
-        continue;
-      }
-      const tileType = getTideKitchenTileType(game.state, hex);
-      const tileDef = getTideKitchenTileDef(tileType);
-      if (!tileDef) {
-        continue;
-      }
-      const world = boardCellToPixel(hex, size, game.state);
-      const screen = worldToScreen(world.x, world.y);
-      if (!isOnScreenWithMargin(screen, size * 2, w, h)) {
-        continue;
-      }
-      drawBoardShape(screen.x, screen.y, size * 0.84, tileDef.fill, tileDef.stroke, 1.7, hex);
-      if (showDetailText) {
-        ctx.fillStyle = tileDef.text;
-        ctx.font = `${Math.max(8, Math.min(13, size * 0.38))}px Inter, system-ui, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(tileDef.label, screen.x, screen.y);
-      }
-    }
-  }
-  ctx.restore();
-}
-
-function drawTideKitchenBar(x, y, width, height, value, fill, label = "") {
-  ctx.fillStyle = "rgba(8, 12, 26, 0.58)";
-  ctx.fillRect(x, y, width, height);
-  ctx.fillStyle = fill;
-  ctx.fillRect(x, y, Math.max(0, Math.min(1, value)) * width, height);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.24)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect?.(x, y, width, height);
-  if (label) {
-    ctx.fillStyle = "rgba(236, 242, 255, 0.92)";
-    ctx.font = "12px Inter, system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, x + width / 2, y + height / 2);
-  }
-}
-
-function drawTideKitchenScene() {
-  const state = game.state;
-  const tideKitchen = ensureTideKitchenState(state);
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  const owner = state.turnPlayer;
-  const ownerStyle = getPlayerStyle(owner);
-  const challenge = tideKitchen.challenge;
-
-  ctx.fillStyle = "#071923";
-  ctx.fillRect(0, 0, w, h);
-  ctx.fillStyle = "#12364a";
-  ctx.fillRect(0, h * 0.30, w, h * 0.70);
-  ctx.fillStyle = "rgba(118, 227, 168, 0.10)";
-  ctx.fillRect(0, h * 0.30, w, h * 0.08);
-
-  ctx.strokeStyle = "rgba(109, 198, 255, 0.20)";
-  ctx.lineWidth = 2;
-  for (let y = h * 0.42; y < h; y += 34) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    for (let x = 0; x <= w; x += 42) {
-      ctx.lineTo(x, y + Math.sin((x + Date.now() / 18) / 36) * 5);
-    }
-    ctx.stroke();
-  }
-
-  const boatX = w * 0.22;
-  const boatY = h * 0.58;
-  ctx.fillStyle = ownerStyle.hex;
-  ctx.beginPath();
-  ctx.moveTo(boatX - 72, boatY);
-  ctx.lineTo(boatX + 76, boatY);
-  ctx.lineTo(boatX + 48, boatY + 34);
-  ctx.lineTo(boatX - 44, boatY + 34);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.45)";
-  ctx.stroke();
-
-  ctx.strokeStyle = "rgba(255, 239, 191, 0.88)";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(boatX + 36, boatY - 2);
-  const rodTipX = boatX + 140;
-  const rodTipY = boatY - 85;
-  ctx.lineTo(rodTipX, rodTipY);
-  ctx.stroke();
-
-  const lureX = challenge ? w * 0.64 : w * 0.50;
-  const lureY = challenge ? h * 0.54 : h * 0.48;
-  ctx.strokeStyle = "rgba(236, 242, 255, 0.54)";
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(rodTipX, rodTipY);
-  ctx.lineTo(lureX, lureY);
-  ctx.stroke();
-  ctx.fillStyle = "#ffdf78";
-  ctx.beginPath();
-  ctx.arc(lureX, lureY, 5, 0, Math.PI * 2);
-  ctx.fill();
-
-  for (const [index, fishKey] of getTideKitchenAvailableFishKeys(state, owner).entries()) {
-    const fishDef = getTideKitchenFishDef(fishKey);
-    if (fishDef.god) {
-      continue;
-    }
-    const fx = w * (0.48 + ((index % 4) * 0.11));
-    const fy = h * (0.66 + (Math.floor(index / 4) * 0.10));
-    ctx.fillStyle = fishDef.rarity === "legendary" ? "rgba(255, 215, 94, 0.28)" : fishDef.rarity === "rare" ? "rgba(200, 165, 255, 0.24)" : "rgba(236, 242, 255, 0.18)";
-    ctx.beginPath();
-    ctx.ellipse(fx, fy, 22, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = "rgba(236, 242, 255, 0.94)";
-  ctx.font = "700 22px Inter, system-ui, sans-serif";
-  ctx.fillText("Godfish Galley", 22, 22);
-  ctx.font = "13px Inter, system-ui, sans-serif";
-  ctx.fillStyle = "rgba(236, 242, 255, 0.76)";
-  ctx.fillText(getTideKitchenScoreSummary(state), 22, 54);
-  ctx.fillText(`P${owner}: ${getTideKitchenPantrySummary(state, owner)}`, 22, 76);
-
-  if (!challenge) {
-    ctx.fillStyle = "rgba(255, 255, 255, 0.76)";
-    ctx.font = "16px Inter, system-ui, sans-serif";
-    ctx.fillText("Use Cast to start. Cook catches, serve customers, upgrade, then hunt the Godfish.", 22, h - 64);
-    return;
-  }
-
-  const panelX = Math.max(24, w * 0.50);
-  const panelY = 104;
-  const panelW = Math.min(420, w - panelX - 24);
-  ctx.fillStyle = "rgba(8, 12, 26, 0.70)";
-  ctx.fillRect(panelX, panelY, panelW, 180);
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.strokeRect?.(panelX, panelY, panelW, 180);
-
-  ctx.fillStyle = "rgba(236, 242, 255, 0.94)";
-  ctx.font = "700 16px Inter, system-ui, sans-serif";
-  const title = challenge.phase === "casting"
-    ? "Casting power"
-    : `${getTideKitchenFishDef(challenge.fishKey).name} on the line`;
-  ctx.fillText(title, panelX + 16, panelY + 16);
-  ctx.font = "13px Inter, system-ui, sans-serif";
-  ctx.fillStyle = "rgba(236, 242, 255, 0.74)";
-
-  if (challenge.phase === "casting") {
-    const power = getTideKitchenCastPower(challenge);
-    drawTideKitchenBar(panelX + 16, panelY + 56, panelW - 32, 22, power, "#76e3a8", `${Math.round(power * 100)}%`);
-    ctx.fillText("Press Rod Control at high power to reach rarer water.", panelX + 16, panelY + 94);
-    return;
-  }
-
-  const activeGame = challenge.minigame === "godfish" ? challenge.godStage : challenge.minigame;
-  if (activeGame === "timing") {
-    const marker = getTideKitchenTimingMarker(challenge);
-    const barX = panelX + 16;
-    const barY = panelY + 58;
-    const barW = panelW - 32;
-    drawTideKitchenBar(barX, barY, barW, 22, 1, "rgba(109, 198, 255, 0.24)", "");
-    ctx.fillStyle = "rgba(118, 227, 168, 0.86)";
-    ctx.fillRect(barX + challenge.targetStart * barW, barY, (challenge.targetEnd - challenge.targetStart) * barW, 22);
-    ctx.fillStyle = "#ffdf78";
-    ctx.fillRect(barX + marker * barW - 3, barY - 6, 6, 34);
-    ctx.fillStyle = "rgba(236, 242, 255, 0.78)";
-    ctx.fillText("Hit Rod Control inside the green bite window.", panelX + 16, panelY + 98);
-    return;
-  }
-
-  if (activeGame === "rhythm") {
-    const lanes = ["left", "center", "right"];
-    const expected = challenge.rhythm[challenge.rhythmIndex] || "center";
-    const laneW = (panelW - 40) / 3;
-    for (const [index, lane] of lanes.entries()) {
-      const x = panelX + 16 + index * (laneW + 4);
-      ctx.fillStyle = lane === expected ? "rgba(255, 215, 94, 0.34)" : "rgba(255,255,255,0.08)";
-      ctx.fillRect(x, panelY + 56, laneW, 48);
-      ctx.fillStyle = "rgba(236, 242, 255, 0.88)";
-      ctx.textAlign = "center";
-      ctx.fillText(lane.toUpperCase(), x + laneW / 2, panelY + 72);
-    }
-    ctx.textAlign = "left";
-    ctx.fillText(`Click the lit lane: ${challenge.rhythmIndex}/${challenge.rhythm.length}`, panelX + 16, panelY + 122);
-    return;
-  }
-
-  if (activeGame === "tension") {
-    const tension = getTideKitchenCurrentTension(challenge);
-    drawTideKitchenBar(panelX + 16, panelY + 56, panelW - 32, 20, challenge.progress / 100, "#6dc6ff", `${Math.round(challenge.progress)}% reeled`);
-    drawTideKitchenBar(panelX + 16, panelY + 92, panelW - 32, 20, tension / 100, tension > 88 ? "#ff6f61" : "#ffdf78", `${Math.round(tension)} tension`);
-    ctx.fillText("Rod Control reels in, but high tension can snap the line.", panelX + 16, panelY + 130);
-  }
 }
 
 function drawEverythingBagelOverlay() {
@@ -14861,20 +13453,9 @@ function renderNow() {
   const h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
 
-  if (usesTideKitchenMode(game.state)) {
-    drawTideKitchenScene();
-    ui.zoomText.textContent = "Harbor view";
-    ui.coordText.textContent = "Rod: cast | control | cook | serve";
-    if (ensureTideKitchenState(game.state)?.challenge) {
-      scheduleTideKitchenAnimation();
-    }
-    return;
-  }
-
   drawGrid();
   drawFactoryOverlay();
   drawBedSiegeOverlay();
-  drawTideKitchenOverlay();
   drawEverythingBagelOverlay();
   drawOriginIndicator();
   drawPowderGrains();
@@ -14907,25 +13488,6 @@ function render() {
     game.renderScheduled = false;
     renderNow();
   });
-}
-
-function scheduleTideKitchenAnimation() {
-  if (game.tideKitchenAnimationFramePending) {
-    return;
-  }
-  game.tideKitchenAnimationFramePending = true;
-  let callbackWasSynchronous = true;
-  window.requestAnimationFrame(() => {
-    if (callbackWasSynchronous) {
-      game.tideKitchenAnimationFramePending = false;
-      return;
-    }
-    game.tideKitchenAnimationFramePending = false;
-    if (game.state && usesTideKitchenMode(game.state) && ensureTideKitchenState(game.state)?.challenge) {
-      render();
-    }
-  });
-  callbackWasSynchronous = false;
 }
 
 function centreBoard() {
@@ -14964,7 +13526,6 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   }, game.riftBloomCellModulus, game.riftBloomContestClaim, game.riftBloomGhostTurns, game.riftBloomTieGoesToCreator);
   game.factoryAnimationDisabled = false;
   game.factoryAnimationFramePending = false;
-  game.tideKitchenAnimationFramePending = false;
   game.lastFactoryAnimationAt = 0;
   const startingPlayer = resolveStartingPlayer(game.turnOrder, playerCount);
   game.state.startingPlayer = startingPlayer;
@@ -15083,10 +13644,6 @@ canvas.addEventListener("click", (event) => {
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  if (game.state && usesTideKitchenMode(game.state)) {
-    handleTideKitchenCanvasClick(x, y);
-    return;
-  }
   const world = screenToWorld(x, y);
   const hex = pixelToBoardCell(world.x, world.y, currentHexSize(), game.state);
   clickPlacement(hex);
@@ -15155,14 +13712,6 @@ canvas.addEventListener("touchend", (event) => {
         const rect = canvas.getBoundingClientRect();
         const x = t.clientX - rect.left;
         const y = t.clientY - rect.top;
-        if (game.state && usesTideKitchenMode(game.state)) {
-          handleTideKitchenCanvasClick(x, y);
-          game.ignoreClickUntil = Date.now() + 500;
-          game.isPanning = false;
-          game.touchPanMoved = false;
-          game.touchPinchState = null;
-          return;
-        }
         const world = screenToWorld(x, y);
         const hex = pixelToBoardCell(world.x, world.y, currentHexSize(), game.state);
         clickPlacement(hex);
@@ -15304,29 +13853,6 @@ function handleKeyboardShortcut(event) {
     return;
   }
 
-  if (game.state && usesTideKitchenMode(game.state)) {
-    if (event.key === " " || key === "f") {
-      event.preventDefault();
-      resolveTideKitchenStrike("center");
-      return;
-    }
-    if (key === "1" || event.key === "ArrowLeft") {
-      event.preventDefault();
-      resolveTideKitchenStrike("left");
-      return;
-    }
-    if (key === "2" || event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      resolveTideKitchenStrike("center");
-      return;
-    }
-    if (key === "3" || event.key === "ArrowRight") {
-      event.preventDefault();
-      resolveTideKitchenStrike("right");
-      return;
-    }
-  }
-
   if (key === "c") {
     event.preventDefault();
     centreBoard();
@@ -15411,27 +13937,6 @@ for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
 }
 ui.armoryRerollBtn?.addEventListener("click", () => {
   rerollArmoryShopForCurrentPlayer();
-});
-ui.tideKitchenCastBtn?.addEventListener("click", () => {
-  startTideKitchenCastForCurrentPlayer();
-});
-ui.tideKitchenStrikeBtn?.addEventListener("click", () => {
-  resolveTideKitchenStrike("center");
-});
-ui.tideKitchenCookBtn?.addEventListener("click", () => {
-  cookTideKitchenMealForCurrentPlayer();
-});
-ui.tideKitchenSellBtn?.addEventListener("click", () => {
-  sellTideKitchenMealForCurrentPlayer();
-});
-ui.tideKitchenRodBtn?.addEventListener("click", () => {
-  buyTideKitchenUpgrade("rod");
-});
-ui.tideKitchenBoatBtn?.addEventListener("click", () => {
-  buyTideKitchenUpgrade("boat");
-});
-ui.tideKitchenEndBtn?.addEventListener("click", () => {
-  passTideKitchenAction();
 });
 ui.ldmBtn?.addEventListener("click", () => {
   setPerformanceModeLevel(getPerformanceModeLevel() === 1 ? 0 : 1);
