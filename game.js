@@ -4906,17 +4906,16 @@ function getOnlineAssignedSlots() {
   return slots;
 }
 
-function getOnlineIndicatorPlayerCount(assignedSlots) {
+function getOnlineIndicatorPlayerCount() {
   const selectedCount = getPlayerCountFromModeKeys(getSelectedModeKeys());
   const stateCount = game.state ? getPlayerCount(game.state) : MIN_PLAYER_COUNT;
-  const assignedCount = Math.max(0, ...assignedSlots);
-  return Math.max(MIN_PLAYER_COUNT, Math.min(MAX_PLAYER_COUNT, Math.max(selectedCount, stateCount, assignedCount)));
+  return Math.max(selectedCount, stateCount) > 2 ? MAX_PLAYER_COUNT : MIN_PLAYER_COUNT;
 }
 
 function updateOnlinePlayerIndicators() {
   const inRoom = Boolean(online.roomCode || online.desiredRoomCode);
   const assignedSlots = getOnlineAssignedSlots();
-  const visiblePlayerCount = getOnlineIndicatorPlayerCount(assignedSlots);
+  const visiblePlayerCount = getOnlineIndicatorPlayerCount();
   const currentTurnPlayer = game.state && isValidPlayerNumber(game.state.turnPlayer, MAX_PLAYER_COUNT)
     ? normalisePlayerNumber(game.state.turnPlayer, MAX_PLAYER_COUNT)
     : 0;

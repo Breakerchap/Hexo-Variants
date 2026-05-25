@@ -2,7 +2,7 @@
   "name": "hex-tic-tac-toe-online",
   "version": "1.0.0",
   "private": true,
-  "description": "Infinite Hex Tic-Tac-Toe with online rooms and configurable timers",
+  "description": "HeXO with online rooms and configurable timers",
   "scripts": {
     "start": "node server.js",
     "test": "node -e \"eval(require('fs').readFileSync('scripts/run-tests-eval.js','utf8'))\"",

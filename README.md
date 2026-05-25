@@ -1,4 +1,4 @@
-# Infinite Hex Tic-Tac-Toe
+# HeXO
 
 A browser-based infinite strategy game where players race to connect **6 in a row**.  
 It includes stackable rule modes like `Triangle Grid`, `Square Grid`, `Octagon Grid`, `Duck`, `King Duck`, `Egyptian`, `Echo`, `Orbit`, and `Meteor`.

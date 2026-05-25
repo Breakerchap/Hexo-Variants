@@ -33,12 +33,12 @@ if not exist node_modules\ws (
 )
 
 echo Starting local server on port %PORT%...
-start "Hex Tic-Tac-Toe Server" cmd /k "cd /d \"%~dp0\" && set PORT=%PORT% && node server.js"
+start "HeXO Server" cmd /k "cd /d \"%~dp0\" && set PORT=%PORT% && node server.js"
 
 timeout /t 2 >nul
 
 echo Starting ngrok tunnel...
-start "Hex Tic-Tac-Toe ngrok" cmd /k "ngrok http %PORT%"
+start "HeXO ngrok" cmd /k "ngrok http %PORT%"
 
 echo.
 echo Local URL: http://localhost:%PORT%

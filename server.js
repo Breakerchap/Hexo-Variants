@@ -767,7 +767,7 @@ wss.on("close", () => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Hex Tic-Tac-Toe server listening on http://localhost:${PORT}`);
+  console.log(`HeXO server listening on http://localhost:${PORT}`);
   console.log(`WebSocket endpoint: ws://localhost:${PORT}${WS_PATH}`);
   console.log(`WebSocket heartbeat: ${WS_HEARTBEAT_MS}ms`);
   console.log(`Room reconnect grace: ${ROOM_RECONNECT_GRACE_MS}ms`);
