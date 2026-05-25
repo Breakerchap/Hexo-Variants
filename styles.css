@@ -1015,6 +1015,62 @@ canvas:focus-visible {
   margin-top: 2px;
 }
 
+.app.modeHintsHidden #overlayHint,
+.app.modeHintsHidden #modeSummarySection {
+  display: none;
+}
+
+.modeOverlayHintLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.modeOverlayHintLine #overlayHint {
+  min-width: 0;
+  margin-top: 0;
+}
+
+.app.modeHintsHidden .modeOverlayBadge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app.modeHintsHidden .modeOverlayHintLine {
+  margin-top: 0;
+}
+
+.modeHintsButton {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid rgba(109, 198, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(109, 198, 255, 0.10);
+  color: #ecf2ff;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.modeHintsButton:hover,
+.modeHintsButton:focus-visible {
+  border-color: rgba(109, 198, 255, 0.52);
+  background: rgba(109, 198, 255, 0.18);
+}
+
+.modeHintsButton:not(.active) {
+  border-color: rgba(236, 242, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(236, 242, 255, 0.66);
+}
+
 .boardHudStack {
   position: absolute;
   right: 16px;

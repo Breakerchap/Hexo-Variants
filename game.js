@@ -24,6 +24,7 @@ const ui = {
   duckPhaseText: document.getElementById("duckPhaseText"),
   winnerText: document.getElementById("winnerText"),
   modeName: document.getElementById("modeName"),
+  modeSummarySection: document.getElementById("modeSummarySection"),
   modeSummary: document.getElementById("modeSummary"),
   egyptianCapControls: document.getElementById("egyptianCapControls"),
   egyptianCapInput: document.getElementById("egyptianCapInput"),
@@ -125,6 +126,7 @@ const ui = {
   toggleMenuBtn: document.getElementById("toggleMenuBtn"),
   ldmBtn: document.getElementById("ldmBtn"),
   extremeLdmBtn: document.getElementById("extremeLdmBtn"),
+  modeHintsBtn: document.getElementById("modeHintsBtn"),
   secretModesBtn: document.getElementById("secretModesBtn")
 };
 
@@ -2717,6 +2719,7 @@ const game = {
   factoryAnimationFramePending: false,
   factoryAnimationDisabled: false,
   performanceModeLevel: 0,
+  modeHintsVisible: true,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
   placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
@@ -4015,6 +4018,22 @@ function setPerformanceModeLevel(level) {
   updatePerformanceModeUI();
   resizeCanvas();
   render();
+}
+
+function updateModeHintsUI() {
+  const visible = Boolean(game.modeHintsVisible);
+  ui.appRoot?.classList.toggle("modeHintsHidden", !visible);
+  ui.modeHintsBtn?.classList.toggle("active", visible);
+  ui.modeHintsBtn?.setAttribute("aria-pressed", visible ? "true" : "false");
+  ui.modeHintsBtn?.setAttribute("title", visible ? "Hide mode hints" : "Show mode hints");
+  if (ui.modeHintsBtn) {
+    ui.modeHintsBtn.textContent = visible ? "Hide hints" : "Show hints";
+  }
+}
+
+function setModeHintsVisible(visible) {
+  game.modeHintsVisible = Boolean(visible);
+  updateModeHintsUI();
 }
 
 function getBirdMoveKinds(state) {
@@ -14132,6 +14151,9 @@ ui.ldmBtn?.addEventListener("click", () => {
 ui.extremeLdmBtn?.addEventListener("click", () => {
   setPerformanceModeLevel(getPerformanceModeLevel() === 2 ? 0 : 2);
 });
+ui.modeHintsBtn?.addEventListener("click", () => {
+  setModeHintsVisible(!game.modeHintsVisible);
+});
 ui.secretModesBtn?.addEventListener("click", () => {
   setSecretModesUnlocked(!game.secretModesUnlocked);
 });
@@ -14171,6 +14193,7 @@ setSecretRuleInputs({
 getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
 updatePerformanceModeUI();
+updateModeHintsUI();
 setOptionsMenuCollapsed(false);
 setSelectedModeKeys([]);
 newGame([], game.timerConfig);

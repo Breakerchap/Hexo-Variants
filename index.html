@@ -272,7 +272,7 @@
           </div>
         </section>
 
-        <section class="section">
+        <section id="modeSummarySection" class="section">
           <div class="small" style="margin-bottom: 8px; color: var(--text);">Mode summary</div>
           <p id="modeSummary" class="modeSummary"></p>
         </section>
@@ -315,9 +315,12 @@
       <canvas id="board" tabindex="0" role="application" aria-label="HeXO board"></canvas>
       <button id="toggleMenuBtn" class="menuToggleButton" type="button" aria-pressed="false" aria-label="Hide options menu" aria-keyshortcuts="M">Hide menu</button>
       <div class="overlay">
-        <div class="badge">
+        <div class="badge modeOverlayBadge">
           <div id="overlayTitle">Classic</div>
-          <div id="overlayHint" class="small">Classic mode: make a line of 6. No extra effects are active.</div>
+          <div class="modeOverlayHintLine">
+            <div id="overlayHint" class="small">Classic mode: make a line of 6. No extra effects are active.</div>
+            <button id="modeHintsBtn" class="modeHintsButton active" type="button" aria-pressed="true" title="Hide mode hints">Hide hints</button>
+          </div>
         </div>
         <div class="badge" style="text-align: right;">
           <div id="coordText">Hex: (0, 0)</div>
