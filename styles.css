@@ -1085,9 +1085,9 @@ canvas:focus-visible {
 }
 
 .siteFooter {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 2px 2px 0;
   color: var(--muted);
@@ -1100,6 +1100,7 @@ canvas:focus-visible {
   flex-wrap: wrap;
   gap: 6px 10px;
   align-items: center;
+  min-width: 0;
 }
 
 .siteFooterText a {
@@ -1108,6 +1109,17 @@ canvas:focus-visible {
 }
 
 .siteFooterText a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.siteFooterText .footerIssueLink {
+  color: #ecf2ff;
+  font-weight: 700;
+}
+
+.siteFooterText .footerIssueLink:hover,
+.siteFooterText .footerIssueLink:focus-visible {
   color: var(--text);
   text-decoration: underline;
 }
