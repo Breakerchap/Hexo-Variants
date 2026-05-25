@@ -675,6 +675,7 @@ select:focus-visible,
 #placementsPerTurnInput,
 #openingPlacementsInput,
 #winLengthInput,
+#customMoveOrderInput,
 #riftBloomCoverageInput,
 #riftBloomDurationInput {
   background: rgba(255, 255, 255, 0.06);
@@ -710,6 +711,7 @@ select:focus-visible,
 #placementsPerTurnInput:focus,
 #openingPlacementsInput:focus,
 #winLengthInput:focus,
+#customMoveOrderInput:focus,
 #riftBloomCoverageInput:focus,
 #riftBloomDurationInput:focus {
   border-color: rgba(109, 198, 255, 0.62);
@@ -724,6 +726,8 @@ select:focus-visible,
 
 .devRuleControls {
   margin-top: 8px;
+  display: grid;
+  gap: 8px;
 }
 
 .devRuleControls .secretRuleField {
@@ -734,6 +738,12 @@ select:focus-visible,
   display: grid;
   gap: 5px;
   color: var(--muted);
+}
+
+.customMoveOrderField textarea {
+  min-height: 78px;
+  resize: vertical;
+  line-height: 1.35;
 }
 
 .modePickerGrid {

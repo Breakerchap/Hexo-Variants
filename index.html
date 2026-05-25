@@ -47,6 +47,18 @@
                 First turn placements
                 <input id="openingPlacementsInput" type="number" min="1" max="8" step="1" value="1" aria-label="Placements on the first turn" />
               </label>
+              <label class="small secretRuleField" for="chaosVoteIntervalInput">
+                Rule Vote turns
+                <input id="chaosVoteIntervalInput" type="number" min="1" max="20" step="1" value="3" aria-label="Rule Vote turn interval" />
+              </label>
+            </div>
+            <label class="small secretRuleField customMoveOrderField" for="customMoveOrderInput">
+              Move order
+              <textarea id="customMoveOrderInput" rows="3" spellcheck="false" aria-label="Custom move order" placeholder="o: od, ∞(x: xxd, o: ood)"></textarea>
+            </label>
+            <div class="small" id="customMoveOrderSummaryText">Default move order</div>
+            <div class="small customMoveOrderGuide">
+              Guide: o/x or 1-4 choose the acting player. Actions are o, x, 3, 4 for stones, d for duck, k for king duck. Use 3(...) for finite repeats and inf(...) or ∞(...) for the repeating tail. Bed Siege and Foundry War ignore move order.
             </div>
           </div>
           <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">Opening 1 | then 2 per turn | connect 6</div>

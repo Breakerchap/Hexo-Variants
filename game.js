@@ -33,8 +33,11 @@ const ui = {
   devRuleControls: document.getElementById("devRuleControls"),
   placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
   openingPlacementsInput: document.getElementById("openingPlacementsInput"),
+  chaosVoteIntervalInput: document.getElementById("chaosVoteIntervalInput"),
   winLengthInput: document.getElementById("winLengthInput"),
   secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
+  customMoveOrderInput: document.getElementById("customMoveOrderInput"),
+  customMoveOrderSummaryText: document.getElementById("customMoveOrderSummaryText"),
   riftBloomControls: document.getElementById("riftBloomControls"),
   riftBloomCoverageInput: document.getElementById("riftBloomCoverageInput"),
   riftBloomCoverageSummaryText: document.getElementById("riftBloomCoverageSummaryText"),
@@ -142,6 +145,9 @@ const MAX_PLACEMENTS_PER_TURN = 8;
 const DEFAULT_OPENING_PLACEMENTS_PER_TURN = 1;
 const MIN_OPENING_PLACEMENTS_PER_TURN = 1;
 const MAX_OPENING_PLACEMENTS_PER_TURN = 8;
+const CUSTOM_MOVE_ORDER_MAX_REPEAT = 99;
+const CUSTOM_MOVE_ORDER_MAX_TURNS = 240;
+const CUSTOM_MOVE_ORDER_MAX_ACTIONS_PER_TURN = 16;
 const MAX_PLACEMENT_DISTANCE = 8;
 const CLOCK_TICK_MS = 100;
 const GRID_HINT_MIN_HEX_SIZE = 9;
@@ -174,7 +180,10 @@ const BAGEL_RECEIPT_STONE_LIMIT = 120;
 const BAGEL_SESAME_SPREAD_LIMIT = 2;
 const BAGEL_RECEIPT_AUDIT_INTERVAL = 5;
 const BAGEL_EFFECT_TILE_PHASE = 0;
-const CHAOS_VOTE_INTERVAL = 3;
+const DEFAULT_CHAOS_VOTE_INTERVAL = 3;
+const MIN_CHAOS_VOTE_INTERVAL = 1;
+const MAX_CHAOS_VOTE_INTERVAL = 20;
+const CHAOS_VOTE_INTERVAL = DEFAULT_CHAOS_VOTE_INTERVAL;
 const CHAOS_RULE_CHOICE_COUNT = 3;
 const CHAOS_RECENT_RULE_MEMORY = 12;
 const PIG_ESCAPE_BOUNDS_PADDING = 2;
@@ -2725,6 +2734,8 @@ const game = {
   placementsPerTurn: DEFAULT_PLACEMENTS_PER_TURN,
   openingPlacementsPerTurn: DEFAULT_OPENING_PLACEMENTS_PER_TURN,
   winLength: DEFAULT_WIN_LENGTH,
+  chaosVoteInterval: DEFAULT_CHAOS_VOTE_INTERVAL,
+  customMoveOrderSyntax: "",
   riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
   riftBloomGhostTurns: RIFT_BLOOM_GHOST_TURNS,
   riftBloomGhostTurnsTouched: false,
@@ -2878,6 +2889,7 @@ function refreshSecretRuleControls(modeKeys) {
     ui.devRuleControls.hidden = !game.secretModesUnlocked;
   }
   refreshSecretRuleSummaryFromInputs(modeKeys);
+  refreshCustomMoveOrderSummaryFromInputs(modeKeys);
 }
 
 function refreshRiftBloomControls(modeKeys) {
@@ -2986,7 +2998,8 @@ function getModeConfig(modeKeys) {
   const settings = getGameRuleSettings({
     placementsPerTurn: getPlacementsPerTurnFromInputs(),
     openingPlacementsPerTurn: getOpeningPlacementsPerTurnFromInputs(),
-    winLength: getWinLengthFromInputs()
+    winLength: getWinLengthFromInputs(),
+    chaosVoteInterval: getChaosVoteIntervalFromInputs()
   });
   const openingMovesWord = settings.openingPlacementsPerTurn === 1 ? "move" : "moves";
   const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
@@ -3015,6 +3028,10 @@ function getModeConfig(modeKeys) {
       config.summary += ` Majority claim: ghosts resolve after ${riftTurns} turns to the adjacent player with the most real stones; ${tieText}.`;
       config.hint += ` | Majority claim after ${riftTurns} turns; ${tieText}.`;
     }
+  }
+  if (keys.includes("chaosVote")) {
+    config.summary += ` Rule Vote cadence: every ${settings.chaosVoteInterval} completed turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
+    config.hint += ` | Rule Vote every ${settings.chaosVoteInterval} turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
   }
   return config;
 }
@@ -3201,11 +3218,14 @@ function getMirrorCellForMode(state, hex) {
 
 function usesBirdMode(state) {
   return hasMode(state, "duck")
-    || hasMode(state, "kingDuck");
+    || hasMode(state, "kingDuck")
+    || customMoveOrderUsesBirdKind(state, "duck")
+    || customMoveOrderUsesBirdKind(state, "kingDuck");
 }
 
 function usesPanicBirdMode(state) {
-  return hasMode(state, "kingDuck");
+  return hasMode(state, "kingDuck")
+    || customMoveOrderUsesBirdKind(state, "kingDuck");
 }
 
 function usesBedSiegeMode(state) {
@@ -4114,6 +4134,8 @@ function makeInitialState(
     placementsPerTurn: appliedGameRules.placementsPerTurn,
     openingPlacementsPerTurn: appliedGameRules.openingPlacementsPerTurn,
     winLength: appliedGameRules.winLength,
+    chaosVoteInterval: appliedGameRules.chaosVoteInterval,
+    customMoveOrder: null,
     riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
     riftBloomContestClaim: Boolean(riftBloomContestClaim),
     riftBloomGhostTurns: normaliseRiftBloomGhostTurns(riftBloomGhostTurns),
@@ -4177,7 +4199,8 @@ function makeInitialState(
   if (usesChaosVoteMode(state)) {
     state.chaos = createChaosState();
     if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
-      state.log[0] = `Rule Vote started: every ${CHAOS_VOTE_INTERVAL} completed turns, the player who just moved chooses a new rule.`;
+      const interval = getChaosVoteInterval(state);
+      state.log[0] = `Rule Vote started: every ${interval} completed turn${interval === 1 ? "" : "s"}, the player who just moved chooses a new rule.`;
     }
   }
   if (hasEverythingBagelMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
@@ -4201,6 +4224,9 @@ function makeInitialState(
     if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
       state.log[0] = `Powder Cascade started: source pads pour ${POWDER_GRAINS_PER_CELL} grains, newest pads drip pressure at turn end, and clear grain leads claim a connect-${getWinLength(state)} line.`;
     }
+  }
+  if (appliedGameRules.customMoveOrder?.enabled) {
+    applyCustomMoveOrderToState(state, appliedGameRules.customMoveOrder);
   }
   return state;
 }
@@ -4235,7 +4261,10 @@ function updateLegendUI(modeKeys = game.state?.modeKeys || game.previewModeKeys 
   const playerCount = getPlayerCountFromModeKeys(keys);
   if (ui.legendP3) ui.legendP3.hidden = playerCount < 3;
   if (ui.legendP4) ui.legendP4.hidden = playerCount < 4;
-  if (ui.legendDuck) ui.legendDuck.hidden = !BIRD_KINDS.some((modeKey) => selectedModes.has(modeKey));
+  if (ui.legendDuck) {
+    const customBirdVisible = Boolean(game.state && BIRD_KINDS.some((birdKind) => customMoveOrderUsesBirdKind(game.state, birdKind)));
+    ui.legendDuck.hidden = !customBirdVisible && !BIRD_KINDS.some((modeKey) => selectedModes.has(modeKey));
+  }
   if (ui.legendPig) ui.legendPig.hidden = !selectedModes.has("pig");
 }
 
@@ -4356,6 +4385,278 @@ function updateTurnOrderSummary(playerCount = getPlayerCountFromModeKeys(getSele
   }
 }
 
+function isCustomMoveOrderAllowedForModeKeys(modeKeys) {
+  const keys = normaliseModeKeys(modeKeys);
+  return !keys.includes("bedSiege") && !keys.includes("factoryFoundry");
+}
+
+function cloneCustomMoveOrderChunks(chunks) {
+  return (Array.isArray(chunks) ? chunks : []).map((chunk) => ({
+    player: chunk.player,
+    actions: (Array.isArray(chunk.actions) ? chunk.actions : []).map((action) => ({ ...action }))
+  }));
+}
+
+function normaliseCustomMoveOrderPlayerLabel(label, playerCount) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const value = String(label || "").trim().toLowerCase();
+  if (value === "o") return safePlayerCount >= 1 ? 1 : 0;
+  if (value === "x") return safePlayerCount >= 2 ? 2 : 0;
+  const match = /^p?([1-4])$/.exec(value);
+  if (!match) return 0;
+  const player = Number(match[1]);
+  return player >= 1 && player <= safePlayerCount ? player : 0;
+}
+
+function getCustomMoveOrderPlayerToken(player) {
+  const safePlayer = Math.max(1, Math.min(MAX_PLAYER_COUNT, Math.trunc(Number(player) || 1)));
+  if (safePlayer === 1) return "o";
+  if (safePlayer === 2) return "x";
+  return String(safePlayer);
+}
+
+function customMoveOrderStoneOwnerFromSymbol(symbol) {
+  const value = String(symbol || "").trim().toLowerCase();
+  if (value === "o") return 1;
+  if (value === "x") return 2;
+  if (/^[1-4]$/.test(value)) return Number(value);
+  return 0;
+}
+
+function normaliseCustomMoveOrderActionSymbol(symbol, playerCount) {
+  const value = String(symbol || "").trim().toLowerCase();
+  if (value === "d") return { type: "bird", birdKind: "duck" };
+  if (value === "k") return { type: "bird", birdKind: "kingDuck" };
+  const owner = customMoveOrderStoneOwnerFromSymbol(value);
+  return owner && isValidPlayerNumber(owner, playerCount) ? { type: "stone", owner } : null;
+}
+
+function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+  const syntax = String(source || "").trim();
+  if (!syntax) {
+    return { enabled: false, syntax: "", prefix: [], loop: [], error: "" };
+  }
+
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  let index = 0;
+
+  function fail(message) {
+    const near = syntax.slice(index, index + 18).trim();
+    throw new Error(`${message}${near ? ` near "${near}"` : ""}`);
+  }
+
+  function skipWhitespace() {
+    while (index < syntax.length && /\s/.test(syntax[index])) {
+      index += 1;
+    }
+  }
+
+  function parseRepeatPrefix() {
+    skipWhitespace();
+    if (syntax[index] === "\u221e") {
+      index += 1;
+      skipWhitespace();
+      if (syntax[index] !== "(") fail("Expected '(' after \u221e");
+      return { infinite: true, count: 0 };
+    }
+
+    const rest = syntax.slice(index).toLowerCase();
+    const infiniteMatch = /^(infinity|inf)/.exec(rest);
+    if (infiniteMatch) {
+      index += infiniteMatch[0].length;
+      skipWhitespace();
+      if (syntax[index] !== "(") fail("Expected '(' after inf");
+      return { infinite: true, count: 0 };
+    }
+
+    const countMatch = /^\d+/.exec(rest);
+    if (!countMatch) return null;
+    let afterCount = index + countMatch[0].length;
+    while (afterCount < syntax.length && /\s/.test(syntax[afterCount])) {
+      afterCount += 1;
+    }
+    if (syntax[afterCount] !== "(") return null;
+    const count = Math.trunc(Number(countMatch[0]));
+    if (!Number.isFinite(count) || count < 1 || count > CUSTOM_MOVE_ORDER_MAX_REPEAT) {
+      fail(`Repeat counts must be 1-${CUSTOM_MOVE_ORDER_MAX_REPEAT}`);
+    }
+    index += countMatch[0].length;
+    return { infinite: false, count };
+  }
+
+  function parseTurn() {
+    skipWhitespace();
+    const labelStart = index;
+    while (index < syntax.length && /[A-Za-z0-9]/.test(syntax[index])) {
+      index += 1;
+    }
+    const label = syntax.slice(labelStart, index);
+    if (!label) fail("Expected player label");
+    const player = normaliseCustomMoveOrderPlayerLabel(label, safePlayerCount);
+    if (!player) fail(`Unknown player "${label}"`);
+    skipWhitespace();
+    if (syntax[index] !== ":") fail("Expected ':' after player label");
+    index += 1;
+
+    const actions = [];
+    while (index < syntax.length && syntax[index] !== "," && syntax[index] !== ")") {
+      const symbol = syntax[index];
+      index += 1;
+      if (/\s/.test(symbol)) continue;
+      const action = normaliseCustomMoveOrderActionSymbol(symbol, safePlayerCount);
+      if (!action) fail(`Unknown action "${symbol}"`);
+      if (action.type === "stone" && action.owner !== player) {
+        fail(`P${player} turns can only place ${getCustomMoveOrderPlayerToken(player)} stones`);
+      }
+      actions.push(action);
+      if (actions.length > CUSTOM_MOVE_ORDER_MAX_ACTIONS_PER_TURN) {
+        fail(`Turns can include at most ${CUSTOM_MOVE_ORDER_MAX_ACTIONS_PER_TURN} actions`);
+      }
+    }
+    if (actions.length === 0) fail(`Player ${label} needs at least one action`);
+    return { player, actions };
+  }
+
+  function parseItem() {
+    const repeat = parseRepeatPrefix();
+    if (!repeat) {
+      return { infinite: false, chunks: [parseTurn()] };
+    }
+    skipWhitespace();
+    if (syntax[index] !== "(") fail("Expected '(' after repeat");
+    index += 1;
+    const nested = parseProgram(")");
+    if (nested.loopChunks) fail("Nested infinite groups are not supported");
+    if (nested.chunks.length === 0) fail("Repeat groups need at least one turn");
+    if (repeat.infinite) {
+      return { infinite: true, chunks: cloneCustomMoveOrderChunks(nested.chunks) };
+    }
+    const chunks = [];
+    for (let i = 0; i < repeat.count; i += 1) {
+      chunks.push(...cloneCustomMoveOrderChunks(nested.chunks));
+    }
+    return { infinite: false, chunks };
+  }
+
+  function parseProgram(stopChar = "") {
+    const chunks = [];
+    let loopChunks = null;
+    let readItem = false;
+    while (index < syntax.length) {
+      skipWhitespace();
+      if (stopChar && syntax[index] === stopChar) {
+        index += 1;
+        break;
+      }
+      if (index >= syntax.length) break;
+      if (readItem) {
+        if (syntax[index] !== ",") fail("Expected comma");
+        index += 1;
+        skipWhitespace();
+        if (stopChar && syntax[index] === stopChar) fail("Trailing comma");
+        if (index >= syntax.length) fail("Trailing comma");
+        if (loopChunks) fail("No turns can follow an infinite group");
+      }
+      const item = parseItem();
+      if (item.infinite) {
+        if (loopChunks) fail("Only one infinite group is allowed");
+        loopChunks = cloneCustomMoveOrderChunks(item.chunks);
+      } else {
+        chunks.push(...item.chunks);
+      }
+      readItem = true;
+    }
+    if (stopChar && syntax[index - 1] !== stopChar) fail(`Expected '${stopChar}'`);
+    if (!readItem) fail("Expected at least one turn");
+    return { chunks, loopChunks };
+  }
+
+  try {
+    const parsed = parseProgram();
+    skipWhitespace();
+    if (index < syntax.length) fail("Unexpected text");
+    const prefix = parsed.loopChunks ? parsed.chunks : [];
+    const loop = parsed.loopChunks ? parsed.loopChunks : parsed.chunks;
+    if (loop.length === 0) throw new Error("Move order needs a looping turn");
+    if (prefix.length + loop.length > CUSTOM_MOVE_ORDER_MAX_TURNS) {
+      throw new Error(`Move order expands to more than ${CUSTOM_MOVE_ORDER_MAX_TURNS} turns`);
+    }
+    return {
+      enabled: true,
+      syntax,
+      prefix: cloneCustomMoveOrderChunks(prefix),
+      loop: cloneCustomMoveOrderChunks(loop),
+      error: ""
+    };
+  } catch (error) {
+    return { enabled: false, syntax, prefix: [], loop: [], error: error?.message || "Invalid move order" };
+  }
+}
+
+function replaceCustomMoveOrderInfShorthand(value) {
+  return String(value || "").replace(/(^|[^A-Za-z0-9_])inf(?=\s*(?:\(|$|,))/gi, "$1\u221e");
+}
+
+function normaliseCustomMoveOrderInputText() {
+  if (!ui.customMoveOrderInput) {
+    return "";
+  }
+  const before = ui.customMoveOrderInput.value;
+  const after = replaceCustomMoveOrderInfShorthand(before);
+  if (after !== before) {
+    const selectionStart = ui.customMoveOrderInput.selectionStart;
+    ui.customMoveOrderInput.value = after;
+    if (typeof ui.customMoveOrderInput.setSelectionRange === "function" && Number.isFinite(selectionStart)) {
+      const delta = after.length - before.length;
+      const nextPos = Math.max(0, selectionStart + delta);
+      ui.customMoveOrderInput.setSelectionRange(nextPos, nextPos);
+    }
+  }
+  return String(ui.customMoveOrderInput.value || "").trim();
+}
+
+function getCustomMoveOrderSyntaxFromInputs() {
+  return normaliseCustomMoveOrderInputText();
+}
+
+function getCustomMoveOrderConfigFromInputs(modeKeys, playerCount = getPlayerCountFromModeKeys(modeKeys)) {
+  const syntax = getCustomMoveOrderSyntaxFromInputs();
+  if (!game.secretModesUnlocked || !syntax) {
+    return { enabled: false, syntax, prefix: [], loop: [], error: "" };
+  }
+  if (!isCustomMoveOrderAllowedForModeKeys(modeKeys)) {
+    return { enabled: false, syntax, prefix: [], loop: [], error: "Move order is disabled for this mode" };
+  }
+  return parseCustomMoveOrderSyntax(syntax, playerCount);
+}
+
+function formatCustomMoveOrderSummary(parsed) {
+  if (!parsed?.enabled) {
+    return parsed?.error ? `Move order invalid: ${parsed.error}` : "Default move order";
+  }
+  const setup = parsed.prefix.length;
+  const loop = parsed.loop.length;
+  return setup > 0
+    ? `Custom order: ${setup} setup turn${setup === 1 ? "" : "s"}, ${loop} loop turn${loop === 1 ? "" : "s"}`
+    : `Custom order: ${loop} turn${loop === 1 ? "" : "s"} repeating`;
+}
+
+function refreshCustomMoveOrderSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
+  if (!ui.customMoveOrderInput && !ui.customMoveOrderSummaryText) {
+    return;
+  }
+  const allowed = game.secretModesUnlocked && isCustomMoveOrderAllowedForModeKeys(modeKeys);
+  if (ui.customMoveOrderInput) {
+    ui.customMoveOrderInput.disabled = !allowed || !canUseAdminControls();
+  }
+  if (ui.customMoveOrderSummaryText) {
+    const parsed = allowed
+      ? parseCustomMoveOrderSyntax(getCustomMoveOrderSyntaxFromInputs(), getPlayerCountFromModeKeys(modeKeys))
+      : { enabled: false, error: "" };
+    ui.customMoveOrderSummaryText.textContent = formatCustomMoveOrderSummary(parsed);
+  }
+}
+
 function normaliseEgyptianStoneCap(value) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -4402,6 +4703,14 @@ function normaliseWinLength(value) {
   return Math.max(MIN_WIN_LENGTH, Math.min(MAX_WIN_LENGTH, parsed));
 }
 
+function normaliseChaosVoteInterval(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_CHAOS_VOTE_INTERVAL;
+  }
+  return Math.max(MIN_CHAOS_VOTE_INTERVAL, Math.min(MAX_CHAOS_VOTE_INTERVAL, parsed));
+}
+
 function normaliseRiftBloomCellModulus(value) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -4446,6 +4755,10 @@ function getOpeningPlacementsPerTurnFromInputs() {
 
 function getWinLengthFromInputs() {
   return normaliseWinLength(ui.winLengthInput?.value);
+}
+
+function getChaosVoteIntervalFromInputs() {
+  return normaliseChaosVoteInterval(ui.chaosVoteIntervalInput?.value ?? game.chaosVoteInterval);
 }
 
 function getRiftBloomCellModulusFromInputs() {
@@ -4550,11 +4863,15 @@ function setSecretRuleInputs(settings = {}) {
   const placementsPerTurn = normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn);
   const openingPlacementsPerTurn = normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn);
   const winLength = normaliseWinLength(settings.winLength ?? game.winLength);
+  const chaosVoteInterval = normaliseChaosVoteInterval(settings.chaosVoteInterval ?? game.chaosVoteInterval);
   if (ui.placementsPerTurnInput) {
     ui.placementsPerTurnInput.value = String(placementsPerTurn);
   }
   if (ui.openingPlacementsInput) {
     ui.openingPlacementsInput.value = String(openingPlacementsPerTurn);
+  }
+  if (ui.chaosVoteIntervalInput) {
+    ui.chaosVoteIntervalInput.value = String(chaosVoteInterval);
   }
   if (ui.winLengthInput) {
     ui.winLengthInput.value = String(winLength);
@@ -4562,21 +4879,35 @@ function setSecretRuleInputs(settings = {}) {
   refreshSecretRuleSummaryFromInputs();
 }
 
-function refreshSecretRuleSummaryFromInputs() {
+function refreshSecretRuleSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
   if (!ui.secretRuleSummaryText) {
     return;
   }
   const placementsPerTurn = getPlacementsPerTurnFromInputs();
   const openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   const winLength = getWinLengthFromInputs();
-  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}`;
+  const interval = getChaosVoteIntervalFromInputs();
+  const voteText = normaliseModeKeys(modeKeys).includes("chaosVote")
+    ? ` | vote every ${interval}`
+    : "";
+  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}${voteText}`;
 }
 
 function getGameRuleSettings(settings = {}) {
   return {
     placementsPerTurn: normalisePlacementsPerTurn(settings.placementsPerTurn ?? game.placementsPerTurn),
     openingPlacementsPerTurn: normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn),
-    winLength: normaliseWinLength(settings.winLength ?? game.winLength)
+    winLength: normaliseWinLength(settings.winLength ?? game.winLength),
+    chaosVoteInterval: normaliseChaosVoteInterval(settings.chaosVoteInterval ?? game.chaosVoteInterval),
+    customMoveOrder: settings.customMoveOrder?.enabled
+      ? {
+        enabled: true,
+        syntax: String(settings.customMoveOrder.syntax || ""),
+        prefix: cloneCustomMoveOrderChunks(settings.customMoveOrder.prefix),
+        loop: cloneCustomMoveOrderChunks(settings.customMoveOrder.loop),
+        error: ""
+      }
+      : null
   };
 }
 
@@ -4615,6 +4946,244 @@ function getWinLength(state) {
     return DEFAULT_WIN_LENGTH;
   }
   return normaliseWinLength(state.winLength);
+}
+
+function getChaosVoteInterval(state) {
+  return normaliseChaosVoteInterval(state?.chaosVoteInterval ?? game.chaosVoteInterval);
+}
+
+function getCustomMoveOrderStoneLabel(owner) {
+  const safeOwner = Math.max(1, Math.min(MAX_PLAYER_COUNT, Math.trunc(Number(owner) || 1)));
+  if (safeOwner === 1) return "O";
+  if (safeOwner === 2) return "X";
+  return `P${safeOwner}`;
+}
+
+function normaliseCustomMoveOrderRuntime(state) {
+  if (!state || !state.customMoveOrder?.enabled || !isCustomMoveOrderAllowedForModeKeys(state.modeKeys)) {
+    return null;
+  }
+  const order = state.customMoveOrder;
+  order.prefix = Array.isArray(order.prefix) ? order.prefix : [];
+  order.loop = Array.isArray(order.loop) ? order.loop : [];
+  if (order.loop.length === 0) {
+    return null;
+  }
+  if (!order.cursor || typeof order.cursor !== "object") {
+    order.cursor = {
+      phase: order.prefix.length > 0 ? "prefix" : "loop",
+      chunkIndex: 0,
+      actionIndex: 0
+    };
+  }
+  if (order.cursor.phase !== "prefix" && order.cursor.phase !== "loop") {
+    order.cursor.phase = order.prefix.length > 0 ? "prefix" : "loop";
+  }
+  if (order.cursor.phase === "prefix" && order.prefix.length === 0) {
+    order.cursor.phase = "loop";
+  }
+  const chunks = order.cursor.phase === "prefix" ? order.prefix : order.loop;
+  order.cursor.chunkIndex = Math.max(0, Math.min(
+    Math.max(0, chunks.length - 1),
+    Math.trunc(Number(order.cursor.chunkIndex) || 0)
+  ));
+  const chunk = chunks[order.cursor.chunkIndex];
+  if (!chunk || !Array.isArray(chunk.actions) || chunk.actions.length === 0) {
+    return null;
+  }
+  order.cursor.actionIndex = Math.max(0, Math.min(
+    chunk.actions.length,
+    Math.trunc(Number(order.cursor.actionIndex) || 0)
+  ));
+  return order;
+}
+
+function hasCustomMoveOrder(state) {
+  return Boolean(normaliseCustomMoveOrderRuntime(state));
+}
+
+function getCustomMoveOrderCurrentChunk(state) {
+  const order = normaliseCustomMoveOrderRuntime(state);
+  if (!order) {
+    return null;
+  }
+  const chunks = order.cursor.phase === "prefix" ? order.prefix : order.loop;
+  return chunks[order.cursor.chunkIndex] || null;
+}
+
+function getCustomMoveOrderCurrentAction(state) {
+  const order = normaliseCustomMoveOrderRuntime(state);
+  const chunk = getCustomMoveOrderCurrentChunk(state);
+  if (!order || !chunk) {
+    return null;
+  }
+  return chunk.actions[order.cursor.actionIndex] || null;
+}
+
+function customMoveOrderUsesBirdKind(state, birdKind) {
+  const safeBirdKind = birdKind === "kingDuck" ? "kingDuck" : "duck";
+  const order = normaliseCustomMoveOrderRuntime(state);
+  if (!order) {
+    return false;
+  }
+  return [...order.prefix, ...order.loop].some((chunk) => (
+    Array.isArray(chunk.actions)
+    && chunk.actions.some((action) => action?.type === "bird" && action.birdKind === safeBirdKind)
+  ));
+}
+
+function customMoveOrderWillUseBirdKind(state, birdKind) {
+  const safeBirdKind = birdKind === "kingDuck" ? "kingDuck" : "duck";
+  const order = normaliseCustomMoveOrderRuntime(state);
+  if (!order) {
+    return false;
+  }
+  function chunkHasBirdFrom(chunk, actionIndex = 0) {
+    return (chunk?.actions || []).slice(actionIndex).some((action) => (
+      action?.type === "bird" && action.birdKind === safeBirdKind
+    ));
+  }
+  if (order.cursor.phase === "loop") {
+    return order.loop.some((chunk) => chunkHasBirdFrom(chunk, 0));
+  }
+  const currentChunk = order.prefix[order.cursor.chunkIndex];
+  if (chunkHasBirdFrom(currentChunk, order.cursor.actionIndex)) {
+    return true;
+  }
+  for (let i = order.cursor.chunkIndex + 1; i < order.prefix.length; i += 1) {
+    if (chunkHasBirdFrom(order.prefix[i], 0)) {
+      return true;
+    }
+  }
+  return order.loop.some((chunk) => chunkHasBirdFrom(chunk, 0));
+}
+
+function clearCustomBirdsNoLongerMoved(state) {
+  if (!hasCustomMoveOrder(state)) {
+    return;
+  }
+  let changed = false;
+  ensureBirdEchoCopyState(state);
+  for (const birdKind of BIRD_KINDS) {
+    if (customMoveOrderWillUseBirdKind(state, birdKind)) {
+      continue;
+    }
+    if (state.birds?.[birdKind]) {
+      state.birds[birdKind] = null;
+      changed = true;
+    }
+    if (state.birdEchoCopies?.[birdKind]) {
+      state.birdEchoCopies[birdKind] = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    rebuildPanicZones(state);
+  }
+}
+
+function syncCustomMoveOrderTurnState(state) {
+  const order = normaliseCustomMoveOrderRuntime(state);
+  const chunk = getCustomMoveOrderCurrentChunk(state);
+  if (!order || !chunk) {
+    return false;
+  }
+  const action = getCustomMoveOrderCurrentAction(state);
+  state.turnPlayer = normalisePlayerNumber(chunk.player, state);
+  state.movesLeftInTurn = Math.max(0, chunk.actions.length - order.cursor.actionIndex);
+  if (action?.type === "bird") {
+    const birdKind = action.birdKind === "kingDuck" ? "kingDuck" : "duck";
+    state.duckPhase = true;
+    state.currentBirdMoveKind = { type: BIRD_ACTION_MOVE, birdKind };
+    state.birdMovesPending = [];
+  } else {
+    state.duckPhase = false;
+    state.currentBirdMoveKind = null;
+    state.birdMovesPending = [];
+  }
+  clearCustomBirdsNoLongerMoved(state);
+  return true;
+}
+
+function applyCustomMoveOrderToState(state, parsed) {
+  if (!state || !parsed?.enabled || parsed.loop.length === 0 || !isCustomMoveOrderAllowedForModeKeys(state.modeKeys)) {
+    return false;
+  }
+  const prefix = cloneCustomMoveOrderChunks(parsed.prefix);
+  const loop = cloneCustomMoveOrderChunks(parsed.loop);
+  state.customMoveOrder = {
+    enabled: true,
+    syntax: parsed.syntax,
+    prefix,
+    loop,
+    cursor: {
+      phase: prefix.length > 0 ? "prefix" : "loop",
+      chunkIndex: 0,
+      actionIndex: 0
+    }
+  };
+  state.lastPlacedThisTurn = [];
+  return syncCustomMoveOrderTurnState(state);
+}
+
+function advanceCustomMoveOrderTurnCursor(state) {
+  const order = normaliseCustomMoveOrderRuntime(state);
+  if (!order) {
+    return false;
+  }
+  if (order.cursor.phase === "prefix") {
+    if (order.cursor.chunkIndex + 1 < order.prefix.length) {
+      order.cursor.chunkIndex += 1;
+    } else {
+      order.cursor.phase = "loop";
+      order.cursor.chunkIndex = 0;
+    }
+  } else {
+    order.cursor.chunkIndex = (order.cursor.chunkIndex + 1) % order.loop.length;
+  }
+  order.cursor.actionIndex = 0;
+  return true;
+}
+
+function finishCustomMoveOrderAction(state) {
+  const order = normaliseCustomMoveOrderRuntime(state);
+  if (!order) {
+    return false;
+  }
+  if (!state.openingMoveDone) {
+    state.openingMoveDone = true;
+  }
+  order.cursor.actionIndex += 1;
+  if (getCustomMoveOrderCurrentAction(state)) {
+    syncCustomMoveOrderTurnState(state);
+    return true;
+  }
+  state.movesLeftInTurn = 0;
+  state.duckPhase = false;
+  state.currentBirdMoveKind = null;
+  state.birdMovesPending = [];
+  endTurn(state);
+  return true;
+}
+
+function getCurrentPlacementOwner(state) {
+  const action = getCustomMoveOrderCurrentAction(state);
+  return action?.type === "stone"
+    ? normalisePlayerNumber(action.owner, state)
+    : normalisePlayerNumber(state?.turnPlayer, state);
+}
+
+function getCustomMoveOrderPrompt(state) {
+  const action = getCustomMoveOrderCurrentAction(state);
+  if (!action) {
+    return "Custom order: waiting for the next turn";
+  }
+  const remaining = Math.max(0, state.movesLeftInTurn);
+  if (action.type === "bird") {
+    return `${getBirdActionPrompt(action)} | ${remaining} action${remaining === 1 ? "" : "s"} left`;
+  }
+  const stoneLabel = getCustomMoveOrderStoneLabel(action.owner);
+  return `Custom order: Player ${state.turnPlayer} place ${stoneLabel} | ${remaining} action${remaining === 1 ? "" : "s"} left`;
 }
 
 function ensureClockState(state) {
@@ -6663,7 +7232,8 @@ function openChaosRuleVoteIfNeeded(state, previousPlayer) {
     return false;
   }
   const chaos = ensureChaosState(state);
-  if (!chaos || chaos.pendingVote || state.turnCount <= 0 || state.turnCount % CHAOS_VOTE_INTERVAL !== 0) {
+  const interval = getChaosVoteInterval(state);
+  if (!chaos || chaos.pendingVote || state.turnCount <= 0 || state.turnCount % interval !== 0) {
     return false;
   }
   const choices = generateChaosRuleChoices(state);
@@ -9088,10 +9658,15 @@ function checkForWinner(state) {
 }
 
 function finishTurnRotation(state, previousPlayer) {
-  const nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
-  switchClockTurn(state.clock, nextPlayer);
+  const customOrderActive = hasCustomMoveOrder(state);
+  let nextPlayer = getNextTurnPlayerNumber(state, previousPlayer);
+  if (customOrderActive) {
+    advanceCustomMoveOrderTurnCursor(state);
+    const nextChunk = getCustomMoveOrderCurrentChunk(state);
+    nextPlayer = normalisePlayerNumber(nextChunk?.player || nextPlayer, state);
+  }
   state.turnPlayer = nextPlayer;
-  state.movesLeftInTurn = getPlacementsPerTurn(state);
+  state.movesLeftInTurn = customOrderActive ? 0 : getPlacementsPerTurn(state);
   state.duckPhase = false;
   state.birdMovesPending = [];
   state.currentBirdMoveKind = null;
@@ -9103,6 +9678,11 @@ function finishTurnRotation(state, previousPlayer) {
     pig.reactionsThisTurn = 0;
     pig.movedThisTurn = false;
   }
+  if (customOrderActive) {
+    syncCustomMoveOrderTurnState(state);
+    nextPlayer = state.turnPlayer;
+  }
+  switchClockTurn(state.clock, nextPlayer);
   syncClockTickerFromState();
 }
 
@@ -9140,6 +9720,10 @@ function endTurn(state) {
 }
 
 function finishSubmove(state) {
+  if (hasCustomMoveOrder(state)) {
+    finishCustomMoveOrderAction(state);
+    return;
+  }
   state.movesLeftInTurn -= 1;
   if (!state.openingMoveDone) {
     state.openingMoveDone = true;
@@ -10456,7 +11040,9 @@ function clickPlacement(hex) {
     });
     pushLog(`${getBirdMoveTitle(birdAction.birdKind)} moved to (${hex.q}, ${hex.r}).`);
 
-    if (state.birdMovesPending.length > 0) {
+    if (hasCustomMoveOrder(state)) {
+      finishCustomMoveOrderAction(state);
+    } else if (state.birdMovesPending.length > 0) {
       state.currentBirdMoveKind = state.birdMovesPending.shift();
       state.movesLeftInTurn = 1 + state.birdMovesPending.length;
     } else {
@@ -10502,7 +11088,7 @@ function clickPlacement(hex) {
   }
 
   saveHistory();
-  const placementResult = placeTurnTile(state, hex, state.turnPlayer);
+  const placementResult = placeTurnTile(state, hex, getCurrentPlacementOwner(state));
   if (!placementResult) {
     return;
   }
@@ -11046,7 +11632,8 @@ function renderChaosPanel() {
     if (pending) {
       ui.chaosVoteText.textContent = `Player ${pending.chooser} chooses the next rule.`;
     } else {
-      const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
+      const interval = getChaosVoteInterval(state);
+      const untilVote = interval - positiveMod(state.turnCount, interval);
       ui.chaosVoteText.textContent = `Next vote in ${untilVote} completed turn${untilVote === 1 ? "" : "s"}.`;
     }
   }
@@ -11131,21 +11718,23 @@ function updateStatus() {
 
   if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
+  } else if (hasEgyptianRemovalPhase(state)) {
+    const owner = state.egyptianRemoval.owner;
+    const remaining = state.egyptianRemoval.remaining;
+    ui.subturnText.textContent = `Egyptian: Player ${owner} choose ${remaining} stone${remaining === 1 ? "" : "s"} to remove (not the one just placed)`;
+  } else if (hasChaosPendingVote(state)) {
+    const pending = ensureChaosState(state)?.pendingVote;
+    ui.subturnText.textContent = `Rule Vote: Player ${pending?.chooser || state.turnPlayer} choose one of ${pending?.choices?.length || 3} rules`;
+  } else if (hasCustomMoveOrder(state)) {
+    ui.subturnText.textContent = getCustomMoveOrderPrompt(state);
   } else if (!state.openingMoveDone) {
     const openingPlacements = Math.max(1, Number(state.movesLeftInTurn) || getOpeningPlacementsPerTurn(state));
     const placementText = `${openingPlacements} placement${openingPlacements === 1 ? "" : "s"}`;
     ui.subturnText.textContent = usesPigMode(state)
       ? `Opening move: the pig blocks the origin | ${placementText}`
       : `Opening move: ${placementText}`;
-  } else if (hasEgyptianRemovalPhase(state)) {
-    const owner = state.egyptianRemoval.owner;
-    const remaining = state.egyptianRemoval.remaining;
-    ui.subturnText.textContent = `Egyptian: Player ${owner} choose ${remaining} stone${remaining === 1 ? "" : "s"} to remove (not the one just placed)`;
   } else if (state.duckPhase) {
     ui.subturnText.textContent = getBirdActionPrompt(state.currentBirdMoveKind);
-  } else if (hasChaosPendingVote(state)) {
-    const pending = ensureChaosState(state)?.pendingVote;
-    ui.subturnText.textContent = `Rule Vote: Player ${pending?.chooser || state.turnPlayer} choose one of ${pending?.choices?.length || 3} rules`;
   } else {
     ui.subturnText.textContent = `${state.movesLeftInTurn} placement${state.movesLeftInTurn === 1 ? "" : "s"} left this turn`;
   }
@@ -11207,7 +11796,8 @@ function updateStatus() {
       : " | Pig loose";
   }
   if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
-    const untilVote = CHAOS_VOTE_INTERVAL - positiveMod(state.turnCount, CHAOS_VOTE_INTERVAL);
+    const interval = getChaosVoteInterval(state);
+    const untilVote = interval - positiveMod(state.turnCount, interval);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
   }
   if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
@@ -13705,10 +14295,13 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.placementsPerTurn = getPlacementsPerTurnFromInputs();
   game.openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
+  game.chaosVoteInterval = getChaosVoteIntervalFromInputs();
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
   game.riftBloomGhostTurns = getRiftBloomGhostTurnsFromInputs();
   game.riftBloomTieGoesToCreator = getRiftBloomTieGoesToCreatorFromInputs();
+  const customMoveOrderConfig = getCustomMoveOrderConfigFromInputs(activeModeKeys, playerCount);
+  game.customMoveOrderSyntax = customMoveOrderConfig.syntax || "";
   setTimerInputs(game.timerConfig);
   setTurnOrderInput(game.turnOrder, playerCount);
   setEgyptianCapInput(game.egyptianStoneCap);
@@ -13719,20 +14312,27 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   setSecretRuleInputs({
     placementsPerTurn: game.placementsPerTurn,
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
-    winLength: game.winLength
+    winLength: game.winLength,
+    chaosVoteInterval: game.chaosVoteInterval
   });
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
     placementsPerTurn: game.placementsPerTurn,
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
-    winLength: game.winLength
+    winLength: game.winLength,
+    chaosVoteInterval: game.chaosVoteInterval,
+    customMoveOrder: customMoveOrderConfig
   }, game.riftBloomCellModulus, game.riftBloomContestClaim, game.riftBloomGhostTurns, game.riftBloomTieGoesToCreator);
   game.factoryAnimationDisabled = false;
   game.factoryAnimationFramePending = false;
   game.lastFactoryAnimationAt = 0;
-  const startingPlayer = resolveStartingPlayer(game.turnOrder, playerCount);
+  const startingPlayer = hasCustomMoveOrder(game.state)
+    ? normalisePlayerNumber(game.state.turnPlayer, game.state)
+    : resolveStartingPlayer(game.turnOrder, playerCount);
   game.state.startingPlayer = startingPlayer;
-  game.state.turnPlayer = startingPlayer;
-  game.state.clock.activePlayer = startingPlayer;
+  if (!hasCustomMoveOrder(game.state)) {
+    game.state.turnPlayer = startingPlayer;
+  }
+  game.state.clock.activePlayer = normalisePlayerNumber(game.state.turnPlayer, game.state);
   ensureClockState(game.state);
   game.history = [];
   game.futureHistory = [];
