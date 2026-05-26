@@ -40,6 +40,10 @@ const ui = {
   placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
   openingPlacementsInput: document.getElementById("openingPlacementsInput"),
   chaosVoteIntervalInput: document.getElementById("chaosVoteIntervalInput"),
+  winAfterMovesInput: document.getElementById("winAfterMovesInput"),
+  drawAfterMovesInput: document.getElementById("drawAfterMovesInput"),
+  winAfterMovesWinnerField: document.getElementById("winAfterMovesWinnerField"),
+  winAfterMovesWinnerSelect: document.getElementById("winAfterMovesWinnerSelect"),
   winLengthInput: document.getElementById("winLengthInput"),
   secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
   customMoveOrderInput: document.getElementById("customMoveOrderInput"),
@@ -110,6 +114,7 @@ const ui = {
   timerEnabledInput: document.getElementById("timerEnabledInput"),
   applyTimerBtn: document.getElementById("applyTimerBtn"),
   timerSummaryText: document.getElementById("timerSummaryText"),
+  turnCounterText: document.getElementById("turnCounterText"),
   turnOrderInput: document.getElementById("turnOrderInput"),
   turnOrderSummaryText: document.getElementById("turnOrderSummaryText"),
   p1ClockText: document.getElementById("p1ClockText"),
@@ -199,6 +204,11 @@ const BAGEL_EFFECT_TILE_PHASE = 0;
 const DEFAULT_CHAOS_VOTE_INTERVAL = 3;
 const MIN_CHAOS_VOTE_INTERVAL = 1;
 const MAX_CHAOS_VOTE_INTERVAL = 20;
+const DEFAULT_WIN_AFTER_MOVES = 0;
+const DEFAULT_DRAW_AFTER_MOVES = 0;
+const DEFAULT_WIN_AFTER_MOVES_WINNER = 0;
+const MIN_END_AFTER_MOVES = 0;
+const MAX_END_AFTER_MOVES = 9999;
 const CHAOS_VOTE_INTERVAL = DEFAULT_CHAOS_VOTE_INTERVAL;
 const CHAOS_RULE_CHOICE_COUNT = 3;
 const CHAOS_RECENT_RULE_MEMORY = 12;
@@ -2751,6 +2761,9 @@ const game = {
   openingPlacementsPerTurn: DEFAULT_OPENING_PLACEMENTS_PER_TURN,
   winLength: DEFAULT_WIN_LENGTH,
   chaosVoteInterval: DEFAULT_CHAOS_VOTE_INTERVAL,
+  winAfterMoves: DEFAULT_WIN_AFTER_MOVES,
+  drawAfterMoves: DEFAULT_DRAW_AFTER_MOVES,
+  winAfterMovesWinner: DEFAULT_WIN_AFTER_MOVES_WINNER,
   customMoveOrderSyntax: "",
   customMoveOrderGuideVisible: false,
   customPatternRules: [],
@@ -3062,7 +3075,10 @@ function getModeConfig(modeKeys) {
     placementsPerTurn: getPlacementsPerTurnFromInputs(),
     openingPlacementsPerTurn: getOpeningPlacementsPerTurnFromInputs(),
     winLength: getWinLengthFromInputs(),
-    chaosVoteInterval: getChaosVoteIntervalFromInputs()
+    chaosVoteInterval: getChaosVoteIntervalFromInputs(),
+    winAfterMoves: getWinAfterMovesFromInputs(),
+    drawAfterMoves: getDrawAfterMovesFromInputs(),
+    winAfterMovesWinner: getWinAfterMovesWinnerFromInput()
   });
   const openingMovesWord = settings.openingPlacementsPerTurn === 1 ? "move" : "moves";
   const movesWord = settings.placementsPerTurn === 1 ? "move" : "moves";
@@ -3095,6 +3111,17 @@ function getModeConfig(modeKeys) {
   if (keys.includes("chaosVote")) {
     config.summary += ` Rule Vote cadence: every ${settings.chaosVoteInterval} completed turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
     config.hint += ` | Rule Vote every ${settings.chaosVoteInterval} turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
+  }
+  if (settings.winAfterMoves > 0) {
+    const winnerLabel = settings.winAfterMovesWinner > 0
+      ? `Player ${settings.winAfterMovesWinner}`
+      : "the player whose turn just ended";
+    config.summary += ` Auto win: ${winnerLabel} wins on turn ${settings.winAfterMoves}.`;
+    config.hint += ` | Auto win on turn ${settings.winAfterMoves}.`;
+  }
+  if (settings.drawAfterMoves > 0) {
+    config.summary += ` Auto draw: game ends drawn on turn ${settings.drawAfterMoves} if no winner triggers first.`;
+    config.hint += ` | Auto draw on turn ${settings.drawAfterMoves}.`;
   }
   const customPatternSummary = getCustomPatternSummaryLines(game.customPatternRules, getGridModeFromModeKeys(keys));
   if (customPatternSummary.activeWins > 0) {
@@ -4291,6 +4318,9 @@ function makeInitialState(
     openingPlacementsPerTurn: appliedGameRules.openingPlacementsPerTurn,
     winLength: appliedGameRules.winLength,
     chaosVoteInterval: appliedGameRules.chaosVoteInterval,
+    winAfterMoves: appliedGameRules.winAfterMoves,
+    drawAfterMoves: appliedGameRules.drawAfterMoves,
+    winAfterMovesWinner: appliedGameRules.winAfterMovesWinner,
     customPatternRules: cloneCustomPatternRules(appliedGameRules.customPatternRules),
     customMoveOrder: null,
     riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
@@ -4302,9 +4332,12 @@ function makeInitialState(
     movesLeftInTurn: appliedGameRules.openingPlacementsPerTurn,
     openingMoveDone: false,
     winner: 0,
+    draw: false,
     winnerReason: null,
+    drawReason: null,
     round: 1,
     turnCount: 0,
+    moveCount: 0,
     birds: {
       duck: null,
       kingDuck: null
@@ -4968,6 +5001,25 @@ function normaliseChaosVoteInterval(value) {
   return Math.max(MIN_CHAOS_VOTE_INTERVAL, Math.min(MAX_CHAOS_VOTE_INTERVAL, parsed));
 }
 
+function normaliseEndAfterMoves(value, fallback = 0) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Math.max(MIN_END_AFTER_MOVES, Math.min(MAX_END_AFTER_MOVES, Math.trunc(Number(fallback) || 0)));
+  }
+  return Math.max(MIN_END_AFTER_MOVES, Math.min(MAX_END_AFTER_MOVES, parsed));
+}
+
+function normaliseWinAfterMovesWinner(value, fallback = DEFAULT_WIN_AFTER_MOVES_WINNER) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed)) {
+    return normaliseWinAfterMovesWinner(fallback, DEFAULT_WIN_AFTER_MOVES_WINNER);
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.min(MAX_PLAYER_COUNT, parsed));
+}
+
 function normaliseRiftBloomCellModulus(value) {
   const parsed = Math.trunc(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -5016,6 +5068,18 @@ function getWinLengthFromInputs() {
 
 function getChaosVoteIntervalFromInputs() {
   return normaliseChaosVoteInterval(ui.chaosVoteIntervalInput?.value ?? game.chaosVoteInterval);
+}
+
+function getWinAfterMovesFromInputs() {
+  return normaliseEndAfterMoves(ui.winAfterMovesInput?.value ?? game.winAfterMoves, DEFAULT_WIN_AFTER_MOVES);
+}
+
+function getDrawAfterMovesFromInputs() {
+  return normaliseEndAfterMoves(ui.drawAfterMovesInput?.value ?? game.drawAfterMoves, DEFAULT_DRAW_AFTER_MOVES);
+}
+
+function getWinAfterMovesWinnerFromInput() {
+  return normaliseWinAfterMovesWinner(ui.winAfterMovesWinnerSelect?.value ?? game.winAfterMovesWinner, DEFAULT_WIN_AFTER_MOVES_WINNER);
 }
 
 function getRiftBloomCellModulusFromInputs() {
@@ -5121,6 +5185,9 @@ function setSecretRuleInputs(settings = {}) {
   const openingPlacementsPerTurn = normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn);
   const winLength = normaliseWinLength(settings.winLength ?? game.winLength);
   const chaosVoteInterval = normaliseChaosVoteInterval(settings.chaosVoteInterval ?? game.chaosVoteInterval);
+  const winAfterMoves = normaliseEndAfterMoves(settings.winAfterMoves ?? game.winAfterMoves, DEFAULT_WIN_AFTER_MOVES);
+  const drawAfterMoves = normaliseEndAfterMoves(settings.drawAfterMoves ?? game.drawAfterMoves, DEFAULT_DRAW_AFTER_MOVES);
+  const winAfterMovesWinner = normaliseWinAfterMovesWinner(settings.winAfterMovesWinner ?? game.winAfterMovesWinner, DEFAULT_WIN_AFTER_MOVES_WINNER);
   if (ui.placementsPerTurnInput) {
     ui.placementsPerTurnInput.value = String(placementsPerTurn);
   }
@@ -5133,7 +5200,25 @@ function setSecretRuleInputs(settings = {}) {
   if (ui.winLengthInput) {
     ui.winLengthInput.value = String(winLength);
   }
+  if (ui.winAfterMovesInput) {
+    ui.winAfterMovesInput.value = String(winAfterMoves);
+  }
+  if (ui.drawAfterMovesInput) {
+    ui.drawAfterMovesInput.value = String(drawAfterMoves);
+  }
+  if (ui.winAfterMovesWinnerSelect) {
+    ui.winAfterMovesWinnerSelect.value = String(winAfterMovesWinner);
+  }
+  refreshWinAfterTurnsWinnerVisibility();
   refreshSecretRuleSummaryFromInputs();
+}
+
+function refreshWinAfterTurnsWinnerVisibility() {
+  if (!ui.winAfterMovesWinnerField) {
+    return;
+  }
+  const winAfterTurns = getWinAfterMovesFromInputs();
+  ui.winAfterMovesWinnerField.hidden = winAfterTurns <= 0;
 }
 
 function setShapeRuleOutcomeInput(value) {
@@ -5248,19 +5333,19 @@ function refreshShapeRuleSummary() {
     return;
   }
   if (!patternHelpers.buildPatternRule || !patternHelpers.findPatternMatch) {
-    ui.shapeRuleSummaryText.textContent = "Shape rules unavailable.";
+    ui.shapeRuleSummaryText.textContent = "Win conditions unavailable.";
     return;
   }
   const gridMode = getCurrentShapeRuleGridMode();
   const summary = getCustomPatternSummaryLines(game.customPatternRules, gridMode);
   if (!supportsCustomPatternGrid(gridMode)) {
     ui.shapeRuleSummaryText.textContent = summary.total > 0
-      ? `${summary.total} saved shape rule${summary.total === 1 ? "" : "s"} | painting disabled on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`
+      ? `${summary.total} saved win condition${summary.total === 1 ? "" : "s"} | painting disabled on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`
       : "Painting is unavailable on the radial board.";
     return;
   }
   if (summary.total === 0) {
-    ui.shapeRuleSummaryText.textContent = "No custom shape rules.";
+    ui.shapeRuleSummaryText.textContent = "No custom win conditions.";
     return;
   }
   const activeBits = [];
@@ -5272,7 +5357,7 @@ function refreshShapeRuleSummary() {
   }
   ui.shapeRuleSummaryText.textContent = summary.active > 0
     ? `${summary.active} active on ${getCustomPatternGridLabel(gridMode).toLowerCase()} | ${activeBits.join(", ")}`
-    : `${summary.total} saved shape rule${summary.total === 1 ? "" : "s"} | none active on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`;
+    : `${summary.total} saved win condition${summary.total === 1 ? "" : "s"} | none active on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`;
 }
 
 function refreshShapeRuleDraftText() {
@@ -5280,12 +5365,12 @@ function refreshShapeRuleDraftText() {
     return;
   }
   if (!patternHelpers.buildPatternRule || !patternHelpers.findPatternMatch) {
-    ui.shapeRuleDraftText.textContent = "Shape rules are unavailable because the pattern helper did not load.";
+    ui.shapeRuleDraftText.textContent = "Win conditions are unavailable because the pattern helper did not load.";
     return;
   }
   const gridMode = getCurrentShapeRuleGridMode();
   if (!supportsCustomPatternGrid(gridMode)) {
-    ui.shapeRuleDraftText.textContent = "Radial boards do not support translated custom shape rules.";
+    ui.shapeRuleDraftText.textContent = "Radial boards do not support translated custom win conditions.";
     return;
   }
   const draftCells = getShapeRuleDraftCells();
@@ -5309,7 +5394,7 @@ function syncCustomPatternRulesToState(options = {}) {
       saveHistory();
     }
     game.state.customPatternRules = cloneCustomPatternRules(game.customPatternRules);
-    if (!game.state.winner) {
+    if (!isGameOver(game.state)) {
       checkForWinner(game.state);
     }
     updateStatus();
@@ -5325,7 +5410,7 @@ function syncCustomPatternRulesToState(options = {}) {
 function saveShapeRuleDraft() {
   const gridMode = getCurrentShapeRuleGridMode();
   if (!supportsCustomPatternGrid(gridMode)) {
-    pushLog("Shape rules cannot be painted on the radial board.");
+    pushLog("Win conditions cannot be painted on the radial board.");
     updateStatus();
     return;
   }
@@ -5337,7 +5422,7 @@ function saveShapeRuleDraft() {
     cells: getShapeRuleDraftCells()
   });
   if (!builtRule) {
-    pushLog("Paint at least one valid cell before saving a shape rule.");
+    pushLog("Paint at least one valid cell before saving a win condition.");
     updateStatus();
     return;
   }
@@ -5348,7 +5433,7 @@ function saveShapeRuleDraft() {
     game.customPatternRules.push(builtRule);
   }
   const outcomeLabel = getCustomPatternOutcomeLabel(builtRule.outcome).toLowerCase();
-  pushLog(`Saved ${outcomeLabel} shape for ${getCustomPatternOwnerLabel(builtRule.owner)} on the ${getCustomPatternGridLabel(builtRule.grid).toLowerCase()} board.`);
+  pushLog(`Saved ${outcomeLabel} win condition for ${getCustomPatternOwnerLabel(builtRule.owner)} on the ${getCustomPatternGridLabel(builtRule.grid).toLowerCase()} board.`);
   game.shapeRuleEditor.editingRuleId = "";
   setShapeRuleDraftCells([]);
   setShapeRuleEditorActive(false);
@@ -5452,7 +5537,7 @@ function renderShapeRuleList() {
 
 function refreshShapeRulePanel() {
   if (ui.shapeRulePanelBtn) {
-    ui.shapeRulePanelBtn.textContent = game.shapeRulePanelVisible ? "Hide Shape Rules" : "Shape Rules";
+    ui.shapeRulePanelBtn.textContent = game.shapeRulePanelVisible ? "Hide Win Conditions" : "Win Conditions";
     ui.shapeRulePanelBtn.setAttribute("aria-expanded", game.shapeRulePanelVisible ? "true" : "false");
   }
   if (ui.shapeRulePanel) {
@@ -5497,6 +5582,9 @@ function refreshSecretRuleSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
   const openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   const winLength = getWinLengthFromInputs();
   const interval = getChaosVoteIntervalFromInputs();
+  const winAfterMoves = getWinAfterMovesFromInputs();
+  const drawAfterMoves = getDrawAfterMovesFromInputs();
+  const winAfterMovesWinner = getWinAfterMovesWinnerFromInput();
   const previewGrid = getGridModeFromModeKeys(modeKeys);
   const customSummary = getCustomPatternSummaryLines(game.customPatternRules, previewGrid);
   const voteText = normaliseModeKeys(modeKeys).includes("chaosVote")
@@ -5510,7 +5598,9 @@ function refreshSecretRuleSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
     shapeBits.push(`${customSummary.activeLosses} custom loss${customSummary.activeLosses === 1 ? "" : "es"}`);
   }
   const shapeText = shapeBits.length > 0 ? ` | ${shapeBits.join(", ")}` : "";
-  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}${voteText}${shapeText}`;
+  const winnerSuffix = winAfterMovesWinner > 0 ? ` (P${winAfterMovesWinner})` : "";
+  const endText = `${winAfterMoves > 0 ? ` | win after turn ${winAfterMoves}${winnerSuffix}` : ""}${drawAfterMoves > 0 ? ` | draw after turn ${drawAfterMoves}` : ""}`;
+  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}${voteText}${shapeText}${endText}`;
 }
 
 function getGameRuleSettings(settings = {}) {
@@ -5519,6 +5609,9 @@ function getGameRuleSettings(settings = {}) {
     openingPlacementsPerTurn: normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn),
     winLength: normaliseWinLength(settings.winLength ?? game.winLength),
     chaosVoteInterval: normaliseChaosVoteInterval(settings.chaosVoteInterval ?? game.chaosVoteInterval),
+    winAfterMoves: normaliseEndAfterMoves(settings.winAfterMoves ?? game.winAfterMoves, DEFAULT_WIN_AFTER_MOVES),
+    drawAfterMoves: normaliseEndAfterMoves(settings.drawAfterMoves ?? game.drawAfterMoves, DEFAULT_DRAW_AFTER_MOVES),
+    winAfterMovesWinner: normaliseWinAfterMovesWinner(settings.winAfterMovesWinner ?? game.winAfterMovesWinner, DEFAULT_WIN_AFTER_MOVES_WINNER),
     customPatternRules: sanitiseCustomPatternRules(settings.customPatternRules ?? game.customPatternRules),
     customMoveOrder: settings.customMoveOrder?.enabled
       ? {
@@ -5571,6 +5664,18 @@ function getWinLength(state) {
 
 function getChaosVoteInterval(state) {
   return normaliseChaosVoteInterval(state?.chaosVoteInterval ?? game.chaosVoteInterval);
+}
+
+function getWinAfterMoves(state) {
+  return normaliseEndAfterMoves(state?.winAfterMoves ?? game.winAfterMoves, DEFAULT_WIN_AFTER_MOVES);
+}
+
+function getDrawAfterMoves(state) {
+  return normaliseEndAfterMoves(state?.drawAfterMoves ?? game.drawAfterMoves, DEFAULT_DRAW_AFTER_MOVES);
+}
+
+function getWinAfterMovesWinner(state) {
+  return normaliseWinAfterMovesWinner(state?.winAfterMovesWinner ?? game.winAfterMovesWinner, DEFAULT_WIN_AFTER_MOVES_WINNER);
 }
 
 function getCustomMoveOrderStoneLabel(owner) {
@@ -5774,6 +5879,14 @@ function finishCustomMoveOrderAction(state) {
   const order = normaliseCustomMoveOrderRuntime(state);
   if (!order) {
     return false;
+  }
+  const completedAction = getCustomMoveOrderCurrentAction(state);
+  if (completedAction && (completedAction.type === "stone" || completedAction.type === "stoneEcho" || completedAction.type === "stoneRift")) {
+    recordCompletedMove(state);
+    evaluateMoveCountEndConditions(state, completedAction.owner);
+    if (isGameOver(state)) {
+      return true;
+    }
   }
   if (!state.openingMoveDone) {
     state.openingMoveDone = true;
@@ -6036,6 +6149,15 @@ function updateOnlineControls() {
   }
   if (ui.winLengthInput) {
     ui.winLengthInput.disabled = inRoom && !admin;
+  }
+  if (ui.winAfterMovesInput) {
+    ui.winAfterMovesInput.disabled = inRoom && !admin;
+  }
+  if (ui.drawAfterMovesInput) {
+    ui.drawAfterMovesInput.disabled = inRoom && !admin;
+  }
+  if (ui.winAfterMovesWinnerSelect) {
+    ui.winAfterMovesWinnerSelect.disabled = inRoom && !admin;
   }
   if (ui.shapeRulePanelBtn) {
     ui.shapeRulePanelBtn.disabled = inRoom && !admin;
@@ -6358,6 +6480,9 @@ function applyRemoteState(state, revision) {
   game.placementsPerTurn = getPlacementsPerTurn(game.state);
   game.openingPlacementsPerTurn = getOpeningPlacementsPerTurn(game.state);
   game.winLength = getWinLength(game.state);
+  game.winAfterMoves = getWinAfterMoves(game.state);
+  game.drawAfterMoves = getDrawAfterMoves(game.state);
+  game.winAfterMovesWinner = getWinAfterMovesWinner(game.state);
   game.customPatternRules = sanitiseCustomPatternRules(game.state.customPatternRules);
   game.state.customPatternRules = cloneCustomPatternRules(game.customPatternRules);
   setTimerInputs(game.timerConfig);
@@ -6365,7 +6490,10 @@ function applyRemoteState(state, revision) {
   setSecretRuleInputs({
     placementsPerTurn: game.placementsPerTurn,
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
-    winLength: game.winLength
+    winLength: game.winLength,
+    winAfterMoves: game.winAfterMoves,
+    drawAfterMoves: game.drawAfterMoves,
+    winAfterMovesWinner: game.winAfterMovesWinner
   });
   setSelectedModeKeys(game.state.modeKeys);
   refreshShapeRulePanel();
@@ -7137,7 +7265,7 @@ function isPigTrapped(state) {
 }
 
 function applyPigTrapAfterPlacement(state, owner, wasPigTrappedBefore) {
-  if (!usesPigMode(state) || wasPigTrappedBefore || state.winner) {
+  if (!usesPigMode(state) || wasPigTrappedBefore || isGameOver(state)) {
     return null;
   }
   const pig = ensurePigState(state);
@@ -7176,7 +7304,7 @@ function canPigReactAfterPlacement(state, pig) {
 }
 
 function movePigAfterPlacement(state) {
-  if (!usesPigMode(state) || state.winner) {
+  if (!usesPigMode(state) || isGameOver(state)) {
     return null;
   }
   const pig = ensurePigState(state);
@@ -7216,7 +7344,7 @@ function movePigAfterPlacement(state) {
 }
 
 function movePigToHex(state, hex) {
-  if (!usesPigMode(state) || state.winner || !hex) {
+  if (!usesPigMode(state) || isGameOver(state) || !hex) {
     return null;
   }
   const pig = ensurePigState(state);
@@ -7327,7 +7455,7 @@ function isWithinPlacementRange(state, hex) {
 
 function isLegalByBaseRules(state, hex, options = {}) {
   const allowOccupied = Boolean(options.allowOccupied);
-  if (state.winner) {
+  if (isGameOver(state)) {
     return false;
   }
   if (!isCellSupportedForMode(state, hex)) {
@@ -7950,7 +8078,7 @@ function openChaosRuleVoteIfNeeded(state, previousPlayer) {
 }
 
 function canChooseChaosRule(state = game.state) {
-  if (!state || state.winner || isBrowsingHistory() || !hasChaosPendingVote(state)) {
+  if (!state || isGameOver(state) || isBrowsingHistory() || !hasChaosPendingVote(state)) {
     return false;
   }
   return canActForCurrentTurn();
@@ -9200,6 +9328,58 @@ function getCustomPatternWinnerMessage(state, outcome, winner) {
   return `${ownerLabel} completed a custom win shape (${cellText}) and wins.`;
 }
 
+function isGameDrawn(state) {
+  return Boolean(state?.draw);
+}
+
+function isGameOver(state) {
+  return Boolean(state?.winner || isGameDrawn(state));
+}
+
+function recordCompletedMove(state) {
+  if (!state) {
+    return 0;
+  }
+  state.moveCount = Math.max(0, Math.trunc(Number(state.moveCount) || 0)) + 1;
+  return state.moveCount;
+}
+
+function evaluateMoveCountEndConditions(state, lastMoveOwner = state?.turnPlayer) {
+  if (!state || isGameOver(state)) {
+    return null;
+  }
+  const turnCount = Math.max(0, Math.trunc(Number(state.turnCount) || 0));
+  const winAfterMoves = getWinAfterMoves(state);
+  if (winAfterMoves > 0 && turnCount >= winAfterMoves) {
+    const configuredWinner = getWinAfterMovesWinner(state);
+    const winner = configuredWinner > 0
+      ? normalisePlayerNumber(configuredWinner, state)
+      : normalisePlayerNumber(lastMoveOwner, state);
+    state.winner = winner;
+    state.winnerReason = {
+      type: "turnThresholdWin",
+      turnCount,
+      threshold: winAfterMoves,
+      configuredWinner
+    };
+    pushLog(`Turn ${turnCount}: Player ${winner} wins by turn threshold.`);
+    return { winner, draw: false };
+  }
+
+  const drawAfterMoves = getDrawAfterMoves(state);
+  if (drawAfterMoves > 0 && turnCount >= drawAfterMoves) {
+    state.draw = true;
+    state.drawReason = {
+      type: "turnThresholdDraw",
+      turnCount,
+      threshold: drawAfterMoves
+    };
+    pushLog(`Turn ${turnCount}: game drawn by turn threshold.`);
+    return { winner: 0, draw: true };
+  }
+  return null;
+}
+
 function queueEcho(state, echo) {
   if (!hasMode(state, "echo") && !echo?.force) {
     return;
@@ -10421,6 +10601,9 @@ function resolveArmoryTurnEnd(state) {
 }
 
 function checkForWinner(state) {
+  if (isGameOver(state)) {
+    return true;
+  }
   const customOutcome = findCustomPatternOutcome(state);
   const customWinner = resolveCustomPatternWinner(state, customOutcome);
   const shouldUseStandardLineWins = !hasActiveCustomWinPatternRules(state);
@@ -10463,7 +10646,10 @@ function checkForWinner(state) {
               ? `Player ${winner} trapped the pig and wins.`
               : `Player ${winner} wins.`)))));
   }
-  return winner;
+  if (!state.winner) {
+    evaluateMoveCountEndConditions(state, state.turnPlayer);
+  }
+  return isGameOver(state);
 }
 
 function finishTurnRotation(state, previousPlayer) {
@@ -10531,6 +10717,11 @@ function endTurn(state) {
 function finishSubmove(state) {
   if (hasCustomMoveOrder(state)) {
     finishCustomMoveOrderAction(state);
+    return;
+  }
+  recordCompletedMove(state);
+  evaluateMoveCountEndConditions(state, state.turnPlayer);
+  if (isGameOver(state)) {
     return;
   }
   state.movesLeftInTurn -= 1;
@@ -11791,7 +11982,7 @@ function clickPlacement(hex) {
   }
   applyClockElapsedIfNeeded();
 
-  if (state.winner) {
+  if (isGameOver(state)) {
     return;
   }
 
@@ -11964,7 +12155,7 @@ function clickPlacement(hex) {
 }
 
 function canUseArmoryControls(state = game.state) {
-  if (!state || !usesArmoryMode(state) || state.winner) {
+  if (!state || !usesArmoryMode(state) || isGameOver(state)) {
     return false;
   }
   if (isBrowsingHistory()) {
@@ -12536,13 +12727,20 @@ function renderChaosPanel() {
 
 function updateStatus() {
   const state = game.state;
+  if (ui.turnCounterText) {
+    const turns = Math.max(0, Math.trunc(Number(state?.turnCount) || 0));
+    ui.turnCounterText.textContent = `Turn ${turns}`;
+  }
+  const gameEnded = isGameOver(state);
   ensureClockState(state);
   if (!hasPendingModeSelection(state) && game.modeUiSignature !== modeKeySignature(state.modeKeys)) {
     setModeUI(state.modeKeys);
   }
 
   const displayPlayer = state.winner || state.turnPlayer;
-  ui.turnBig.textContent = state.winner ? `Player ${state.winner} wins` : `Player ${state.turnPlayer}`;
+  ui.turnBig.textContent = state.winner
+    ? `Player ${state.winner} wins`
+    : (state.draw ? "Draw" : `Player ${state.turnPlayer}`);
   ui.turnBig.className = `turnBig playerP${normalisePlayerNumber(displayPlayer, getPlayerCount(state))}`;
   if (ui.boardWrap) {
     const turnPlayer = normalisePlayerNumber(displayPlayer, getPlayerCount(state));
@@ -12552,7 +12750,7 @@ function updateStatus() {
   ui.roundText.textContent = String(state.round);
   ui.movesLeftText.textContent = String(state.movesLeftInTurn);
   ui.duckPhaseText.textContent = state.duckPhase ? "Yes" : "No";
-  ui.winnerText.textContent = state.winner ? `Player ${state.winner}` : "None";
+  ui.winnerText.textContent = state.winner ? `Player ${state.winner}` : (state.draw ? "Draw" : "None");
 
   if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
@@ -12565,6 +12763,8 @@ function updateStatus() {
     ui.subturnText.textContent = `Rule Vote: Player ${pending?.chooser || state.turnPlayer} choose one of ${pending?.choices?.length || 3} rules`;
   } else if (hasCustomMoveOrder(state)) {
     ui.subturnText.textContent = getCustomMoveOrderPrompt(state);
+  } else if (state.draw) {
+    ui.subturnText.textContent = "Game drawn.";
   } else if (!state.openingMoveDone) {
     const openingPlacements = Math.max(1, Number(state.movesLeftInTurn) || getOpeningPlacementsPerTurn(state));
     const placementText = `${openingPlacements} placement${openingPlacements === 1 ? "" : "s"}`;
@@ -12599,11 +12799,11 @@ function updateStatus() {
       ui.subturnText.textContent = `${state.movesLeftInTurn} factory action${state.movesLeftInTurn === 1 ? "" : "s"} left | ${getFactoryPlayerSummary(state, state.turnPlayer)} | ${getFactoryScoreSummary(state)}`;
     }
   }
-  if (hasEverythingBagelMode(state) && !state.winner) {
+  if (hasEverythingBagelMode(state) && !gameEnded) {
     const receiptStats = getEverythingBagelReceiptStats(state);
     ui.subturnText.textContent += ` | Bagel phase ${positiveMod(state.turnCount, 12)} | ${receiptStats.pending} receipts`;
   }
-  if (usesPowderMode(state) && !state.winner) {
+  if (usesPowderMode(state) && !gameEnded) {
     const powder = ensurePowderState(state);
     const settled = powder.grains.filter((grain) => grain.settled).length;
     refreshPowderControl(state);
@@ -12613,14 +12813,14 @@ function updateStatus() {
     const movedText = powder.lastReport?.moved ? `, ${powder.lastReport.moved} steps` : "";
     ui.subturnText.textContent += ` | Powder ${settled}/${powder.grains.length} settled | ${getPowderClaimSummary(state)} claimed, ${contested} contested${movedText}`;
   }
-  if (usesRiftBloomMode(state) && !state.winner) {
+  if (usesRiftBloomMode(state) && !gameEnded) {
     const ghostCount = getRiftBloomGhostEntries(state).length;
     const activeLabel = isRiftBloomActiveCell(state, game.hoverHex) ? "live hover" : "rift cells live";
     const coverageStep = getRiftBloomCellModulus(state);
     const claimLabel = usesRiftBloomContestClaim(state) ? "majority claim" : "anchor";
     ui.subturnText.textContent += ` | Rift ${ghostCount} ghost${ghostCount === 1 ? "" : "s"} | ${getRiftBloomGhostTurns(state)}t | 1/${coverageStep} ${activeLabel} | ${claimLabel}`;
   }
-  if (usesPigMode(state) && !state.winner) {
+  if (usesPigMode(state) && !gameEnded) {
     const pigHex = getPigHex(state);
     const pigMoves = getPigLegalMoves(state).length;
     const pig = ensurePigState(state);
@@ -12633,7 +12833,7 @@ function updateStatus() {
       ? ` | Pig (${pigHex.q}, ${pigHex.r}) | ${pigReaction} | ${pigMoves} escape${pigMoves === 1 ? "" : "s"}`
       : " | Pig loose";
   }
-  if (usesChaosVoteMode(state) && !state.winner && !hasChaosPendingVote(state)) {
+  if (usesChaosVoteMode(state) && !gameEnded && !hasChaosPendingVote(state)) {
     const interval = getChaosVoteInterval(state);
     const untilVote = interval - positiveMod(state.turnCount, interval);
     ui.subturnText.textContent += ` | Rule vote in ${untilVote}`;
@@ -15190,6 +15390,9 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
   game.chaosVoteInterval = getChaosVoteIntervalFromInputs();
+  game.winAfterMoves = getWinAfterMovesFromInputs();
+  game.drawAfterMoves = getDrawAfterMovesFromInputs();
+  game.winAfterMovesWinner = getWinAfterMovesWinnerFromInput();
   game.customPatternRules = sanitiseCustomPatternRules(game.customPatternRules);
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
@@ -15208,13 +15411,19 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
     placementsPerTurn: game.placementsPerTurn,
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
     winLength: game.winLength,
-    chaosVoteInterval: game.chaosVoteInterval
+    chaosVoteInterval: game.chaosVoteInterval,
+    winAfterMoves: game.winAfterMoves,
+    drawAfterMoves: game.drawAfterMoves,
+    winAfterMovesWinner: game.winAfterMovesWinner
   });
   game.state = makeInitialState(activeModeKeys, game.timerConfig, game.egyptianStoneCap, {
     placementsPerTurn: game.placementsPerTurn,
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
     winLength: game.winLength,
     chaosVoteInterval: game.chaosVoteInterval,
+    winAfterMoves: game.winAfterMoves,
+    drawAfterMoves: game.drawAfterMoves,
+    winAfterMovesWinner: game.winAfterMovesWinner,
     customPatternRules: game.customPatternRules,
     customMoveOrder: customMoveOrderConfig
   }, game.riftBloomCellModulus, game.riftBloomContestClaim, game.riftBloomGhostTurns, game.riftBloomTieGoesToCreator);
@@ -15604,6 +15813,24 @@ ui.winLengthInput?.addEventListener("input", () => {
   refreshSecretRuleSummaryFromInputs();
   setModeUI(getSelectedModeKeys());
 });
+ui.winAfterMovesInput?.addEventListener("input", () => {
+  game.winAfterMoves = getWinAfterMovesFromInputs();
+  refreshWinAfterTurnsWinnerVisibility();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
+ui.drawAfterMovesInput?.addEventListener("input", () => {
+  game.drawAfterMoves = getDrawAfterMovesFromInputs();
+  refreshWinAfterTurnsWinnerVisibility();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
+ui.winAfterMovesWinnerSelect?.addEventListener("change", () => {
+  game.winAfterMovesWinner = getWinAfterMovesWinnerFromInput();
+  refreshWinAfterTurnsWinnerVisibility();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
 ui.riftBloomCoverageInput?.addEventListener("input", () => {
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   refreshRiftBloomCoverageSummaryFromInputs();
@@ -15740,7 +15967,10 @@ setRiftBloomTieCreatorInput(game.riftBloomTieGoesToCreator);
 setSecretRuleInputs({
   placementsPerTurn: game.placementsPerTurn,
   openingPlacementsPerTurn: game.openingPlacementsPerTurn,
-  winLength: game.winLength
+  winLength: game.winLength,
+  winAfterMoves: game.winAfterMoves,
+  drawAfterMoves: game.drawAfterMoves,
+  winAfterMovesWinner: game.winAfterMovesWinner
 });
 setShapeRuleOutcomeInput(game.shapeRuleEditor.outcome);
 setShapeRuleOwnerInput(game.shapeRuleEditor.owner);
