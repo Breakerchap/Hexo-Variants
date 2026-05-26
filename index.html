@@ -70,10 +70,30 @@
             </div>
             <div class="shapeRuleControls">
               <div class="shapeRuleHeader">
-                <button id="shapeRulePanelBtn" type="button" class="secondaryButton" aria-expanded="false" aria-controls="shapeRulePanel">Shape Rules</button>
-                <div id="shapeRuleSummaryText" class="small shapeRuleSummaryText">No custom shape rules.</div>
+                <button id="shapeRulePanelBtn" type="button" class="secondaryButton" aria-expanded="false" aria-controls="shapeRulePanel">Win Conditions</button>
+                <div id="shapeRuleSummaryText" class="small shapeRuleSummaryText">No custom win conditions.</div>
               </div>
               <div id="shapeRulePanel" class="shapeRulePanel" hidden>
+                <div class="grid2 secretRuleGrid winThresholdGrid">
+                  <label class="small secretRuleField" for="winAfterMovesInput">
+                    Win after turn
+                    <input id="winAfterMovesInput" type="number" min="0" max="9999" step="1" value="0" aria-label="Auto win on turn number" />
+                  </label>
+                  <label class="small secretRuleField" for="drawAfterMovesInput">
+                    Draw after turn
+                    <input id="drawAfterMovesInput" type="number" min="0" max="9999" step="1" value="0" aria-label="Auto draw on turn number" />
+                  </label>
+                </div>
+                <label id="winAfterMovesWinnerField" class="small secretRuleField" for="winAfterMovesWinnerSelect">
+                  Win after turn winner
+                  <select id="winAfterMovesWinnerSelect" aria-label="Winner when turn threshold is reached">
+                    <option value="0">Player whose turn ended</option>
+                    <option value="1">Player 1</option>
+                    <option value="2">Player 2</option>
+                    <option value="3">Player 3</option>
+                    <option value="4">Player 4</option>
+                  </select>
+                </label>
                 <div class="grid2 secretRuleGrid">
                   <label class="small secretRuleField" for="shapeRuleOutcomeSelect">
                     Shape result
@@ -183,6 +203,7 @@
           <div class="controls timerControls">
             <button id="applyTimerBtn">Apply Timer</button>
             <div class="small timerSummaryPill" id="timerSummaryText">05:00 +2s</div>
+            <div class="small timerSummaryPill" id="turnCounterText">Turn 0</div>
           </div>
         </div>
       </section>
