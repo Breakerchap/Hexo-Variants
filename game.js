@@ -4739,9 +4739,6 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
       if (action.type === "stoneEcho" || action.type === "stoneRift") {
         action.owner = player;
       }
-      if ((action.type === "stone" || action.type === "stoneEcho" || action.type === "stoneRift") && action.owner !== player) {
-        fail(`P${player} turns can only place ${getCustomMoveOrderPlayerToken(player)} stones`);
-      }
       actions.push(action);
       if (actions.length > CUSTOM_MOVE_ORDER_MAX_ACTIONS_PER_TURN) {
         fail(`Turns can include at most ${CUSTOM_MOVE_ORDER_MAX_ACTIONS_PER_TURN} actions`);
@@ -10745,6 +10742,24 @@ function finishSubmove(state) {
   }
 }
 
+function getPlacementLogSubject(state, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const actor = normalisePlayerNumber(state?.turnPlayer, state);
+  if (actor === safeOwner) {
+    return `Player ${safeOwner} placed`;
+  }
+  return `Player ${actor} placed Player ${safeOwner}'s stone`;
+}
+
+function getEgyptianRemovalPromptText(state) {
+  if (!hasEgyptianRemovalPhase(state)) {
+    return "";
+  }
+  const owner = state.egyptianRemoval.owner;
+  const remaining = state.egyptianRemoval.remaining;
+  return `Egyptian: remove ${remaining} stone${remaining === 1 ? "" : "s"} from Player ${owner} (not the one just placed)`;
+}
+
 function placeTurnTile(state, hex, owner, options = {}) {
   const forceEcho = Boolean(options.forceEcho);
   const forceRiftBloom = Boolean(options.forceRiftBloom);
@@ -10772,7 +10787,7 @@ function placeTurnTile(state, hex, owner, options = {}) {
   placeStone(state, hex, owner, "stone", usesArmoryMode(state) ? { pieceType: armoryPieceType } : {});
   const armoryAbilityMessage = applyArmoryPlacementAbility(state, state.lastPlacement, owner, armoryPieceType);
   const capResolution = enforceStoneCapAfterPlacement(state, owner, {
-    interactiveEgyptian: hasMode(state, "egyptian") && owner === state.turnPlayer
+    interactiveEgyptian: hasMode(state, "egyptian")
   });
 
   const bagelMessages = applyEverythingBagelPlacementEffects(state, state.lastPlacement, owner);
@@ -10803,16 +10818,17 @@ function placeTurnTile(state, hex, owner, options = {}) {
     powderMessage
   ].filter(Boolean);
   const logSuffix = extraMessages.length > 0 ? ` ${extraMessages.join(" ")}` : "";
+  const placementLead = getPlacementLogSubject(state, owner);
 
   if (capResolution.needsChoice) {
     return {
-      log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix} Egyptian: choose ${state.egyptianRemoval?.remaining || 1} stone${(state.egyptianRemoval?.remaining || 1) === 1 ? "" : "s"} to remove (not the stone you just placed).`,
+      log: `${placementLead} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix} ${getEgyptianRemovalPromptText(state)}.`,
       needsEgyptianChoice: true
     };
   }
 
   return {
-    log: `Player ${owner} placed at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix}`,
+    log: `${placementLead} at (${state.lastPlacement.q}, ${state.lastPlacement.r}).${logSuffix}`,
     needsEgyptianChoice: false
   };
 }
@@ -12020,7 +12036,7 @@ function clickPlacement(hex) {
 
       finishSubmove(state);
     } else {
-      pushLog(`Egyptian: remove ${state.egyptianRemoval.remaining} more stone${state.egyptianRemoval.remaining === 1 ? "" : "s"} (not the stone just placed).`);
+      pushLog(getEgyptianRemovalPromptText(state));
     }
 
     updateStatus();
@@ -12755,9 +12771,7 @@ function updateStatus() {
   if (isBrowsingHistory()) {
     ui.subturnText.textContent = "Timeline view: browsing previous board states (Back/Forward).";
   } else if (hasEgyptianRemovalPhase(state)) {
-    const owner = state.egyptianRemoval.owner;
-    const remaining = state.egyptianRemoval.remaining;
-    ui.subturnText.textContent = `Egyptian: Player ${owner} choose ${remaining} stone${remaining === 1 ? "" : "s"} to remove (not the one just placed)`;
+    ui.subturnText.textContent = getEgyptianRemovalPromptText(state);
   } else if (hasChaosPendingVote(state)) {
     const pending = ensureChaosState(state)?.pendingVote;
     ui.subturnText.textContent = `Rule Vote: Player ${pending?.chooser || state.turnPlayer} choose one of ${pending?.choices?.length || 3} rules`;
