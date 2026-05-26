@@ -54,12 +54,12 @@
             </div>
             <label id="customMoveOrderField" class="small secretRuleField customMoveOrderField" for="customMoveOrderInput">
               Move order
-              <textarea id="customMoveOrderInput" rows="2" spellcheck="false" aria-label="Custom move order" placeholder="o: od, ∞(x: xxd, o: ood)"></textarea>
+              <textarea id="customMoveOrderInput" rows="2" spellcheck="false" aria-label="Custom move order" placeholder="x: xd, ∞(o: ood, x: xxd)"></textarea>
             </label>
             <div class="small" id="customMoveOrderSummaryText">Default move order</div>
             <button id="customMoveOrderGuideBtn" type="button" class="customMoveOrderGuideButton" aria-expanded="false" aria-controls="customMoveOrderGuidePanel">Show move order guide</button>
             <div id="customMoveOrderGuidePanel" class="small customMoveOrderGuideText" hidden>
-              Guide: o/x or 1-4 choose the acting player. Actions are o, x, 3, 4 for stones, d for duck, and k or kd for king duck. Use 3(...) for finite repeats and inf(...) or ∞(...) for the repeating tail. Powder Cascade, Bed Siege, and Foundry War ignore move order.
+              Guide: x is the first player, o is the next player, % is Player 3, and &amp; is Player 4. Actions use x/o/%/&amp; for stones, d for duck, and k or kd for king duck. Use 3(...) for finite repeats and inf(...) or ∞(...) for the repeating tail. Powder Cascade, Bed Siege, and Foundry War ignore move order.
             </div>
           </div>
           <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">Opening 1 | then 2 per turn | connect 6</div>

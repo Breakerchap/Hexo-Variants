@@ -4452,6 +4452,8 @@ function normaliseCustomMoveOrderPlayerLabel(label, playerCount, startingPlayer 
   const value = String(label || "").trim().toLowerCase();
   if (value === "o") return aliases.o;
   if (value === "x") return aliases.x;
+  if (value === "%") return safePlayerCount >= 3 ? 3 : 0;
+  if (value === "&") return safePlayerCount >= 4 ? 4 : 0;
   const match = /^p?([1-4])$/.exec(value);
   if (!match) return 0;
   const player = Number(match[1]);
@@ -4460,9 +4462,10 @@ function normaliseCustomMoveOrderPlayerLabel(label, playerCount, startingPlayer 
 
 function getCustomMoveOrderPlayerToken(player) {
   const safePlayer = Math.max(1, Math.min(MAX_PLAYER_COUNT, Math.trunc(Number(player) || 1)));
-  if (safePlayer === 1) return "o";
-  if (safePlayer === 2) return "x";
-  return String(safePlayer);
+  if (safePlayer === 1) return "x";
+  if (safePlayer === 2) return "o";
+  if (safePlayer === 3) return "%";
+  return "&";
 }
 
 function getCustomMoveOrderAliasTokenForPlayer(player, playerCount, startingPlayer = 1) {
@@ -4475,7 +4478,7 @@ function getCustomMoveOrderAliasTokenForPlayer(player, playerCount, startingPlay
   if (safePlayer === aliases.o) {
     return "o";
   }
-  return String(safePlayer);
+  return getCustomMoveOrderPlayerToken(safePlayer);
 }
 
 function customMoveOrderStoneOwnerFromSymbol(symbol, playerCount, startingPlayer = 1) {
@@ -4484,6 +4487,8 @@ function customMoveOrderStoneOwnerFromSymbol(symbol, playerCount, startingPlayer
   const value = String(symbol || "").trim().toLowerCase();
   if (value === "o") return aliases.o;
   if (value === "x") return aliases.x;
+  if (value === "%") return safePlayerCount >= 3 ? 3 : 0;
+  if (value === "&") return safePlayerCount >= 4 ? 4 : 0;
   if (/^[1-4]$/.test(value)) return Number(value);
   return 0;
 }
@@ -4552,7 +4557,7 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
   function parseTurn() {
     skipWhitespace();
     const labelStart = index;
-    while (index < syntax.length && /[A-Za-z0-9]/.test(syntax[index])) {
+    while (index < syntax.length && /[A-Za-z0-9%&]/.test(syntax[index])) {
       index += 1;
     }
     const label = syntax.slice(labelStart, index);
