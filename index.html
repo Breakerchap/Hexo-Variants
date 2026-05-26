@@ -68,6 +68,40 @@
               <strong>Note:</strong>
               Powder Cascade, Bed Siege, and Foundry War ignore move order.
             </div>
+            <div class="shapeRuleControls">
+              <div class="shapeRuleHeader">
+                <button id="shapeRulePanelBtn" type="button" class="secondaryButton" aria-expanded="false" aria-controls="shapeRulePanel">Shape Rules</button>
+                <div id="shapeRuleSummaryText" class="small shapeRuleSummaryText">No custom shape rules.</div>
+              </div>
+              <div id="shapeRulePanel" class="shapeRulePanel" hidden>
+                <div class="grid2 secretRuleGrid">
+                  <label class="small secretRuleField" for="shapeRuleOutcomeSelect">
+                    Shape result
+                    <select id="shapeRuleOutcomeSelect" aria-label="Shape outcome">
+                      <option value="win">Win</option>
+                      <option value="loss">Loss</option>
+                    </select>
+                  </label>
+                  <label class="small secretRuleField" for="shapeRuleOwnerSelect">
+                    Applies to
+                    <select id="shapeRuleOwnerSelect" aria-label="Shape owner">
+                      <option value="0">All players</option>
+                      <option value="1">Player 1</option>
+                      <option value="2">Player 2</option>
+                      <option value="3">Player 3</option>
+                      <option value="4">Player 4</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="controls shapeRuleButtonRow">
+                  <button id="shapeRulePaintBtn" type="button" class="secondaryButton" aria-pressed="false">Paint on board</button>
+                  <button id="shapeRuleSaveBtn" type="button">Save shape</button>
+                  <button id="shapeRuleClearBtn" type="button">Clear draft</button>
+                </div>
+                <div id="shapeRuleDraftText" class="small shapeRuleDraftText">Pick a supported board, then paint grey cells on the board.</div>
+                <div id="shapeRuleList" class="shapeRuleList" aria-live="polite"></div>
+              </div>
+            </div>
           </div>
           <div class="small" id="secretRuleSummaryText" style="margin-top: 6px;">Opening 1 | then 2 per turn | connect 6</div>
         </div>
@@ -382,6 +416,7 @@
   <script src="./perf-helpers.js"></script>
   <script src="./timer-helpers.js"></script>
   <script src="./chaos_rules.js"></script>
+  <script src="./shape-pattern-helpers.js"></script>
   <script src="./game.js"></script>
 </body>
 </html>
