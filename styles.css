@@ -21,6 +21,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -302,8 +306,10 @@ body::after {
 .controls button,
 .controls input,
 .controls select,
+.controls textarea,
 .grid2 input,
 .grid2 select,
+#customMoveOrderInput,
 #armoryControls select,
 #armoryControls button,
 #bedSiegeControls button,
@@ -675,6 +681,7 @@ select:focus-visible,
 #placementsPerTurnInput,
 #openingPlacementsInput,
 #winLengthInput,
+#customMoveOrderInput,
 #riftBloomCoverageInput,
 #riftBloomDurationInput {
   background: rgba(255, 255, 255, 0.06);
@@ -710,6 +717,7 @@ select:focus-visible,
 #placementsPerTurnInput:focus,
 #openingPlacementsInput:focus,
 #winLengthInput:focus,
+#customMoveOrderInput:focus,
 #riftBloomCoverageInput:focus,
 #riftBloomDurationInput:focus {
   border-color: rgba(109, 198, 255, 0.62);
@@ -724,6 +732,8 @@ select:focus-visible,
 
 .devRuleControls {
   margin-top: 8px;
+  display: grid;
+  gap: 8px;
 }
 
 .devRuleControls .secretRuleField {
@@ -734,6 +744,39 @@ select:focus-visible,
   display: grid;
   gap: 5px;
   color: var(--muted);
+}
+
+.customMoveOrderField textarea {
+  line-height: 1.35;
+  resize: vertical;
+  min-height: 44px;
+}
+
+.customMoveOrderGuideButton {
+  justify-self: start;
+  appearance: none;
+  border: 1px solid rgba(109, 198, 255, 0.26);
+  border-radius: 8px;
+  background: rgba(109, 198, 255, 0.1);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.customMoveOrderGuideButton:hover {
+  background: rgba(109, 198, 255, 0.16);
+  border-color: rgba(109, 198, 255, 0.4);
+}
+
+.customMoveOrderGuideButton:focus-visible {
+  outline: 2px solid rgba(109, 198, 255, 0.78);
+  outline-offset: 2px;
+}
+
+.customMoveOrderGuideText {
+  margin-top: 4px;
 }
 
 .modePickerGrid {

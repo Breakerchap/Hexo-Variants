@@ -240,7 +240,11 @@ function makeSandbox() {
     "egyptianCapSummaryText",
     "secretRuleControls",
     "placementsPerTurnInput",
+    "openingPlacementsInput",
     "winLengthInput",
+    "chaosVoteIntervalInput",
+    "customMoveOrderInput",
+    "customMoveOrderSummaryText",
     "secretRuleSummaryText",
     "chaosControls",
     "chaosVoteText",
@@ -287,7 +291,9 @@ function makeSandbox() {
   document.getElementById("timerEnabledInput").checked = true;
   document.getElementById("egyptianCapInput").value = "12";
   document.getElementById("placementsPerTurnInput").value = "2";
+  document.getElementById("openingPlacementsInput").value = "1";
   document.getElementById("winLengthInput").value = "6";
+  document.getElementById("chaosVoteIntervalInput").value = "3";
   document.getElementById("turnOrderInput").value = "p1First";
   document.getElementById("boardClockP1").className = "boardClock boardClockP1";
   document.getElementById("boardClockP2").className = "boardClock boardClockP2";
@@ -1295,6 +1301,56 @@ function runChaosVoteChecks(context) {
   assert.equal(afterState.chaos.recentRuleIds.length, beforeRecent + 1, "chosen rule should be remembered");
 }
 
+function runCustomMoveOrderChecks(context) {
+  assert.equal(typeof context.parseCustomMoveOrderSyntax, "function", "expected custom move-order parser");
+  assert.equal(typeof context.clickPlacement, "function", "expected clickPlacement helper");
+
+  const parsedKingDuck = context.parseCustomMoveOrderSyntax("o: kd, inf(x: x)", 2);
+  assert.equal(parsedKingDuck.enabled, true, "kd should parse as a king-duck custom action");
+  assert.equal(parsedKingDuck.prefix[0].actions.length, 1, "kd should be one action, not king duck plus duck");
+  assert.equal(parsedKingDuck.prefix[0].actions[0].birdKind, "kingDuck", "kd should target the king duck");
+
+  const parsedExample = context.parseCustomMoveOrderSyntax("o: o, x: xx, 3(o: do, x: dx), inf(o: koo, x: kxx)", 2);
+  assert.equal(parsedExample.enabled, true, "user-facing custom order example should parse");
+  assert.equal(parsedExample.prefix.length, 8, "finite repeats should expand into setup turns");
+  assert.equal(parsedExample.loop.length, 2, "infinite group should become the repeating tail");
+  assert.equal(parsedExample.loop[0].actions[0].birdKind, "kingDuck", "k should still work for king duck");
+
+  const game = context.HexTicTacToeInternals.game;
+  const input = context.document.getElementById("customMoveOrderInput");
+  game.secretModesUnlocked = true;
+
+  input.value = "o: od, inf(x: xx, o: oo)";
+  context.window.newGame(["echo"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  assert.ok(input.value.includes("\u221e"), "typing inf should become the infinity symbol");
+
+  let state = game.state;
+  assert.equal(state.turnPlayer, 1, "custom order should choose the first listed player");
+  assert.equal(state.movesLeftInTurn, 2, "opening custom turn should expose both actions");
+  assert.equal(state.duckPhase, false, "first action should be a stone");
+
+  context.clickPlacement({ q: 0, r: 0 });
+  state = game.state;
+  assert.equal(state.duckPhase, true, "second action should be the custom duck move");
+  assert.equal(context.normaliseBirdAction(state.currentBirdMoveKind).birdKind, "duck", "custom d should move the duck");
+
+  const birdTarget = pickBirdTarget(context, state, buildCandidateHexes(6));
+  assert.ok(birdTarget, "expected a legal custom duck target");
+  context.clickPlacement(birdTarget);
+
+  state = game.state;
+  assert.equal(state.turnPlayer, 2, "custom order should advance into the loop after the setup turn");
+  assert.equal(state.duckPhase, false, "loop starts with stone placement");
+  assert.equal(state.birds.duck, null, "one-off custom duck should be removed once no future duck move exists");
+  assert.equal(state.birdEchoCopies.duck, null, "one-off custom duck echo should also be removed");
+
+  input.value = "inf(o: o, x: x)";
+  context.window.newGame(["powderCascade"], { enabled: false, initialSeconds: 300, incrementSeconds: 0 }, "p1First");
+  assert.equal(game.state.customMoveOrder, null, "Powder Cascade should ignore custom move order");
+
+  input.value = "";
+}
+
 function main() {
   const sandbox = makeSandbox();
   const context = vm.createContext(sandbox);
@@ -1328,6 +1384,7 @@ function main() {
     "legacy greek key should canonicalise to egyptian"
   );
   assert.equal(context.document.getElementById("egyptianCapControls").hidden, false, "legacy greek key should still reveal n controls");
+  runCustomMoveOrderChecks(context);
   runChaosVoteChecks(context);
   runBedSiegeBedBreakChecks(context);
   runBedSiegeGeneratorIncomeChecks(context);
