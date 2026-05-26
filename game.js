@@ -2,6 +2,7 @@ const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
 const perfHelpers = window.HexTicTacToePerf || {};
 const timerHelpers = window.HexTicTacToeTimer || {};
+const patternHelpers = window.HexTicTacToePatternHelpers || {};
 const chaosRuleSource = Array.isArray(window.HexTicTacToeChaosRules) ? window.HexTicTacToeChaosRules : [];
 const chaosRulesById = new Map(
   chaosRuleSource
@@ -43,6 +44,16 @@ const ui = {
   secretRuleSummaryText: document.getElementById("secretRuleSummaryText"),
   customMoveOrderInput: document.getElementById("customMoveOrderInput"),
   customMoveOrderSummaryText: document.getElementById("customMoveOrderSummaryText"),
+  shapeRulePanelBtn: document.getElementById("shapeRulePanelBtn"),
+  shapeRuleSummaryText: document.getElementById("shapeRuleSummaryText"),
+  shapeRulePanel: document.getElementById("shapeRulePanel"),
+  shapeRuleOutcomeSelect: document.getElementById("shapeRuleOutcomeSelect"),
+  shapeRuleOwnerSelect: document.getElementById("shapeRuleOwnerSelect"),
+  shapeRulePaintBtn: document.getElementById("shapeRulePaintBtn"),
+  shapeRuleSaveBtn: document.getElementById("shapeRuleSaveBtn"),
+  shapeRuleClearBtn: document.getElementById("shapeRuleClearBtn"),
+  shapeRuleDraftText: document.getElementById("shapeRuleDraftText"),
+  shapeRuleList: document.getElementById("shapeRuleList"),
   riftBloomControls: document.getElementById("riftBloomControls"),
   riftBloomCoverageInput: document.getElementById("riftBloomCoverageInput"),
   riftBloomCoverageSummaryText: document.getElementById("riftBloomCoverageSummaryText"),
@@ -2742,6 +2753,15 @@ const game = {
   chaosVoteInterval: DEFAULT_CHAOS_VOTE_INTERVAL,
   customMoveOrderSyntax: "",
   customMoveOrderGuideVisible: false,
+  customPatternRules: [],
+  shapeRulePanelVisible: false,
+  shapeRuleEditor: {
+    active: false,
+    editingRuleId: "",
+    draftCells: {},
+    outcome: "win",
+    owner: 0
+  },
   riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
   riftBloomGhostTurns: RIFT_BLOOM_GHOST_TURNS,
   riftBloomGhostTurnsTouched: false,
@@ -2908,12 +2928,17 @@ function refreshSecretRuleControls(modeKeys) {
   if (ui.customMoveOrderGuidePanel) {
     ui.customMoveOrderGuidePanel.hidden = !devActive || !game.customMoveOrderGuideVisible;
   }
+  if (ui.shapeRulePanelBtn) {
+    ui.shapeRulePanelBtn.hidden = !devActive;
+  }
   if (ui.customMoveOrderGuideBtn) {
     ui.customMoveOrderGuideBtn.textContent = game.customMoveOrderGuideVisible ? "Hide move order guide" : "Show move order guide";
     ui.customMoveOrderGuideBtn.setAttribute("aria-expanded", game.customMoveOrderGuideVisible ? "true" : "false");
   }
   if (!devActive) {
     game.customMoveOrderGuideVisible = false;
+    game.shapeRulePanelVisible = false;
+    setShapeRuleEditorActive(false);
     if (ui.customMoveOrderGuidePanel) {
       ui.customMoveOrderGuidePanel.hidden = true;
     }
@@ -2927,6 +2952,7 @@ function refreshSecretRuleControls(modeKeys) {
   }
   refreshSecretRuleSummaryFromInputs(modeKeys);
   refreshCustomMoveOrderSummaryFromInputs(modeKeys);
+  refreshShapeRulePanel();
 }
 
 function refreshRiftBloomControls(modeKeys) {
@@ -3070,6 +3096,15 @@ function getModeConfig(modeKeys) {
     config.summary += ` Rule Vote cadence: every ${settings.chaosVoteInterval} completed turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
     config.hint += ` | Rule Vote every ${settings.chaosVoteInterval} turn${settings.chaosVoteInterval === 1 ? "" : "s"}.`;
   }
+  const customPatternSummary = getCustomPatternSummaryLines(game.customPatternRules, getGridModeFromModeKeys(keys));
+  if (customPatternSummary.activeWins > 0) {
+    config.summary += ` Custom win shapes: ${customPatternSummary.activeWins} saved pattern${customPatternSummary.activeWins === 1 ? "" : "s"} replace connect ${settings.winLength} on matching boards.`;
+    config.hint += ` | ${customPatternSummary.activeWins} custom win shape${customPatternSummary.activeWins === 1 ? "" : "s"} active.`;
+  }
+  if (customPatternSummary.activeLosses > 0) {
+    config.summary += ` Custom loss shapes: ${customPatternSummary.activeLosses} saved pattern${customPatternSummary.activeLosses === 1 ? "" : "s"}.`;
+    config.hint += ` | ${customPatternSummary.activeLosses} custom loss shape${customPatternSummary.activeLosses === 1 ? "" : "s"} active.`;
+  }
   return config;
 }
 
@@ -3162,23 +3197,107 @@ function getOwnersForCell(state, cell) {
   return isValidPlayerNumber(owner, state) ? [owner] : [];
 }
 
+function getGridModeFromModeKeys(modeKeys = []) {
+  const keys = Array.isArray(modeKeys) ? modeKeys : [];
+  if (keys.includes("radialGrid")) {
+    return "radial";
+  }
+  if (keys.includes("octagonGrid")) {
+    return "octagon";
+  }
+  if (keys.includes("squareGrid")) {
+    return "square";
+  }
+  if (keys.includes("triangleGrid")) {
+    return "triangle";
+  }
+  return "hex";
+}
+
 function getGridMode(state) {
   if (!state || !Array.isArray(state.modeKeys)) {
     return "hex";
   }
-  if (state.modeKeys.includes("radialGrid")) {
-    return "radial";
+  return getGridModeFromModeKeys(state.modeKeys);
+}
+
+function supportsCustomPatternGrid(gridMode) {
+  return Boolean(patternHelpers.supportsGrid && patternHelpers.supportsGrid(gridMode));
+}
+
+function normaliseCustomPatternRuleOutcome(outcome) {
+  return String(outcome || "").toLowerCase() === "loss" ? "loss" : "win";
+}
+
+function normaliseCustomPatternRuleOwner(owner) {
+  const value = Math.trunc(Number(owner) || 0);
+  return value > 0 ? value : 0;
+}
+
+function createCustomPatternRuleId() {
+  const randomPart = Math.random().toString(36).slice(2, 8);
+  const timePart = Date.now().toString(36);
+  return `shape-${timePart}-${randomPart}`;
+}
+
+function cloneCustomPatternRules(rules) {
+  return structuredClone(Array.isArray(rules) ? rules : []);
+}
+
+function buildCustomPatternRule(definition = {}) {
+  if (!patternHelpers.buildPatternRule) {
+    return null;
   }
-  if (state.modeKeys.includes("octagonGrid")) {
-    return "octagon";
-  }
-  if (state.modeKeys.includes("squareGrid")) {
-    return "square";
-  }
-  if (state.modeKeys.includes("triangleGrid")) {
-    return "triangle";
-  }
-  return "hex";
+  const grid = Array.isArray(definition.modeKeys)
+    ? getGridModeFromModeKeys(definition.modeKeys)
+    : String(definition.grid || "");
+  const built = patternHelpers.buildPatternRule({
+    id: String(definition.id || ""),
+    grid,
+    owner: normaliseCustomPatternRuleOwner(definition.owner),
+    outcome: normaliseCustomPatternRuleOutcome(definition.outcome),
+    cells: definition.templateCells || definition.cells || []
+  });
+  return built ? {
+    ...built,
+    id: built.id || String(definition.id || createCustomPatternRuleId())
+  } : null;
+}
+
+function sanitiseCustomPatternRules(rules) {
+  return (Array.isArray(rules) ? rules : [])
+    .map((rule) => buildCustomPatternRule(rule))
+    .filter(Boolean);
+}
+
+function getCustomPatternRules(state = game.state) {
+  const source = Array.isArray(state?.customPatternRules)
+    ? state.customPatternRules
+    : game.customPatternRules;
+  return Array.isArray(source) ? source : [];
+}
+
+function getActiveCustomPatternRules(state) {
+  const gridMode = getGridMode(state);
+  return getCustomPatternRules(state).filter((rule) => (
+    rule
+    && rule.grid === gridMode
+    && Number(rule.cellCount) > 0
+    && (Number(rule.owner) === 0 || isValidPlayerNumber(rule.owner, state))
+  ));
+}
+
+function hasActiveCustomWinPatternRules(state) {
+  return getActiveCustomPatternRules(state).some((rule) => rule.outcome === "win");
+}
+
+function getCustomPatternOutcomeLabel(outcome) {
+  return normaliseCustomPatternRuleOutcome(outcome) === "loss" ? "Loss" : "Win";
+}
+
+function getCustomPatternOwnerLabel(owner) {
+  const safeOwner = normaliseCustomPatternRuleOwner(owner);
+  return safeOwner > 0 ? `Player ${safeOwner}` : "All players";
 }
 
 function usesTriangleGridMode(state) {
@@ -4172,6 +4291,7 @@ function makeInitialState(
     openingPlacementsPerTurn: appliedGameRules.openingPlacementsPerTurn,
     winLength: appliedGameRules.winLength,
     chaosVoteInterval: appliedGameRules.chaosVoteInterval,
+    customPatternRules: cloneCustomPatternRules(appliedGameRules.customPatternRules),
     customMoveOrder: null,
     riftBloomCellModulus: normaliseRiftBloomCellModulus(riftBloomCellModulus),
     riftBloomContestClaim: Boolean(riftBloomContestClaim),
@@ -4182,6 +4302,7 @@ function makeInitialState(
     movesLeftInTurn: appliedGameRules.openingPlacementsPerTurn,
     openingMoveDone: false,
     winner: 0,
+    winnerReason: null,
     round: 1,
     turnCount: 0,
     birds: {
@@ -5015,6 +5136,359 @@ function setSecretRuleInputs(settings = {}) {
   refreshSecretRuleSummaryFromInputs();
 }
 
+function setShapeRuleOutcomeInput(value) {
+  const outcome = normaliseCustomPatternRuleOutcome(value);
+  game.shapeRuleEditor.outcome = outcome;
+  if (ui.shapeRuleOutcomeSelect) {
+    ui.shapeRuleOutcomeSelect.value = outcome;
+  }
+}
+
+function getShapeRuleOutcomeFromInput() {
+  return normaliseCustomPatternRuleOutcome(ui.shapeRuleOutcomeSelect?.value ?? game.shapeRuleEditor.outcome);
+}
+
+function setShapeRuleOwnerInput(value) {
+  const owner = normaliseCustomPatternRuleOwner(value);
+  game.shapeRuleEditor.owner = owner;
+  if (ui.shapeRuleOwnerSelect) {
+    ui.shapeRuleOwnerSelect.value = String(owner);
+  }
+}
+
+function getShapeRuleOwnerFromInput() {
+  return normaliseCustomPatternRuleOwner(ui.shapeRuleOwnerSelect?.value ?? game.shapeRuleEditor.owner);
+}
+
+function getCurrentShapeRuleGridMode() {
+  return game.state ? getGridMode(game.state) : getGridModeFromModeKeys(getSelectedModeKeys());
+}
+
+function getCustomPatternGridLabel(gridMode) {
+  if (gridMode === "triangle") return "Triangle";
+  if (gridMode === "square") return "Square";
+  if (gridMode === "octagon") return "Octagon";
+  if (gridMode === "radial") return "Radial";
+  return "Hex";
+}
+
+function getShapeRuleDraftCells() {
+  return Object.values(game.shapeRuleEditor.draftCells || {});
+}
+
+function setShapeRuleDraftCells(cells = []) {
+  const draftCells = {};
+  for (const rawCell of Array.isArray(cells) ? cells : []) {
+    if (!rawCell || !Number.isFinite(Number(rawCell.q)) || !Number.isFinite(Number(rawCell.r))) {
+      continue;
+    }
+    const cell = {
+      q: Math.trunc(Number(rawCell.q)),
+      r: Math.trunc(Number(rawCell.r))
+    };
+    draftCells[keyOf(cell.q, cell.r)] = cell;
+  }
+  game.shapeRuleEditor.draftCells = draftCells;
+}
+
+function clearShapeRuleDraft(options = {}) {
+  setShapeRuleDraftCells([]);
+  if (options.keepEditingId !== true) {
+    game.shapeRuleEditor.editingRuleId = "";
+  }
+  if (options.keepPainting !== true) {
+    setShapeRuleEditorActive(false);
+  }
+  refreshShapeRulePanel();
+  render();
+}
+
+function isShapeRuleEditorActive() {
+  return Boolean(game.shapeRuleEditor.active);
+}
+
+function setShapeRuleEditorActive(active) {
+  game.shapeRuleEditor.active = Boolean(active) && game.secretModesUnlocked;
+  if (ui.shapeRulePaintBtn) {
+    ui.shapeRulePaintBtn.textContent = game.shapeRuleEditor.active ? "Stop painting" : "Paint on board";
+    ui.shapeRulePaintBtn.setAttribute("aria-pressed", game.shapeRuleEditor.active ? "true" : "false");
+  }
+  render();
+}
+
+function setShapeRulePanelVisible(visible) {
+  game.shapeRulePanelVisible = Boolean(visible) && game.secretModesUnlocked;
+  if (!game.shapeRulePanelVisible) {
+    setShapeRuleEditorActive(false);
+  }
+  refreshShapeRulePanel();
+}
+
+function getCustomPatternSummaryLines(rules = game.customPatternRules, gridMode = getCurrentShapeRuleGridMode()) {
+  const safeRules = Array.isArray(rules) ? rules : [];
+  const playerCount = game.state
+    ? getPlayerCount(game.state)
+    : getPlayerCountFromModeKeys(getSelectedModeKeys());
+  const activeRules = safeRules.filter((rule) => (
+    rule?.grid === gridMode
+    && (Number(rule.owner) === 0 || Number(rule.owner) <= playerCount)
+  ));
+  const activeWins = activeRules.filter((rule) => rule.outcome === "win").length;
+  const activeLosses = activeRules.filter((rule) => rule.outcome === "loss").length;
+  return {
+    total: safeRules.length,
+    active: activeRules.length,
+    activeWins,
+    activeLosses
+  };
+}
+
+function refreshShapeRuleSummary() {
+  if (!ui.shapeRuleSummaryText) {
+    return;
+  }
+  if (!patternHelpers.buildPatternRule || !patternHelpers.findPatternMatch) {
+    ui.shapeRuleSummaryText.textContent = "Shape rules unavailable.";
+    return;
+  }
+  const gridMode = getCurrentShapeRuleGridMode();
+  const summary = getCustomPatternSummaryLines(game.customPatternRules, gridMode);
+  if (!supportsCustomPatternGrid(gridMode)) {
+    ui.shapeRuleSummaryText.textContent = summary.total > 0
+      ? `${summary.total} saved shape rule${summary.total === 1 ? "" : "s"} | painting disabled on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`
+      : "Painting is unavailable on the radial board.";
+    return;
+  }
+  if (summary.total === 0) {
+    ui.shapeRuleSummaryText.textContent = "No custom shape rules.";
+    return;
+  }
+  const activeBits = [];
+  if (summary.activeWins > 0) {
+    activeBits.push(`${summary.activeWins} win`);
+  }
+  if (summary.activeLosses > 0) {
+    activeBits.push(`${summary.activeLosses} loss`);
+  }
+  ui.shapeRuleSummaryText.textContent = summary.active > 0
+    ? `${summary.active} active on ${getCustomPatternGridLabel(gridMode).toLowerCase()} | ${activeBits.join(", ")}`
+    : `${summary.total} saved shape rule${summary.total === 1 ? "" : "s"} | none active on ${getCustomPatternGridLabel(gridMode).toLowerCase()}`;
+}
+
+function refreshShapeRuleDraftText() {
+  if (!ui.shapeRuleDraftText) {
+    return;
+  }
+  if (!patternHelpers.buildPatternRule || !patternHelpers.findPatternMatch) {
+    ui.shapeRuleDraftText.textContent = "Shape rules are unavailable because the pattern helper did not load.";
+    return;
+  }
+  const gridMode = getCurrentShapeRuleGridMode();
+  if (!supportsCustomPatternGrid(gridMode)) {
+    ui.shapeRuleDraftText.textContent = "Radial boards do not support translated custom shape rules.";
+    return;
+  }
+  const draftCells = getShapeRuleDraftCells();
+  const ownerLabel = getCustomPatternOwnerLabel(getShapeRuleOwnerFromInput());
+  const outcomeLabel = getCustomPatternOutcomeLabel(getShapeRuleOutcomeFromInput()).toLowerCase();
+  const editText = game.shapeRuleEditor.editingRuleId ? "Editing saved shape" : "New shape";
+  if (draftCells.length === 0) {
+    ui.shapeRuleDraftText.textContent = `${editText} | ${outcomeLabel} for ${ownerLabel}. Paint grey cells on the board. Saved win shapes replace connect-${getWinLength(game.state)} whenever normal line wins are active on this grid.`;
+    return;
+  }
+  ui.shapeRuleDraftText.textContent = `${editText} | ${draftCells.length} cell${draftCells.length === 1 ? "" : "s"} | ${outcomeLabel} for ${ownerLabel} on ${getCustomPatternGridLabel(gridMode).toLowerCase()}. ${isShapeRuleEditorActive() ? "Left-click cells on the board to add or remove them." : "Toggle paint mode to keep editing."}`;
+}
+
+function syncCustomPatternRulesToState(options = {}) {
+  game.customPatternRules = sanitiseCustomPatternRules(game.customPatternRules);
+  if (game.state) {
+    if (isBrowsingHistory()) {
+      game.futureHistory = [];
+    }
+    if (options.saveHistoryEntry !== false) {
+      saveHistory();
+    }
+    game.state.customPatternRules = cloneCustomPatternRules(game.customPatternRules);
+    if (!game.state.winner) {
+      checkForWinner(game.state);
+    }
+    updateStatus();
+    render();
+    broadcastOnlineState({ intent: options.intent || "shapeRules" });
+  } else {
+    refreshShapeRuleSummary();
+    refreshShapeRuleDraftText();
+    renderShapeRuleList();
+  }
+}
+
+function saveShapeRuleDraft() {
+  const gridMode = getCurrentShapeRuleGridMode();
+  if (!supportsCustomPatternGrid(gridMode)) {
+    pushLog("Shape rules cannot be painted on the radial board.");
+    updateStatus();
+    return;
+  }
+  const builtRule = buildCustomPatternRule({
+    id: game.shapeRuleEditor.editingRuleId || createCustomPatternRuleId(),
+    grid: gridMode,
+    owner: getShapeRuleOwnerFromInput(),
+    outcome: getShapeRuleOutcomeFromInput(),
+    cells: getShapeRuleDraftCells()
+  });
+  if (!builtRule) {
+    pushLog("Paint at least one valid cell before saving a shape rule.");
+    updateStatus();
+    return;
+  }
+  const existingIndex = game.customPatternRules.findIndex((rule) => rule.id === builtRule.id);
+  if (existingIndex >= 0) {
+    game.customPatternRules.splice(existingIndex, 1, builtRule);
+  } else {
+    game.customPatternRules.push(builtRule);
+  }
+  const outcomeLabel = getCustomPatternOutcomeLabel(builtRule.outcome).toLowerCase();
+  pushLog(`Saved ${outcomeLabel} shape for ${getCustomPatternOwnerLabel(builtRule.owner)} on the ${getCustomPatternGridLabel(builtRule.grid).toLowerCase()} board.`);
+  game.shapeRuleEditor.editingRuleId = "";
+  setShapeRuleDraftCells([]);
+  setShapeRuleEditorActive(false);
+  syncCustomPatternRulesToState({ intent: "shapeRuleSaved" });
+  refreshShapeRulePanel();
+}
+
+function deleteShapeRule(ruleId) {
+  const index = game.customPatternRules.findIndex((rule) => rule.id === ruleId);
+  if (index === -1) {
+    return;
+  }
+  const [removedRule] = game.customPatternRules.splice(index, 1);
+  if (game.shapeRuleEditor.editingRuleId === ruleId) {
+    game.shapeRuleEditor.editingRuleId = "";
+    setShapeRuleDraftCells([]);
+    setShapeRuleEditorActive(false);
+  }
+  pushLog(`Deleted ${getCustomPatternOutcomeLabel(removedRule.outcome).toLowerCase()} shape for ${getCustomPatternOwnerLabel(removedRule.owner)}.`);
+  syncCustomPatternRulesToState({ intent: "shapeRuleDeleted" });
+  refreshShapeRulePanel();
+}
+
+function loadShapeRuleIntoDraft(ruleId) {
+  const rule = game.customPatternRules.find((entry) => entry.id === ruleId);
+  if (!rule) {
+    return;
+  }
+  const currentGrid = getCurrentShapeRuleGridMode();
+  if (rule.grid !== currentGrid || !supportsCustomPatternGrid(currentGrid)) {
+    pushLog(`Switch back to the ${getCustomPatternGridLabel(rule.grid).toLowerCase()} board to edit that saved shape.`);
+    updateStatus();
+    return;
+  }
+  game.shapeRuleEditor.editingRuleId = rule.id;
+  setShapeRuleOutcomeInput(rule.outcome);
+  setShapeRuleOwnerInput(rule.owner);
+  setShapeRuleDraftCells(rule.templateCells || []);
+  setShapeRulePanelVisible(true);
+  setShapeRuleEditorActive(true);
+  refreshShapeRulePanel();
+}
+
+function renderShapeRuleList() {
+  if (!ui.shapeRuleList) {
+    return;
+  }
+  ui.shapeRuleList.replaceChildren();
+  const currentGrid = getCurrentShapeRuleGridMode();
+  const playerCount = game.state
+    ? getPlayerCount(game.state)
+    : getPlayerCountFromModeKeys(getSelectedModeKeys());
+  const admin = canUseAdminControls();
+
+  for (const rule of game.customPatternRules) {
+    const card = document.createElement("div");
+    card.className = "shapeRuleCard";
+
+    const title = document.createElement("div");
+    title.className = "shapeRuleCardTitle";
+    title.textContent = `${getCustomPatternOutcomeLabel(rule.outcome)} | ${getCustomPatternOwnerLabel(rule.owner)}`;
+
+    const meta = document.createElement("div");
+    meta.className = "small shapeRuleCardMeta";
+    const gridLabel = getCustomPatternGridLabel(rule.grid).toLowerCase();
+    const ownerAvailable = Number(rule.owner) === 0 || Number(rule.owner) <= playerCount;
+    const activeLabel = rule.grid !== currentGrid
+      ? `saved for ${gridLabel}`
+      : (ownerAvailable ? "active now" : `inactive in ${playerCount}-player games`);
+    meta.textContent = `${rule.cellCount} cell${rule.cellCount === 1 ? "" : "s"} | ${gridLabel} | ${activeLabel}`;
+
+    const actions = document.createElement("div");
+    actions.className = "shapeRuleCardActions";
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "secondaryButton";
+    editBtn.textContent = "Edit";
+    editBtn.disabled = !admin || rule.grid !== currentGrid || !supportsCustomPatternGrid(currentGrid);
+    editBtn.addEventListener("click", () => {
+      loadShapeRuleIntoDraft(rule.id);
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "secondaryButton";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.disabled = !admin;
+    deleteBtn.addEventListener("click", () => {
+      deleteShapeRule(rule.id);
+    });
+
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.appendChild(actions);
+    ui.shapeRuleList.appendChild(card);
+  }
+}
+
+function refreshShapeRulePanel() {
+  if (ui.shapeRulePanelBtn) {
+    ui.shapeRulePanelBtn.textContent = game.shapeRulePanelVisible ? "Hide Shape Rules" : "Shape Rules";
+    ui.shapeRulePanelBtn.setAttribute("aria-expanded", game.shapeRulePanelVisible ? "true" : "false");
+  }
+  if (ui.shapeRulePanel) {
+    ui.shapeRulePanel.hidden = !game.secretModesUnlocked || !game.shapeRulePanelVisible;
+  }
+  if (!game.secretModesUnlocked) {
+    game.shapeRulePanelVisible = false;
+  }
+  refreshShapeRuleSummary();
+  refreshShapeRuleDraftText();
+  renderShapeRuleList();
+}
+
+function toggleShapeRuleDraftCell(hex) {
+  if (!canUseAdminControls() || !isShapeRuleEditorActive()) {
+    return false;
+  }
+  const gridMode = getCurrentShapeRuleGridMode();
+  if (!supportsCustomPatternGrid(gridMode) || !hex || !isCellSupportedForMode(game.state, hex)) {
+    return false;
+  }
+  const cell = {
+    q: Math.trunc(Number(hex.q) || 0),
+    r: Math.trunc(Number(hex.r) || 0)
+  };
+  const key = keyOf(cell.q, cell.r);
+  if (game.shapeRuleEditor.draftCells[key]) {
+    delete game.shapeRuleEditor.draftCells[key];
+  } else {
+    game.shapeRuleEditor.draftCells[key] = cell;
+  }
+  refreshShapeRulePanel();
+  render();
+  return true;
+}
+
 function refreshSecretRuleSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
   if (!ui.secretRuleSummaryText) {
     return;
@@ -5023,10 +5497,20 @@ function refreshSecretRuleSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
   const openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   const winLength = getWinLengthFromInputs();
   const interval = getChaosVoteIntervalFromInputs();
+  const previewGrid = getGridModeFromModeKeys(modeKeys);
+  const customSummary = getCustomPatternSummaryLines(game.customPatternRules, previewGrid);
   const voteText = normaliseModeKeys(modeKeys).includes("chaosVote")
     ? ` | vote every ${interval}`
     : "";
-  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}${voteText}`;
+  const shapeBits = [];
+  if (customSummary.activeWins > 0) {
+    shapeBits.push(`${customSummary.activeWins} custom win${customSummary.activeWins === 1 ? "" : "s"}`);
+  }
+  if (customSummary.activeLosses > 0) {
+    shapeBits.push(`${customSummary.activeLosses} custom loss${customSummary.activeLosses === 1 ? "" : "es"}`);
+  }
+  const shapeText = shapeBits.length > 0 ? ` | ${shapeBits.join(", ")}` : "";
+  ui.secretRuleSummaryText.textContent = `Opening ${openingPlacementsPerTurn} | then ${placementsPerTurn} per turn | connect ${winLength}${voteText}${shapeText}`;
 }
 
 function getGameRuleSettings(settings = {}) {
@@ -5035,6 +5519,7 @@ function getGameRuleSettings(settings = {}) {
     openingPlacementsPerTurn: normaliseOpeningPlacementsPerTurn(settings.openingPlacementsPerTurn ?? game.openingPlacementsPerTurn),
     winLength: normaliseWinLength(settings.winLength ?? game.winLength),
     chaosVoteInterval: normaliseChaosVoteInterval(settings.chaosVoteInterval ?? game.chaosVoteInterval),
+    customPatternRules: sanitiseCustomPatternRules(settings.customPatternRules ?? game.customPatternRules),
     customMoveOrder: settings.customMoveOrder?.enabled
       ? {
         enabled: true,
@@ -5552,6 +6037,24 @@ function updateOnlineControls() {
   if (ui.winLengthInput) {
     ui.winLengthInput.disabled = inRoom && !admin;
   }
+  if (ui.shapeRulePanelBtn) {
+    ui.shapeRulePanelBtn.disabled = inRoom && !admin;
+  }
+  if (ui.shapeRuleOutcomeSelect) {
+    ui.shapeRuleOutcomeSelect.disabled = inRoom && !admin;
+  }
+  if (ui.shapeRuleOwnerSelect) {
+    ui.shapeRuleOwnerSelect.disabled = inRoom && !admin;
+  }
+  if (ui.shapeRulePaintBtn) {
+    ui.shapeRulePaintBtn.disabled = inRoom && !admin;
+  }
+  if (ui.shapeRuleSaveBtn) {
+    ui.shapeRuleSaveBtn.disabled = inRoom && !admin;
+  }
+  if (ui.shapeRuleClearBtn) {
+    ui.shapeRuleClearBtn.disabled = inRoom && !admin;
+  }
   if (ui.riftBloomCoverageInput) {
     ui.riftBloomCoverageInput.disabled = inRoom && !admin;
   }
@@ -5576,6 +6079,10 @@ function updateOnlineControls() {
   for (const button of ui.modePicker.querySelectorAll(".modeToggle")) {
     button.disabled = inRoom && !admin;
   }
+  if (!admin && isShapeRuleEditorActive()) {
+    setShapeRuleEditorActive(false);
+  }
+  renderShapeRuleList();
 }
 
 function updateOnlineStatusUI() {
@@ -5851,6 +6358,8 @@ function applyRemoteState(state, revision) {
   game.placementsPerTurn = getPlacementsPerTurn(game.state);
   game.openingPlacementsPerTurn = getOpeningPlacementsPerTurn(game.state);
   game.winLength = getWinLength(game.state);
+  game.customPatternRules = sanitiseCustomPatternRules(game.state.customPatternRules);
+  game.state.customPatternRules = cloneCustomPatternRules(game.customPatternRules);
   setTimerInputs(game.timerConfig);
   setEgyptianCapInput(game.egyptianStoneCap);
   setSecretRuleInputs({
@@ -5859,6 +6368,7 @@ function applyRemoteState(state, revision) {
     winLength: game.winLength
   });
   setSelectedModeKeys(game.state.modeKeys);
+  refreshShapeRulePanel();
   updateStatus();
   syncClockTickerFromState();
   render();
@@ -6036,6 +6546,8 @@ function restoreHistorySnapshot(snapshot) {
     return;
   }
   game.state = cloneState(snapshot);
+  game.customPatternRules = sanitiseCustomPatternRules(game.state.customPatternRules);
+  game.state.customPatternRules = cloneCustomPatternRules(game.customPatternRules);
   ensureClockState(game.state);
   updateStatus();
   syncClockTickerFromState();
@@ -8594,6 +9106,100 @@ function auditWholeBoardForWinner(state) {
   return 0;
 }
 
+function buildOccupiedCellsByOwner(state) {
+  const byOwner = createPlayerMap(getPlayerCount(state), () => ({
+    cells: [],
+    keySet: new Set()
+  }));
+
+  for (const [key, cell] of Object.entries(state.cells)) {
+    const owner = Math.trunc(Number(cell?.owner) || 0);
+    if (!isValidPlayerNumber(owner, state) || cell?.kind !== "stone") {
+      continue;
+    }
+    const hex = parseKey(key);
+    byOwner[owner].cells.push(hex);
+    byOwner[owner].keySet.add(keyOf(hex.q, hex.r));
+  }
+
+  return byOwner;
+}
+
+function getCustomPatternOwnerPriority(state) {
+  const players = getPlayerNumbers(state);
+  const current = normalisePlayerNumber(state?.turnPlayer || 1, state);
+  return [current, ...players.filter((player) => player !== current)];
+}
+
+function findCustomPatternOutcome(state) {
+  if (!patternHelpers.findPatternMatch) {
+    return null;
+  }
+  const activeRules = getActiveCustomPatternRules(state);
+  if (activeRules.length === 0) {
+    return null;
+  }
+
+  const occupiedByOwner = buildOccupiedCellsByOwner(state);
+  const ownerPriority = getCustomPatternOwnerPriority(state);
+
+  for (const outcome of ["loss", "win"]) {
+    for (const owner of ownerPriority) {
+      const occupied = occupiedByOwner[owner];
+      if (!occupied || occupied.cells.length === 0) {
+        continue;
+      }
+      for (const rule of activeRules) {
+        if (rule.outcome !== outcome) {
+          continue;
+        }
+        if (Number(rule.owner) > 0 && Number(rule.owner) !== owner) {
+          continue;
+        }
+        if (occupied.cells.length < rule.cellCount) {
+          continue;
+        }
+        const match = patternHelpers.findPatternMatch(rule, occupied.cells, occupied.keySet);
+        if (match) {
+          return { rule, owner, outcome, match };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveCustomPatternWinner(state, outcome) {
+  if (!outcome) {
+    return 0;
+  }
+  if (outcome.outcome === "win") {
+    return outcome.owner;
+  }
+  const remainingPlayers = getPlayerNumbers(state).filter((player) => player !== outcome.owner);
+  if (remainingPlayers.length === 0) {
+    return 0;
+  }
+  if (remainingPlayers.includes(state.turnPlayer) && state.turnPlayer !== outcome.owner) {
+    return state.turnPlayer;
+  }
+  return remainingPlayers[0];
+}
+
+function getCustomPatternWinnerMessage(state, outcome, winner) {
+  if (!outcome || !winner) {
+    return "";
+  }
+  const ownerLabel = `Player ${outcome.owner}`;
+  const winnerLabel = `Player ${winner}`;
+  const cellText = `${outcome.rule.cellCount} cell${outcome.rule.cellCount === 1 ? "" : "s"}`;
+  if (outcome.outcome === "loss") {
+    return `${ownerLabel} completed a custom loss shape (${cellText}). ${winnerLabel} wins.`;
+  }
+  return `${ownerLabel} completed a custom win shape (${cellText}) and wins.`;
+}
+
 function queueEcho(state, echo) {
   if (!hasMode(state, "echo") && !echo?.force) {
     return;
@@ -9815,24 +10421,47 @@ function resolveArmoryTurnEnd(state) {
 }
 
 function checkForWinner(state) {
-  const winner = usesFactoryMode(state)
-    ? getFactoryWinner(state)
-    : (usesBedSiegeMode(state)
-      ? getBedSiegeWinner(state)
-      : (usesPowderMode(state)
-        ? getPowderWinner(state)
-        : (usesPigMode(state) ? getPigTrapWinner(state) : auditWholeBoardForWinner(state))));
+  const customOutcome = findCustomPatternOutcome(state);
+  const customWinner = resolveCustomPatternWinner(state, customOutcome);
+  const shouldUseStandardLineWins = !hasActiveCustomWinPatternRules(state);
+  const winner = customWinner
+    ? customWinner
+    : (usesFactoryMode(state)
+      ? getFactoryWinner(state)
+      : (usesBedSiegeMode(state)
+        ? getBedSiegeWinner(state)
+        : (usesPowderMode(state)
+          ? getPowderWinner(state)
+          : (usesPigMode(state) ? getPigTrapWinner(state) : (shouldUseStandardLineWins ? auditWholeBoardForWinner(state) : 0)))));
   if (winner && !state.winner) {
     state.winner = winner;
-    pushLog(usesFactoryMode(state)
-      ? `Player ${winner} wins Foundry War.`
-      : (usesBedSiegeMode(state)
-        ? `Player ${winner} wins Bed Siege.`
-        : (usesPowderMode(state)
-          ? `Player ${winner} wins Powder Cascade.`
-          : (usesPigMode(state)
-            ? `Player ${winner} trapped the pig and wins.`
-            : `Player ${winner} wins.`))));
+    state.winnerReason = customWinner
+      ? {
+        type: "customPattern",
+        outcome: customOutcome.outcome,
+        matchedOwner: customOutcome.owner,
+        ruleId: customOutcome.rule.id
+      }
+      : {
+        type: usesFactoryMode(state)
+          ? "factory"
+          : (usesBedSiegeMode(state)
+            ? "bedSiege"
+            : (usesPowderMode(state)
+              ? "powder"
+              : (usesPigMode(state) ? "pig" : "line")))
+      };
+    pushLog(customWinner
+      ? getCustomPatternWinnerMessage(state, customOutcome, winner)
+      : (usesFactoryMode(state)
+        ? `Player ${winner} wins Foundry War.`
+        : (usesBedSiegeMode(state)
+          ? `Player ${winner} wins Bed Siege.`
+          : (usesPowderMode(state)
+            ? `Player ${winner} wins Powder Cascade.`
+            : (usesPigMode(state)
+              ? `Player ${winner} trapped the pig and wins.`
+              : `Player ${winner} wins.`)))));
   }
   return winner;
 }
@@ -11150,6 +11779,9 @@ function resolveFactoryTurnEnd(state, owner) {
 
 function clickPlacement(hex) {
   const state = game.state;
+  if (toggleShapeRuleDraftCell(hex)) {
+    return;
+  }
   if (isBrowsingHistory()) {
     updateStatus();
     return;
@@ -12009,7 +12641,19 @@ function updateStatus() {
   if (usesPigMode(state) && !usesBedSiegeMode(state) && !usesFactoryMode(state)) {
     ui.subturnText.textContent += " | Trap the pig";
   } else if (!usesBedSiegeMode(state) && !usesFactoryMode(state)) {
-    ui.subturnText.textContent += ` | Connect ${getWinLength(state)}`;
+    const customShapeRules = getActiveCustomPatternRules(state);
+    const activeWinShapes = customShapeRules.filter((rule) => rule.outcome === "win").length;
+    const activeLossShapes = customShapeRules.filter((rule) => rule.outcome === "loss").length;
+    if (activeWinShapes > 0) {
+      const lossText = activeLossShapes > 0
+        ? ` + ${activeLossShapes} loss`
+        : "";
+      ui.subturnText.textContent += ` | ${activeWinShapes} custom win${activeWinShapes === 1 ? "" : "s"}${lossText}`;
+    } else if (activeLossShapes > 0) {
+      ui.subturnText.textContent += ` | Connect ${getWinLength(state)} + ${activeLossShapes} loss shape${activeLossShapes === 1 ? "" : "s"}`;
+    } else {
+      ui.subturnText.textContent += ` | Connect ${getWinLength(state)}`;
+    }
   }
 
   updateClockUI();
@@ -12021,6 +12665,7 @@ function updateStatus() {
   renderFactoryPanel();
   renderEverythingBagelPanel();
   renderChaosPanel();
+  refreshShapeRulePanel();
 }
 
 function resizeCanvas() {
@@ -13554,6 +14199,45 @@ function drawOrbitPreview() {
   }
 }
 
+function drawShapeRuleDraftOverlay() {
+  if (!game.secretModesUnlocked || !game.state || (!game.shapeRulePanelVisible && !isShapeRuleEditorActive())) {
+    return;
+  }
+  const gridMode = getCurrentShapeRuleGridMode();
+  const draftCells = getShapeRuleDraftCells();
+  const canHoverPaint = (
+    isShapeRuleEditorActive()
+    && supportsCustomPatternGrid(gridMode)
+    && isCellSupportedForMode(game.state, game.hoverHex)
+  );
+  if (draftCells.length === 0 && !canHoverPaint) {
+    return;
+  }
+
+  const size = currentHexSize();
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const draftKeySet = new Set(draftCells.map((cell) => keyOf(cell.q, cell.r)));
+
+  for (const hex of draftCells) {
+    const world = boardCellToPixel(hex, size, game.state);
+    const screen = worldToScreen(world.x, world.y);
+    if (screen.x < -size * 2 || screen.y < -size * 2 || screen.x > width + size * 2 || screen.y > height + size * 2) {
+      continue;
+    }
+    drawBoardShape(screen.x, screen.y, size * 0.82, "rgba(178, 184, 196, 0.34)", "rgba(226, 232, 242, 0.68)", 1.8, hex);
+  }
+
+  if (canHoverPaint) {
+    const hoverKey = keyOf(game.hoverHex.q, game.hoverHex.r);
+    if (!draftKeySet.has(hoverKey)) {
+      const world = boardCellToPixel(game.hoverHex, size, game.state);
+      const screen = worldToScreen(world.x, world.y);
+      drawBoardShape(screen.x, screen.y, size * 0.82, "rgba(178, 184, 196, 0.12)", "rgba(226, 232, 242, 0.40)", 1.4, game.hoverHex);
+    }
+  }
+}
+
 function drawKingDuckRadius() {
   if (!usesPanicBirdMode(game.state) || usesExtremeLdmMode(game.state)) {
     return;
@@ -14326,6 +15010,9 @@ function drawWinnerLineHint() {
   if (usesBedSiegeMode(game.state) || usesFactoryMode(game.state) || usesPigMode(game.state)) {
     return;
   }
+  if (game.state?.winnerReason?.type === "customPattern" || hasActiveCustomWinPatternRules(game.state)) {
+    return;
+  }
   const size = currentHexSize();
   if (drawPowderWinnerLine(size)) {
     return;
@@ -14461,6 +15148,7 @@ function renderNow() {
   drawOrbitPreview();
   drawKingDuckRadius();
   drawPieces();
+  drawShapeRuleDraftOverlay();
   drawWinnerLineHint();
 
   ui.zoomText.textContent = `Zoom ${game.viewport.zoom.toFixed(2)}x`;
@@ -14502,6 +15190,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
   game.openingPlacementsPerTurn = getOpeningPlacementsPerTurnFromInputs();
   game.winLength = getWinLengthFromInputs();
   game.chaosVoteInterval = getChaosVoteIntervalFromInputs();
+  game.customPatternRules = sanitiseCustomPatternRules(game.customPatternRules);
   game.riftBloomCellModulus = getRiftBloomCellModulusFromInputs();
   game.riftBloomContestClaim = getRiftBloomContestClaimFromInputs();
   game.riftBloomGhostTurns = getRiftBloomGhostTurnsFromInputs();
@@ -14526,6 +15215,7 @@ function newGame(modeKeys = getSelectedModeKeys(), timerConfig = game.timerConfi
     openingPlacementsPerTurn: game.openingPlacementsPerTurn,
     winLength: game.winLength,
     chaosVoteInterval: game.chaosVoteInterval,
+    customPatternRules: game.customPatternRules,
     customMoveOrder: customMoveOrderConfig
   }, game.riftBloomCellModulus, game.riftBloomContestClaim, game.riftBloomGhostTurns, game.riftBloomTieGoesToCreator);
   game.factoryAnimationDisabled = false;
@@ -14977,6 +15667,45 @@ ui.customMoveOrderGuideBtn?.addEventListener("click", () => {
   game.customMoveOrderGuideVisible = !game.customMoveOrderGuideVisible;
   refreshSecretRuleControls(getSelectedModeKeys());
 });
+ui.shapeRulePanelBtn?.addEventListener("click", () => {
+  if (!canUseAdminControls()) {
+    return;
+  }
+  setShapeRulePanelVisible(!game.shapeRulePanelVisible);
+});
+ui.shapeRuleOutcomeSelect?.addEventListener("change", () => {
+  setShapeRuleOutcomeInput(getShapeRuleOutcomeFromInput());
+  refreshShapeRuleDraftText();
+});
+ui.shapeRuleOwnerSelect?.addEventListener("change", () => {
+  setShapeRuleOwnerInput(getShapeRuleOwnerFromInput());
+  refreshShapeRuleDraftText();
+});
+ui.shapeRulePaintBtn?.addEventListener("click", () => {
+  if (!canUseAdminControls()) {
+    return;
+  }
+  if (!supportsCustomPatternGrid(getCurrentShapeRuleGridMode())) {
+    pushLog("Shape painting is disabled on the radial board.");
+    updateStatus();
+    return;
+  }
+  setShapeRulePanelVisible(true);
+  setShapeRuleEditorActive(!isShapeRuleEditorActive());
+  refreshShapeRuleDraftText();
+});
+ui.shapeRuleSaveBtn?.addEventListener("click", () => {
+  if (!canUseAdminControls()) {
+    return;
+  }
+  saveShapeRuleDraft();
+});
+ui.shapeRuleClearBtn?.addEventListener("click", () => {
+  if (!canUseAdminControls()) {
+    return;
+  }
+  clearShapeRuleDraft();
+});
 ui.secretModesBtn?.addEventListener("click", () => {
   setSecretModesUnlocked(!game.secretModesUnlocked);
 });
@@ -15013,12 +15742,15 @@ setSecretRuleInputs({
   openingPlacementsPerTurn: game.openingPlacementsPerTurn,
   winLength: game.winLength
 });
+setShapeRuleOutcomeInput(game.shapeRuleEditor.outcome);
+setShapeRuleOwnerInput(game.shapeRuleEditor.owner);
 getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
 updatePerformanceModeUI();
 updateModeHintsUI();
 setOptionsMenuCollapsed(false);
 setSelectedModeKeys([]);
+refreshShapeRulePanel();
 newGame([], game.timerConfig);
 resizeCanvas();
 

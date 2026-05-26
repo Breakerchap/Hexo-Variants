@@ -779,6 +779,129 @@ select:focus-visible,
   margin-top: 4px;
 }
 
+.shapeRuleControls {
+  margin-top: 4px;
+  display: grid;
+  gap: 8px;
+}
+
+.shapeRuleHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shapeRuleSummaryText,
+.shapeRuleDraftText {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.shapeRulePanel {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.shapeRulePanel[hidden] {
+  display: none;
+}
+
+.shapeRuleButtonRow {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.shapeRulePanel select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+    rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(109, 198, 255, 0.28);
+  border-radius: 10px;
+  min-height: 42px;
+  padding: 10px 38px 10px 12px;
+  color: var(--text);
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(227, 239, 255, 0.85) 50%),
+    linear-gradient(135deg, rgba(227, 239, 255, 0.85) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% - 1px),
+    calc(100% - 12px) calc(50% - 1px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.shapeRulePanel select:hover {
+  border-color: rgba(109, 198, 255, 0.44);
+  background-color: rgba(255, 255, 255, 0.09);
+}
+
+.shapeRulePanel select:focus-visible {
+  outline: 2px solid rgba(109, 198, 255, 0.86);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(109, 198, 255, 0.16);
+}
+
+.shapeRulePanel select option {
+  background: #2a2f36;
+  color: var(--text);
+}
+
+.shapeRuleList {
+  display: grid;
+  gap: 8px;
+}
+
+.shapeRuleList:empty::before {
+  content: "No saved shape rules yet.";
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.shapeRuleCard {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.shapeRuleCardTitle {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.shapeRuleCardMeta {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.shapeRuleCardActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.shapeRuleCardActions .secondaryButton {
+  border-color: rgba(109, 198, 255, 0.26);
+  background: rgba(109, 198, 255, 0.10);
+}
+
+.shapeRuleCardActions .secondaryButton:hover {
+  background: rgba(109, 198, 255, 0.16);
+  border-color: rgba(109, 198, 255, 0.4);
+}
+
+.shapeRuleCard button {
+  min-height: 38px;
+}
+
 .modePickerGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1403,6 +1526,11 @@ canvas:focus-visible {
   }
 
   .timerControls {
+    grid-template-columns: 1fr;
+  }
+
+  .shapeRuleButtonRow,
+  .shapeRuleCardActions {
     grid-template-columns: 1fr;
   }
 
