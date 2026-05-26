@@ -31,6 +31,11 @@ const ui = {
   egyptianCapSummaryText: document.getElementById("egyptianCapSummaryText"),
   secretRuleControls: document.getElementById("secretRuleControls"),
   devRuleControls: document.getElementById("devRuleControls"),
+  openingPlacementsField: document.getElementById("openingPlacementsField"),
+  chaosVoteIntervalField: document.getElementById("chaosVoteIntervalField"),
+  customMoveOrderField: document.getElementById("customMoveOrderField"),
+  customMoveOrderGuideBtn: document.getElementById("customMoveOrderGuideBtn"),
+  customMoveOrderGuidePanel: document.getElementById("customMoveOrderGuidePanel"),
   placementsPerTurnInput: document.getElementById("placementsPerTurnInput"),
   openingPlacementsInput: document.getElementById("openingPlacementsInput"),
   chaosVoteIntervalInput: document.getElementById("chaosVoteIntervalInput"),
@@ -2736,6 +2741,7 @@ const game = {
   winLength: DEFAULT_WIN_LENGTH,
   chaosVoteInterval: DEFAULT_CHAOS_VOTE_INTERVAL,
   customMoveOrderSyntax: "",
+  customMoveOrderGuideVisible: false,
   riftBloomCellModulus: RIFT_BLOOM_CELL_MODULUS,
   riftBloomGhostTurns: RIFT_BLOOM_GHOST_TURNS,
   riftBloomGhostTurnsTouched: false,
@@ -2884,9 +2890,40 @@ function refreshSecretRuleControls(modeKeys) {
   if (!ui.secretRuleControls) {
     return;
   }
+  const normalisedModeKeys = normaliseModeKeys(modeKeys);
+  const devActive = game.secretModesUnlocked;
   ui.secretRuleControls.hidden = false;
   if (ui.devRuleControls) {
-    ui.devRuleControls.hidden = !game.secretModesUnlocked;
+    ui.devRuleControls.hidden = !devActive;
+  }
+  if (ui.openingPlacementsField) {
+    ui.openingPlacementsField.hidden = !devActive;
+  }
+  if (ui.customMoveOrderField) {
+    ui.customMoveOrderField.hidden = !devActive;
+  }
+  if (ui.customMoveOrderGuideBtn) {
+    ui.customMoveOrderGuideBtn.hidden = !devActive;
+  }
+  if (ui.customMoveOrderGuidePanel) {
+    ui.customMoveOrderGuidePanel.hidden = !devActive || !game.customMoveOrderGuideVisible;
+  }
+  if (ui.customMoveOrderGuideBtn) {
+    ui.customMoveOrderGuideBtn.textContent = game.customMoveOrderGuideVisible ? "Hide move order guide" : "Show move order guide";
+    ui.customMoveOrderGuideBtn.setAttribute("aria-expanded", game.customMoveOrderGuideVisible ? "true" : "false");
+  }
+  if (!devActive) {
+    game.customMoveOrderGuideVisible = false;
+    if (ui.customMoveOrderGuidePanel) {
+      ui.customMoveOrderGuidePanel.hidden = true;
+    }
+    if (ui.customMoveOrderGuideBtn) {
+      ui.customMoveOrderGuideBtn.textContent = "Show move order guide";
+      ui.customMoveOrderGuideBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+  if (ui.chaosVoteIntervalField) {
+    ui.chaosVoteIntervalField.hidden = !devActive || !normalisedModeKeys.includes("chaosVote");
   }
   refreshSecretRuleSummaryFromInputs(modeKeys);
   refreshCustomMoveOrderSummaryFromInputs(modeKeys);
@@ -4397,11 +4434,24 @@ function cloneCustomMoveOrderChunks(chunks) {
   }));
 }
 
-function normaliseCustomMoveOrderPlayerLabel(label, playerCount) {
+function getCustomMoveOrderAliasPlayers(playerCount, startingPlayer = 1) {
   const safePlayerCount = normalisePlayerCount(playerCount);
+  const firstPlayer = normalisePlayerNumber(startingPlayer, safePlayerCount);
+  const secondPlayer = safePlayerCount > 1
+    ? ((firstPlayer % safePlayerCount) + 1)
+    : firstPlayer;
+  return {
+    x: firstPlayer,
+    o: secondPlayer
+  };
+}
+
+function normaliseCustomMoveOrderPlayerLabel(label, playerCount, startingPlayer = 1) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const aliases = getCustomMoveOrderAliasPlayers(safePlayerCount, startingPlayer);
   const value = String(label || "").trim().toLowerCase();
-  if (value === "o") return safePlayerCount >= 1 ? 1 : 0;
-  if (value === "x") return safePlayerCount >= 2 ? 2 : 0;
+  if (value === "o") return aliases.o;
+  if (value === "x") return aliases.x;
   const match = /^p?([1-4])$/.exec(value);
   if (!match) return 0;
   const player = Number(match[1]);
@@ -4415,23 +4465,38 @@ function getCustomMoveOrderPlayerToken(player) {
   return String(safePlayer);
 }
 
-function customMoveOrderStoneOwnerFromSymbol(symbol) {
+function getCustomMoveOrderAliasTokenForPlayer(player, playerCount, startingPlayer = 1) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const safePlayer = normalisePlayerNumber(player, safePlayerCount);
+  const aliases = getCustomMoveOrderAliasPlayers(safePlayerCount, startingPlayer);
+  if (safePlayer === aliases.x) {
+    return "x";
+  }
+  if (safePlayer === aliases.o) {
+    return "o";
+  }
+  return String(safePlayer);
+}
+
+function customMoveOrderStoneOwnerFromSymbol(symbol, playerCount, startingPlayer = 1) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const aliases = getCustomMoveOrderAliasPlayers(safePlayerCount, startingPlayer);
   const value = String(symbol || "").trim().toLowerCase();
-  if (value === "o") return 1;
-  if (value === "x") return 2;
+  if (value === "o") return aliases.o;
+  if (value === "x") return aliases.x;
   if (/^[1-4]$/.test(value)) return Number(value);
   return 0;
 }
 
-function normaliseCustomMoveOrderActionSymbol(symbol, playerCount) {
+function normaliseCustomMoveOrderActionSymbol(symbol, playerCount, startingPlayer = 1) {
   const value = String(symbol || "").trim().toLowerCase();
   if (value === "d") return { type: "bird", birdKind: "duck" };
   if (value === "k" || value === "kd") return { type: "bird", birdKind: "kingDuck" };
-  const owner = customMoveOrderStoneOwnerFromSymbol(value);
+  const owner = customMoveOrderStoneOwnerFromSymbol(value, playerCount, startingPlayer);
   return owner && isValidPlayerNumber(owner, playerCount) ? { type: "stone", owner } : null;
 }
 
-function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys())) {
+function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromModeKeys(getSelectedModeKeys()), startingPlayer = resolveStartingPlayer(getTurnOrderFromInput(), playerCount)) {
   const syntax = String(source || "").trim();
   if (!syntax) {
     return { enabled: false, syntax: "", prefix: [], loop: [], error: "" };
@@ -4492,7 +4557,7 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
     }
     const label = syntax.slice(labelStart, index);
     if (!label) fail("Expected player label");
-    const player = normaliseCustomMoveOrderPlayerLabel(label, safePlayerCount);
+    const player = normaliseCustomMoveOrderPlayerLabel(label, safePlayerCount, startingPlayer);
     if (!player) fail(`Unknown player "${label}"`);
     skipWhitespace();
     if (syntax[index] !== ":") fail("Expected ':' after player label");
@@ -4507,7 +4572,7 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
       const remaining = syntax.slice(index).toLowerCase();
       const symbol = remaining.startsWith("kd") ? syntax.slice(index, index + 2) : syntax[index];
       index += symbol.length;
-      const action = normaliseCustomMoveOrderActionSymbol(symbol, safePlayerCount);
+      const action = normaliseCustomMoveOrderActionSymbol(symbol, safePlayerCount, startingPlayer);
       if (!action) fail(`Unknown action "${symbol}"`);
       if (action.type === "stone" && action.owner !== player) {
         fail(`P${player} turns can only place ${getCustomMoveOrderPlayerToken(player)} stones`);
@@ -4623,7 +4688,7 @@ function getCustomMoveOrderSyntaxFromInputs() {
   return normaliseCustomMoveOrderInputText();
 }
 
-function getCustomMoveOrderConfigFromInputs(modeKeys, playerCount = getPlayerCountFromModeKeys(modeKeys)) {
+function getCustomMoveOrderConfigFromInputs(modeKeys, playerCount = getPlayerCountFromModeKeys(modeKeys), startingPlayer = resolveStartingPlayer(getTurnOrderFromInput(), playerCount)) {
   const syntax = getCustomMoveOrderSyntaxFromInputs();
   if (!game.secretModesUnlocked || !syntax) {
     return { enabled: false, syntax, prefix: [], loop: [], error: "" };
@@ -4631,7 +4696,7 @@ function getCustomMoveOrderConfigFromInputs(modeKeys, playerCount = getPlayerCou
   if (!isCustomMoveOrderAllowedForModeKeys(modeKeys)) {
     return { enabled: false, syntax, prefix: [], loop: [], error: "Move order is disabled for this mode" };
   }
-  return parseCustomMoveOrderSyntax(syntax, playerCount);
+  return parseCustomMoveOrderSyntax(syntax, playerCount, startingPlayer);
 }
 
 function formatCustomMoveOrderSummary(parsed) {
@@ -4645,17 +4710,73 @@ function formatCustomMoveOrderSummary(parsed) {
     : `Custom order: ${loop} turn${loop === 1 ? "" : "s"} repeating`;
 }
 
+function getDefaultMoveOrderBirdActionSymbol(modeKeys = getSelectedModeKeys()) {
+  const keys = normaliseModeKeys(modeKeys);
+  let symbol = "";
+  if (keys.includes("duck")) {
+    symbol += "d";
+  }
+  if (keys.includes("kingDuck")) {
+    symbol += "k";
+  }
+  return symbol;
+}
+
+function getDefaultMoveOrderPlayerSequence(startPlayer, playerCount) {
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const safeStart = normalisePlayerNumber(startPlayer, safePlayerCount);
+  const ordered = [];
+  for (let i = 0; i < safePlayerCount; i += 1) {
+    ordered.push(((safeStart - 1 + i) % safePlayerCount) + 1);
+  }
+  return ordered;
+}
+
+function getDefaultMoveOrderSyntaxForModeKeys(modeKeys = getSelectedModeKeys()) {
+  if (!isCustomMoveOrderAllowedForModeKeys(modeKeys)) {
+    return "Move order disabled for this mode combo";
+  }
+  const playerCount = getPlayerCountFromModeKeys(modeKeys);
+  const safePlayerCount = normalisePlayerCount(playerCount);
+  const startPlayer = resolveStartingPlayer(getTurnOrderFromInput(), safePlayerCount);
+  const openingPlacements = getOpeningPlacementsPerTurnFromInputs();
+  const turnPlacements = getPlacementsPerTurnFromInputs();
+  const birdActionSymbol = getDefaultMoveOrderBirdActionSymbol(modeKeys);
+  const openingStoneSymbol = getCustomMoveOrderAliasTokenForPlayer(startPlayer, safePlayerCount, startPlayer);
+  const openingActions = `${openingStoneSymbol.repeat(openingPlacements)}${birdActionSymbol}`;
+  const firstLoopPlayer = (startPlayer % safePlayerCount) + 1;
+  const loopOrder = getDefaultMoveOrderPlayerSequence(firstLoopPlayer, safePlayerCount);
+  const loopText = loopOrder
+    .map((player) => {
+      const stoneSymbol = getCustomMoveOrderAliasTokenForPlayer(player, safePlayerCount, startPlayer);
+      return `${stoneSymbol}: ${stoneSymbol.repeat(turnPlacements)}${birdActionSymbol}`;
+    })
+    .join(", ");
+  const openingText = `${openingStoneSymbol}: ${openingActions}`;
+  return `${openingText}, ∞(${loopText})`;
+}
+
+function refreshCustomMoveOrderPlaceholder(modeKeys = getSelectedModeKeys()) {
+  if (!ui.customMoveOrderInput) {
+    return;
+  }
+  ui.customMoveOrderInput.placeholder = getDefaultMoveOrderSyntaxForModeKeys(modeKeys);
+}
+
 function refreshCustomMoveOrderSummaryFromInputs(modeKeys = getSelectedModeKeys()) {
   if (!ui.customMoveOrderInput && !ui.customMoveOrderSummaryText) {
     return;
   }
+  refreshCustomMoveOrderPlaceholder(modeKeys);
   const allowed = game.secretModesUnlocked && isCustomMoveOrderAllowedForModeKeys(modeKeys);
   if (ui.customMoveOrderInput) {
-    ui.customMoveOrderInput.disabled = !allowed || !canUseAdminControls();
+    ui.customMoveOrderInput.disabled = !allowed;
   }
   if (ui.customMoveOrderSummaryText) {
+    const playerCount = getPlayerCountFromModeKeys(modeKeys);
+    const startingPlayer = resolveStartingPlayer(getTurnOrderFromInput(), playerCount);
     const parsed = allowed
-      ? parseCustomMoveOrderSyntax(getCustomMoveOrderSyntaxFromInputs(), getPlayerCountFromModeKeys(modeKeys))
+      ? parseCustomMoveOrderSyntax(getCustomMoveOrderSyntaxFromInputs(), playerCount, startingPlayer)
       : { enabled: false, error: "" };
     ui.customMoveOrderSummaryText.textContent = formatCustomMoveOrderSummary(parsed);
   }
@@ -14699,6 +14820,15 @@ ui.openingPlacementsInput?.addEventListener("input", () => {
   refreshSecretRuleSummaryFromInputs();
   setModeUI(getSelectedModeKeys());
 });
+ui.chaosVoteIntervalInput?.addEventListener("input", () => {
+  game.chaosVoteInterval = getChaosVoteIntervalFromInputs();
+  refreshSecretRuleSummaryFromInputs();
+  setModeUI(getSelectedModeKeys());
+});
+ui.customMoveOrderInput?.addEventListener("input", () => {
+  normaliseCustomMoveOrderInputText();
+  refreshCustomMoveOrderSummaryFromInputs();
+});
 ui.winLengthInput?.addEventListener("input", () => {
   game.winLength = getWinLengthFromInputs();
   refreshSecretRuleSummaryFromInputs();
@@ -14735,6 +14865,7 @@ ui.riftBloomTieCreatorInput?.addEventListener("change", () => {
 ui.turnOrderInput?.addEventListener("change", () => {
   game.turnOrder = getTurnOrderFromInput();
   updateTurnOrderSummary();
+  refreshCustomMoveOrderSummaryFromInputs();
 });
 for (let player = 1; player <= MAX_PLAYER_COUNT; player += 1) {
   getArmoryClassSelectForPlayer(player)?.addEventListener("change", () => {
@@ -14758,6 +14889,13 @@ ui.extremeLdmBtn?.addEventListener("click", () => {
 });
 ui.modeHintsBtn?.addEventListener("click", () => {
   setModeHintsVisible(!game.modeHintsVisible);
+});
+ui.customMoveOrderGuideBtn?.addEventListener("click", () => {
+  if (!ui.customMoveOrderGuidePanel) {
+    return;
+  }
+  game.customMoveOrderGuideVisible = !game.customMoveOrderGuideVisible;
+  refreshSecretRuleControls(getSelectedModeKeys());
 });
 ui.secretModesBtn?.addEventListener("click", () => {
   setSecretModesUnlocked(!game.secretModesUnlocked);
