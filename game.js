@@ -4452,6 +4452,8 @@ function normaliseCustomMoveOrderPlayerLabel(label, playerCount, startingPlayer 
   const value = String(label || "").trim().toLowerCase();
   if (value === "o") return aliases.o;
   if (value === "x") return aliases.x;
+  if (value === "%") return safePlayerCount >= 3 ? 3 : 0;
+  if (value === "&") return safePlayerCount >= 4 ? 4 : 0;
   const match = /^p?([1-4])$/.exec(value);
   if (!match) return 0;
   const player = Number(match[1]);
@@ -4460,9 +4462,10 @@ function normaliseCustomMoveOrderPlayerLabel(label, playerCount, startingPlayer 
 
 function getCustomMoveOrderPlayerToken(player) {
   const safePlayer = Math.max(1, Math.min(MAX_PLAYER_COUNT, Math.trunc(Number(player) || 1)));
-  if (safePlayer === 1) return "o";
-  if (safePlayer === 2) return "x";
-  return String(safePlayer);
+  if (safePlayer === 1) return "x";
+  if (safePlayer === 2) return "o";
+  if (safePlayer === 3) return "%";
+  return "&";
 }
 
 function getCustomMoveOrderAliasTokenForPlayer(player, playerCount, startingPlayer = 1) {
@@ -4475,7 +4478,7 @@ function getCustomMoveOrderAliasTokenForPlayer(player, playerCount, startingPlay
   if (safePlayer === aliases.o) {
     return "o";
   }
-  return String(safePlayer);
+  return getCustomMoveOrderPlayerToken(safePlayer);
 }
 
 function customMoveOrderStoneOwnerFromSymbol(symbol, playerCount, startingPlayer = 1) {
@@ -4484,12 +4487,17 @@ function customMoveOrderStoneOwnerFromSymbol(symbol, playerCount, startingPlayer
   const value = String(symbol || "").trim().toLowerCase();
   if (value === "o") return aliases.o;
   if (value === "x") return aliases.x;
+  if (value === "%") return safePlayerCount >= 3 ? 3 : 0;
+  if (value === "&") return safePlayerCount >= 4 ? 4 : 0;
   if (/^[1-4]$/.test(value)) return Number(value);
   return 0;
 }
 
 function normaliseCustomMoveOrderActionSymbol(symbol, playerCount, startingPlayer = 1) {
   const value = String(symbol || "").trim().toLowerCase();
+  if (value === "e") return { type: "stoneEcho" };
+  if (value === "r") return { type: "stoneRift" };
+  if (value === "p") return { type: "pigMove" };
   if (value === "d") return { type: "bird", birdKind: "duck" };
   if (value === "k" || value === "kd") return { type: "bird", birdKind: "kingDuck" };
   const owner = customMoveOrderStoneOwnerFromSymbol(value, playerCount, startingPlayer);
@@ -4552,7 +4560,7 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
   function parseTurn() {
     skipWhitespace();
     const labelStart = index;
-    while (index < syntax.length && /[A-Za-z0-9]/.test(syntax[index])) {
+    while (index < syntax.length && /[A-Za-z0-9%&]/.test(syntax[index])) {
       index += 1;
     }
     const label = syntax.slice(labelStart, index);
@@ -4574,7 +4582,10 @@ function parseCustomMoveOrderSyntax(source, playerCount = getPlayerCountFromMode
       index += symbol.length;
       const action = normaliseCustomMoveOrderActionSymbol(symbol, safePlayerCount, startingPlayer);
       if (!action) fail(`Unknown action "${symbol}"`);
-      if (action.type === "stone" && action.owner !== player) {
+      if (action.type === "stoneEcho" || action.type === "stoneRift") {
+        action.owner = player;
+      }
+      if ((action.type === "stone" || action.type === "stoneEcho" || action.type === "stoneRift") && action.owner !== player) {
         fail(`P${player} turns can only place ${getCustomMoveOrderPlayerToken(player)} stones`);
       }
       actions.push(action);
@@ -5221,6 +5232,10 @@ function syncCustomMoveOrderTurnState(state) {
     state.duckPhase = true;
     state.currentBirdMoveKind = { type: BIRD_ACTION_MOVE, birdKind };
     state.birdMovesPending = [];
+  } else if (action?.type === "pigMove") {
+    state.duckPhase = true;
+    state.currentBirdMoveKind = { type: "movePig" };
+    state.birdMovesPending = [];
   } else {
     state.duckPhase = false;
     state.currentBirdMoveKind = null;
@@ -5294,7 +5309,7 @@ function finishCustomMoveOrderAction(state) {
 
 function getCurrentPlacementOwner(state) {
   const action = getCustomMoveOrderCurrentAction(state);
-  return action?.type === "stone"
+  return action && (action.type === "stone" || action.type === "stoneEcho" || action.type === "stoneRift")
     ? normalisePlayerNumber(action.owner, state)
     : normalisePlayerNumber(state?.turnPlayer, state);
 }
@@ -5308,7 +5323,16 @@ function getCustomMoveOrderPrompt(state) {
   if (action.type === "bird") {
     return `${getBirdActionPrompt(action)} | ${remaining} action${remaining === 1 ? "" : "s"} left`;
   }
+  if (action.type === "pigMove") {
+    return `Custom order: move the pig | ${remaining} action${remaining === 1 ? "" : "s"} left`;
+  }
   const stoneLabel = getCustomMoveOrderStoneLabel(action.owner);
+  if (action.type === "stoneEcho") {
+    return `Custom order: Player ${state.turnPlayer} place ${stoneLabel} as an echo move | ${remaining} action${remaining === 1 ? "" : "s"} left`;
+  }
+  if (action.type === "stoneRift") {
+    return `Custom order: Player ${state.turnPlayer} place ${stoneLabel} as a Rift Bloom move | ${remaining} action${remaining === 1 ? "" : "s"} left`;
+  }
   return `Custom order: Player ${state.turnPlayer} place ${stoneLabel} | ${remaining} action${remaining === 1 ? "" : "s"} left`;
 }
 
@@ -6679,6 +6703,35 @@ function movePigAfterPlacement(state) {
   return line;
 }
 
+function movePigToHex(state, hex) {
+  if (!usesPigMode(state) || state.winner || !hex) {
+    return null;
+  }
+  const pig = ensurePigState(state);
+  if (!pig || pig.trappedBy) {
+    return null;
+  }
+  const legal = getPigLegalMoves(state).some((candidate) => equalHex(candidate, hex));
+  if (!legal) {
+    return null;
+  }
+  const from = { ...pig.hex };
+  const to = normalisePigHexForMode(state, hex);
+  pig.hex = to;
+  pig.reactionsThisTurn = Math.min(PIG_MAX_REACTIONS_PER_TURN, Math.max(1, pig.reactionsThisTurn));
+  pig.movedThisTurn = true;
+  pig.lastMove = {
+    from,
+    to,
+    turn: state.turnCount,
+    escapeDistance: null
+  };
+  pig.lastStuckTurn = null;
+  const line = `The pig moved from (${from.q}, ${from.r}) to (${to.q}, ${to.r}).`;
+  state.accountingEvents.push(line);
+  return line;
+}
+
 function getPigTrapWinner(state) {
   const pig = ensurePigState(state);
   return pig && isValidPlayerNumber(pig.trappedBy, state) ? pig.trappedBy : 0;
@@ -6921,8 +6974,9 @@ function addRiftBloomGhost(state, hex, owner) {
   };
 }
 
-function applyRiftBloomPlacementEffects(state, placedHex, owner) {
-  if (!usesRiftBloomMode(state) || !placedHex || !isRiftBloomActiveCell(state, placedHex)) {
+function applyRiftBloomPlacementEffects(state, placedHex, owner, options = {}) {
+  const forceSpark = Boolean(options.forceSpark);
+  if (!usesRiftBloomMode(state) || !placedHex || (!forceSpark && !isRiftBloomActiveCell(state, placedHex))) {
     return [];
   }
 
@@ -8541,7 +8595,7 @@ function auditWholeBoardForWinner(state) {
 }
 
 function queueEcho(state, echo) {
-  if (!hasMode(state, "echo")) {
+  if (!hasMode(state, "echo") && !echo?.force) {
     return;
   }
   if (echo.kind === "bird") {
@@ -8555,7 +8609,7 @@ function queueEcho(state, echo) {
 }
 
 function resolveEchoes(state) {
-  if (!hasMode(state, "echo")) {
+  if (!hasMode(state, "echo") && !state.pendingEchoes?.some((echo) => echo?.force)) {
     return;
   }
   const remain = [];
@@ -9871,7 +9925,9 @@ function finishSubmove(state) {
   }
 }
 
-function placeTurnTile(state, hex, owner) {
+function placeTurnTile(state, hex, owner, options = {}) {
+  const forceEcho = Boolean(options.forceEcho);
+  const forceRiftBloom = Boolean(options.forceRiftBloom);
   const existingCell = getCellAt(state, hex);
   if (existingCell) {
     return null;
@@ -9903,7 +9959,7 @@ function placeTurnTile(state, hex, owner) {
   const bedSiegeMessages = applyBedSiegePlacementEffects(state, state.lastPlacement, owner);
   const powderMessage = emitPowderFromPlacement(state, state.lastPlacement, owner);
   const chaosMessages = applyChaosAfterPlacementEffects(state, state.lastPlacement, owner);
-  const riftMessages = applyRiftBloomPlacementEffects(state, state.lastPlacement, owner);
+  const riftMessages = applyRiftBloomPlacementEffects(state, state.lastPlacement, owner, { forceSpark: forceRiftBloom });
   const pigMoveMessage = movePigAfterPlacement(state);
   const pigMessage = applyPigTrapAfterPlacement(state, owner, wasPigTrappedBefore);
 
@@ -9911,7 +9967,8 @@ function placeTurnTile(state, hex, owner) {
     kind: "stone",
     owner,
     source: state.lastPlacement,
-    pieceType: armoryPieceType
+    pieceType: armoryPieceType,
+    force: forceEcho
   });
 
   const extraMessages = [
@@ -11151,6 +11208,21 @@ function clickPlacement(hex) {
   }
 
   if (state.duckPhase) {
+    const customAction = hasCustomMoveOrder(state) ? getCustomMoveOrderCurrentAction(state) : null;
+    if (customAction?.type === "pigMove") {
+      const pigMoveMessage = movePigToHex(state, hex);
+      if (!pigMoveMessage) {
+        return;
+      }
+      saveHistory();
+      pushLog(pigMoveMessage);
+      finishCustomMoveOrderAction(state);
+      updateStatus();
+      syncClockTickerFromState();
+      render();
+      broadcastOnlineState();
+      return;
+    }
     const birdAction = normaliseBirdAction(state.currentBirdMoveKind) || { type: BIRD_ACTION_MOVE, birdKind: "duck" };
     const currentBirdHex = getBirdHex(state, birdAction.birdKind);
     if ((currentBirdHex && equalHex(currentBirdHex, hex)) || !isHexOpenForBird(state, hex, birdAction.birdKind)) {
@@ -11213,8 +11285,16 @@ function clickPlacement(hex) {
     return;
   }
 
+  const customAction = hasCustomMoveOrder(state) ? getCustomMoveOrderCurrentAction(state) : null;
+  if (customAction?.type === "stoneRift" && !isRiftBloomActiveCell(state, hex)) {
+    return;
+  }
+
   saveHistory();
-  const placementResult = placeTurnTile(state, hex, getCurrentPlacementOwner(state));
+  const placementResult = placeTurnTile(state, hex, getCurrentPlacementOwner(state), {
+    forceEcho: Boolean(customAction?.type === "stoneEcho"),
+    forceRiftBloom: Boolean(customAction?.type === "stoneRift")
+  });
   if (!placementResult) {
     return;
   }
