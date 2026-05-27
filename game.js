@@ -883,6 +883,12 @@ const MODES = {
     summary: "Every 3 full turns, all occupied spaces tied for farthest distance from the origin are deleted.",
     hint: "Every 3 full turns, all occupied spaces farthest from the center are deleted."
   },
+  goStyle: {
+    name: "Go Style",
+    summary: "Secret capture mode: fully surrounded enemy groups are removed. Connect rules still apply.",
+    hint: "Surround enemy groups to capture them. Normal line wins still apply.",
+    secret: true
+  },
   chaosVote: {
     name: "Rule Vote",
     summary: "Secret rule-draft mode: after every 3 completed turns, the player who just moved chooses one of 3 offered rules from a 50+ rule catalogue.",
@@ -3088,6 +3094,9 @@ function getModeConfig(modeKeys) {
   } else if (keys.includes("bedSiege")) {
     config.summary += ` Rules: ${settings.placementsPerTurn} ${movesWord} per turn; break every rival bed to win.`;
     config.hint += ` | Rules: ${settings.placementsPerTurn} action${settings.placementsPerTurn === 1 ? "" : "s"} per turn.`;
+  } else if (keys.includes("goStyle")) {
+    config.summary += ` Rules: opening turn ${settings.openingPlacementsPerTurn} ${openingMovesWord}; then ${settings.placementsPerTurn} ${movesWord} per turn; connect ${settings.winLength}; fully surrounded enemy groups are captured.`;
+    config.hint += ` | Rules: opening ${settings.openingPlacementsPerTurn}, then ${settings.placementsPerTurn} per turn, connect ${settings.winLength}; surrounded enemy groups are removed.`;
   } else if (keys.includes("pig")) {
     config.summary += ` Rules: opening turn ${settings.openingPlacementsPerTurn} ${openingMovesWord}; then ${settings.placementsPerTurn} ${movesWord} per turn; line wins are disabled in Pig.`;
     config.hint += ` | Rules: opening ${settings.openingPlacementsPerTurn}, then ${settings.placementsPerTurn} per turn; trap the pig instead of connecting ${settings.winLength}.`;
@@ -3433,6 +3442,10 @@ function usesRiftBloomMode(state) {
 
 function usesPigMode(state) {
   return Boolean(state && hasMode(state, "pig"));
+}
+
+function usesGoStyleMode(state) {
+  return Boolean(state && hasMode(state, "goStyle"));
 }
 
 function normalisePerformanceModeLevel(level) {
@@ -4368,7 +4381,8 @@ function makeInitialState(
     factory: null,
     chaos: null,
     powder: null,
-    pig: null
+    pig: null,
+    goStyle: null
   };
   if (usesArmoryMode(state)) {
     state.armory = createArmoryStateForGame(state);
@@ -4386,6 +4400,13 @@ function makeInitialState(
     state.movesLeftInTurn = getPlacementsPerTurn(state);
     state.openingMoveDone = true;
     state.log[0] = "Foundry War started: control the farther Ore nodes and the center Flux node, route them home for capped points, and keep your core alive.";
+  }
+  if (usesGoStyleMode(state)) {
+    state.goStyle = {
+      captures: createPlayerMap(playerCount, () => 0),
+      lastCapture: null
+    };
+    state.log[0] = "Go Style started: surround enemy groups to capture while normal line wins stay active.";
   }
   if (usesChaosVoteMode(state)) {
     state.chaos = createChaosState();
@@ -7377,6 +7398,162 @@ function getPigTrapWinner(state) {
   return pig && isValidPlayerNumber(pig.trappedBy, state) ? pig.trappedBy : 0;
 }
 
+function ensureGoStyleState(state) {
+  if (!usesGoStyleMode(state)) {
+    return null;
+  }
+  if (!state.goStyle || typeof state.goStyle !== "object") {
+    state.goStyle = {
+      captures: createPlayerMap(getPlayerCount(state), () => 0),
+      lastCapture: null
+    };
+  }
+  if (!state.goStyle.captures || typeof state.goStyle.captures !== "object") {
+    state.goStyle.captures = createPlayerMap(getPlayerCount(state), () => 0);
+  } else {
+    for (const player of getPlayerNumbers(state)) {
+      state.goStyle.captures[player] = Math.max(0, Math.trunc(Number(state.goStyle.captures[player]) || 0));
+    }
+  }
+  return state.goStyle;
+}
+
+function getGoStyleStoneOwnerAt(state, hex, context = null) {
+  const key = keyOf(hex.q, hex.r);
+  if (context?.removedKeys?.has(key)) {
+    return 0;
+  }
+  if (context?.placedKey === key) {
+    return normalisePlayerNumber(context.placedOwner, state);
+  }
+  const cell = getCellAt(state, hex);
+  if (!cell || cell.kind !== "stone") {
+    return 0;
+  }
+  return normalisePlayerNumber(cell.owner, state);
+}
+
+function isGoStyleLibertyAt(state, hex, context = null) {
+  if (!isCellSupportedForMode(state, hex)) {
+    return false;
+  }
+  if (getGoStyleStoneOwnerAt(state, hex, context) !== 0) {
+    return false;
+  }
+  return !isHexBlockedBySpecials(state, hex);
+}
+
+function getGoStyleGroupAnalysis(state, startHex, context = null) {
+  if (!isCellSupportedForMode(state, startHex)) {
+    return null;
+  }
+  const owner = getGoStyleStoneOwnerAt(state, startHex, context);
+  if (!owner) {
+    return null;
+  }
+  const queue = [{ ...startHex }];
+  const visited = new Set([keyOf(startHex.q, startHex.r)]);
+  const stones = [{ ...startHex }];
+  const liberties = new Set();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    for (const adjacent of getAdjacentsForMode(state, current)) {
+      if (!isCellSupportedForMode(state, adjacent)) {
+        continue;
+      }
+      const adjacentOwner = getGoStyleStoneOwnerAt(state, adjacent, context);
+      if (adjacentOwner === owner) {
+        const adjacentKey = keyOf(adjacent.q, adjacent.r);
+        if (!visited.has(adjacentKey)) {
+          visited.add(adjacentKey);
+          queue.push({ ...adjacent });
+          stones.push({ ...adjacent });
+        }
+        continue;
+      }
+      if (adjacentOwner === 0 && isGoStyleLibertyAt(state, adjacent, context)) {
+        liberties.add(keyOf(adjacent.q, adjacent.r));
+      }
+    }
+  }
+
+  return {
+    owner,
+    stones,
+    liberties
+  };
+}
+
+function getGoStyleCapturedKeysForPlacement(state, hex, owner) {
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const placedKey = keyOf(hex.q, hex.r);
+  const context = {
+    placedKey,
+    placedOwner: safeOwner,
+    removedKeys: new Set()
+  };
+  const capturedKeys = new Set();
+
+  for (const adjacent of getAdjacentsForMode(state, hex)) {
+    const adjacentOwner = getGoStyleStoneOwnerAt(state, adjacent, context);
+    if (!adjacentOwner || adjacentOwner === safeOwner) {
+      continue;
+    }
+    const analysis = getGoStyleGroupAnalysis(state, adjacent, context);
+    if (!analysis || analysis.liberties.size > 0) {
+      continue;
+    }
+    for (const stone of analysis.stones) {
+      capturedKeys.add(keyOf(stone.q, stone.r));
+    }
+  }
+  return capturedKeys;
+}
+
+function applyGoStyleCapturesAfterPlacement(state, hex, owner) {
+  if (!usesGoStyleMode(state)) {
+    return { captured: 0 };
+  }
+  const safeOwner = normalisePlayerNumber(owner, state);
+  const capturedKeys = getGoStyleCapturedKeysForPlacement(state, hex, safeOwner);
+  if (capturedKeys.size === 0) {
+    const go = ensureGoStyleState(state);
+    if (go) {
+      go.lastCapture = {
+        owner: safeOwner,
+        count: 0,
+        turn: state.turnCount
+      };
+    }
+    return { captured: 0 };
+  }
+
+  const removed = [];
+  for (const key of capturedKeys) {
+    const targetHex = parseKey(key);
+    const removedCell = removeStone(state, targetHex, { ignoreChaosShield: true });
+    if (removedCell?.kind === "stone") {
+      removed.push({ cell: removedCell, hex: targetHex });
+    }
+  }
+  const capturedCount = removed.length;
+  if (capturedCount <= 0) {
+    return { captured: 0 };
+  }
+
+  const go = ensureGoStyleState(state);
+  if (go) {
+    go.captures[safeOwner] = Math.max(0, Math.trunc(Number(go.captures[safeOwner]) || 0)) + capturedCount;
+    go.lastCapture = {
+      owner: safeOwner,
+      count: capturedCount,
+      turn: state.turnCount
+    };
+  }
+  return { captured: capturedCount };
+}
+
 function canPigDestroyCell(state, hex, cell = getCellAt(state, hex)) {
   return Boolean(usesPigMode(state) && cell && (cell.kind === "stone" || isRiftBloomGhostCell(cell)));
 }
@@ -7473,7 +7650,7 @@ function isLegalByBaseRules(state, hex, options = {}) {
   return true;
 }
 
-function isLegalPlacement(state, hex) {
+function isLegalPlacement(state, hex, owner = state?.turnPlayer) {
   if (hasEgyptianRemovalPhase(state)) {
     return false;
   }
@@ -10770,6 +10947,7 @@ function placeTurnTile(state, hex, owner, options = {}) {
 
   const armoryPieceType = resolveArmorySelectedPieceForPlacement(state, owner);
   placeStone(state, hex, owner, "stone", usesArmoryMode(state) ? { pieceType: armoryPieceType } : {});
+  const goCaptureResult = applyGoStyleCapturesAfterPlacement(state, state.lastPlacement, owner);
   const armoryAbilityMessage = applyArmoryPlacementAbility(state, state.lastPlacement, owner, armoryPieceType);
   const capResolution = enforceStoneCapAfterPlacement(state, owner, {
     interactiveEgyptian: hasMode(state, "egyptian") && owner === state.turnPlayer
@@ -10793,6 +10971,7 @@ function placeTurnTile(state, hex, owner, options = {}) {
 
   const extraMessages = [
     usesArmoryMode(state) ? `Deployed ${getArmoryPieceDef(armoryPieceType).name}.` : null,
+    goCaptureResult?.captured > 0 ? `Captured ${goCaptureResult.captured} stone${goCaptureResult.captured === 1 ? "" : "s"}.` : null,
     armoryAbilityMessage,
     ...bedSiegeMessages,
     ...bagelMessages,
@@ -12104,7 +12283,8 @@ function clickPlacement(hex) {
     return;
   }
 
-  if (!isLegalPlacement(state, hex)) {
+  const placementOwner = getCurrentPlacementOwner(state);
+  if (!isLegalPlacement(state, hex, placementOwner)) {
     return;
   }
 
@@ -12114,7 +12294,7 @@ function clickPlacement(hex) {
   }
 
   saveHistory();
-  const placementResult = placeTurnTile(state, hex, getCurrentPlacementOwner(state), {
+  const placementResult = placeTurnTile(state, hex, placementOwner, {
     forceEcho: Boolean(customAction?.type === "stoneEcho"),
     forceRiftBloom: Boolean(customAction?.type === "stoneRift")
   });
@@ -12776,7 +12956,6 @@ function updateStatus() {
   } else {
     ui.subturnText.textContent = `${state.movesLeftInTurn} placement${state.movesLeftInTurn === 1 ? "" : "s"} left this turn`;
   }
-
   if (usesArmoryMode(state)) {
     const armory = ensureArmoryState(state);
     const owner = state.turnPlayer;
