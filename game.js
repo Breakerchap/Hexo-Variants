@@ -9,6 +9,9 @@ const chaosRulesById = new Map(
     .filter((rule) => rule && typeof rule.id === "string")
     .map((rule) => [rule.id, rule])
 );
+const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+const DEFAULT_THEME_COLOR = themeColorMeta?.content || "#07141d";
+const PRIDE_THEME_COLOR = "#ff4fa1";
 
 const ui = {
   appRoot: document.getElementById("appRoot"),
@@ -150,6 +153,7 @@ const ui = {
   toggleMenuBtn: document.getElementById("toggleMenuBtn"),
   ldmBtn: document.getElementById("ldmBtn"),
   extremeLdmBtn: document.getElementById("extremeLdmBtn"),
+  prideModeBtn: document.getElementById("prideModeBtn"),
   modeHintsBtn: document.getElementById("modeHintsBtn"),
   secretModesBtn: document.getElementById("secretModesBtn")
 };
@@ -2754,6 +2758,7 @@ const game = {
   factoryAnimationFramePending: false,
   factoryAnimationDisabled: false,
   performanceModeLevel: 0,
+  prideModeEnabled: false,
   modeHintsVisible: true,
   secretModesUnlocked: false,
   egyptianStoneCap: DEFAULT_EGYPTIAN_STONE_CAP,
@@ -4220,6 +4225,24 @@ function setPerformanceModeLevel(level) {
   game.performanceModeLevel = normalisePerformanceModeLevel(level);
   updatePerformanceModeUI();
   resizeCanvas();
+  render();
+}
+
+function updatePrideModeUI() {
+  const enabled = Boolean(game.prideModeEnabled);
+  ui.appRoot?.classList.toggle("prideMode", enabled);
+  document.body?.classList.toggle("prideMode", enabled);
+  ui.prideModeBtn?.classList.toggle("active", enabled);
+  ui.prideModeBtn?.setAttribute("aria-pressed", enabled ? "true" : "false");
+  ui.prideModeBtn?.setAttribute("title", enabled ? "Disable pride month mode" : "Enable pride month mode");
+  if (themeColorMeta) {
+    themeColorMeta.content = enabled ? PRIDE_THEME_COLOR : DEFAULT_THEME_COLOR;
+  }
+}
+
+function setPrideModeEnabled(enabled) {
+  game.prideModeEnabled = Boolean(enabled);
+  updatePrideModeUI();
   render();
 }
 
@@ -15884,6 +15907,9 @@ ui.ldmBtn?.addEventListener("click", () => {
 ui.extremeLdmBtn?.addEventListener("click", () => {
   setPerformanceModeLevel(getPerformanceModeLevel() === 2 ? 0 : 2);
 });
+ui.prideModeBtn?.addEventListener("click", () => {
+  setPrideModeEnabled(!game.prideModeEnabled);
+});
 ui.modeHintsBtn?.addEventListener("click", () => {
   setModeHintsVisible(!game.modeHintsVisible);
 });
@@ -15976,6 +16002,7 @@ setShapeRuleOutcomeInput(game.shapeRuleEditor.outcome);
 setShapeRuleOwnerInput(game.shapeRuleEditor.owner);
 getArmoryClassSelectionsFromInputs();
 updateOnlineStatusUI();
+updatePrideModeUI();
 updatePerformanceModeUI();
 updateModeHintsUI();
 setOptionsMenuCollapsed(false);
